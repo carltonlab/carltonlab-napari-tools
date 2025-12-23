@@ -1,0 +1,19 @@
+# Changes here will be overwritten by Copier; NEVER EDIT MANUALLY
+_commit: v2.0.1
+_src_path: https://github.com/napari/napari-plugin-template
+display_name: Carltonlab Count Tool
+email: carlosmariorr90@hotmail.com
+full_name: Carlos Rodriguez
+github_repository_url: https://github.com/carlosmariorr/carltonlab-napari-count-tool
+github_username_or_organization: carlosmariorr
+include_reader_plugin: false
+include_sample_data_plugin: false
+include_widget_plugin: true
+include_writer_plugin: false
+install_dependabot: true
+install_precommit: true
+license: BSD-3
+module_name: carltonlab_napari_count_tool
+plugin_name: carltonlab-napari-count-tool
+short_description: The carltonlab count tool made for napari. This is made thinking
+    about RAD-51 counting in C.elegans gonads.
