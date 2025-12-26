@@ -15,6 +15,8 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from carltonlab_napari_count_tool._regions_widget import RegionWidget
+
 if TYPE_CHECKING:
     import napari
     from napari.components import ViewerModel
@@ -356,6 +358,7 @@ class CarltonLabCountTool(QWidget):
 
         self._initialize_gui()
 
+    def _initialize_gui(self) -> None:
         self._main_layout = QVBoxLayout()
         self.setLayout(self._main_layout)
 
@@ -398,9 +401,6 @@ class CarltonLabCountTool(QWidget):
 
         self._hori_layout.addStretch()
         self._vert_layout.addStretch()
-
-    def _initialize_gui(self) -> None:
-        self._vert_scroll_area = QScrollArea()
 
     def showEvent(self, a0: QShowEvent) -> None:
         if self._already_shown:
@@ -484,4 +484,5 @@ class CarltonLabCountTool(QWidget):
         print("_launch_pick_nuclei_widget")
 
     def _launch_regions_widget(self) -> None:
-        print("_launch_regions_widget")
+        setting_widget = RegionWidget(self, self._napari_viewer)
+        self._napari_viewer.window.add_dock_widget(setting_widget)
