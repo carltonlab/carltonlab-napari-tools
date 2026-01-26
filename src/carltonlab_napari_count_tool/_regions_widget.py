@@ -2,9 +2,8 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from napari.layers import Image, Layer, Shapes
+from napari.layers import Image, Shapes
 from napari.utils.notifications import show_info
-from qtpy.QtCore import QTimer
 from qtpy.QtWidgets import (
     QFileDialog,
     QLabel,
@@ -16,7 +15,6 @@ from qtpy.QtWidgets import (
 )
 
 from carltonlab_napari_count_tool._model import (
-    connect_callback_to_shape_double_click,
     open_csv_as_shape_layer,
     open_image_as_layer,
     save_layer_as_csv,
@@ -29,6 +27,10 @@ if TYPE_CHECKING:
 DEFAULT_PROJECT_NAME = "cl_score_points_project"
 SPLINE_NAME = "clt_regions_spline.csv"
 REGIONS_DIR_NAME = "regions"
+GOOD_LABEL_COLOR_CSS = "rgb(60,255,60)"
+BAD_LABEL_COLOR_CSS = "rgb(255,60,60)"
+SPLINE_SAVED_TEXT = "Spline saved"
+SPLINE_NOT_SAVED_TEXT = "Spline not saved"
 
 
 class RegionWidget(QWidget):
@@ -71,11 +73,19 @@ class RegionWidget(QWidget):
         self._spline_layer_line_edit.setDisabled(True)
         self._layout.addWidget(self._spline_layer_line_edit)
 
+        self._display_spline_button = QPushButton("Display spline")
+        self._display_spline_button.clicked.connect(self._display_spline)
+        self._layout.addWidget(self._display_spline_button)
+
         self._save_spline_button: QPushButton = QPushButton("Save")
         self._save_spline_button.clicked.connect(
             self._save_spline_button_pressed
         )
         self._layout.addWidget(self._save_spline_button)
+
+        self._spline_saved_label: QLabel = QLabel()
+        self._layout.addWidget(self._spline_saved_label)
+        self._set_spline_saved_state(False)
 
         self._numbers_region_label: QLabel = QLabel("Number of regions")
         self._numbers_region_label.setStyleSheet("font-weight: bold")
@@ -164,167 +174,58 @@ class RegionWidget(QWidget):
         # connect_callback_to_layer_data_event(
         #    self._spline_layer, self._spline_layer_changed_callback
         # )
-        self._spline_layer.mouse_double_click_callbacks.append(
-            self._on_shape_finished
-        )
+        # self._spline_layer.mouse_double_click_callbacks.append(
+        #    self._on_shape_finished
+        # )
         self._update_layers_labels()
+        self._set_spline_saved_state(False)
 
     def _load_project(self, image_path) -> None:
         parent_dir = os.path.dirname(image_path)
+        regions_path = os.path.join(
+            parent_dir,
+            DEFAULT_PROJECT_NAME,
+            REGIONS_DIR_NAME,
+        )
+        self._regions_path = regions_path
         self._image_layer = open_image_as_layer(
             self._napari_viewer, image_path
         )
-        self._spline_layer = open_csv_as_shape_layer(
-            self._napari_viewer,
-            os.path.join(
-                parent_dir, DEFAULT_PROJECT_NAME, REGIONS_DIR_NAME, SPLINE_NAME
-            ),
+        spline_layer_path: str = os.path.join(
+            parent_dir, DEFAULT_PROJECT_NAME, REGIONS_DIR_NAME, SPLINE_NAME
         )
-        if self._spline_layer is None:
-            show_info("No spline layer found")
-            return
-        spline_layer: Layer = self._spline_layer
-        connect_callback_to_shape_double_click(
-            spline_layer, self._spline_completed_callback
-        )
-        QTimer.singleShot(0, self._interpolate_loaded_spline)
+        if not os.path.exists(spline_layer_path):
+            show_info("No spline layer file found")
+            self._spline_layer = self._napari_viewer.add_shapes(
+                name="ctl-spline-layer"
+            )
+            self._set_spline_saved_state(False)
+        else:
+            self._spline_layer = open_csv_as_shape_layer(
+                self._napari_viewer,
+                os.path.join(
+                    parent_dir,
+                    DEFAULT_PROJECT_NAME,
+                    REGIONS_DIR_NAME,
+                    SPLINE_NAME,
+                ),
+            )
+            self._display_spline()
+            self._set_spline_saved_state(True)
         self._update_layers_labels()
 
-    def _interpolate_loaded_spline(self, tries_left: int = 10) -> None:
-        layer = self._spline_layer
-        if layer is None:
+    def _update_displayed_vertices(self, update_shape_index: int) -> None:
+        if self._spline_layer is None:
+            show_info("The spline layer is not set.")
             return
-
-        data_view = getattr(layer, "_data_view", None)
-        if data_view is None:
-            if tries_left > 0:
-                QTimer.singleShot(
-                    30, lambda: self._interpolate_loaded_spline(tries_left - 1)
-                )
-            return
-
-        shapes = getattr(data_view, "shapes", None)
-        if not shapes:  # still empty/not ready
-            if tries_left > 0:
-                QTimer.singleShot(
-                    30, lambda: self._interpolate_loaded_spline(tries_left - 1)
-                )
-            return
-
-        try:
-            # IMPORTANT: ShapeList requires _update_displayed() to be called
-            # from within batched_updates(), otherwise it raises AssertionError.
-            with data_view.batched_updates():
-                for shape_obj in shapes:
-                    # Path/polyline interpolation lives on the shape object
-                    shape_obj.interpolation_order = 3
-
-                    # Path has this (ShapeList does NOT)
-                    if hasattr(shape_obj, "_update_displayed_data"):
-                        shape_obj._update_displayed_data()  # noqa: SLF001
-
-                # Rebuild ShapeList caches used by the main (non-selected) visual
-                data_view._update_displayed()  # noqa: SLF001
-
-            layer.events.data()
-            if hasattr(layer, "_update_thumbnail"):
-                layer._update_thumbnail()
-            layer.refresh()
-
-        except (ValueError, RuntimeError) as e:
-            print(f"[interp] failed: {e!r}, tries_left={tries_left}")
-            if tries_left > 0:
-                QTimer.singleShot(
-                    30, lambda: self._interpolate_loaded_spline(tries_left - 1)
-                )
-
-    # def _interpolate_loaded_spline(self, tries_left: int = 10) -> None:
-    #    layer = self._spline_layer
-    #    if layer is None:
-    #        return
-
-    #    data_view = getattr(layer, "_data_view", None)
-    #    if data_view is None:
-    #        if tries_left > 0:
-    #            QTimer.singleShot(
-    #                30, lambda: self._interpolate_loaded_spline(tries_left - 1)
-    #            )
-    #        return
-
-    #    shapes = getattr(data_view, "shapes", None)
-    #    if not shapes:  # None or empty list => not ready yet
-    #        if tries_left > 0:
-    #            QTimer.singleShot(
-    #                30, lambda: self._interpolate_loaded_spline(tries_left - 1)
-    #            )
-    #        return
-
-    #    try:
-    #        # 1) Set interpolation order on all shape objects
-    #        for shape_object in shapes:
-    #            shape_object.interpolation_order = 3
-
-    #        # 2) Recompute displayed data (private)
-    #        if hasattr(data_view, "_update_displayed_data"):
-    #            data_view._update_displayed_data()  # noqa: SLF001
-
-    #        # 3) Trigger the same event pathway as an edit:
-    #        # re-assigning layer.data forces napari to rebuild display caches.
-    #        layer.data = list(layer.data)
-
-    #        layer.refresh()
-    #    except Exception:
-    #        if tries_left > 0:
-    #            QTimer.singleShot(
-    #                30, lambda: self._interpolate_loaded_spline(tries_left - 1)
-    #            )
-
-    # def _interpolate_loaded_spline(self, tries_left: int = 10) -> None:
-    #    layer = self._spline_layer
-    #    if layer is None:
-    #        return
-
-    #    data_view = getattr(layer, "_data_view", None)
-    #    if data_view is None or not getattr(data_view, "shapes", None):
-    #        # shapes not ready yet -> try again shortly
-    #        if tries_left > 0:
-    #            QTimer.singleShot(
-    #                30, lambda: self._interpolate_loaded_spline(tries_left - 1)
-    #            )
-    #        return
-
-    #    try:
-    #        for shape_object in data_view.shapes:
-    #            shape_object.interpolation_order = 3
-
-    #        # Force the *whole* ShapeList to recompute displayed data (this is what edits trigger)
-    #        data_view._update_displayed_data()  # noqa: SLF001
-
-    #        layer.refresh()
-    #    except Exception:
-    #        # if anything goes wrong, retry a few times
-    #        if tries_left > 0:
-    #            QTimer.singleShot(
-    #                30, lambda: self._interpolate_loaded_spline(tries_left - 1)
-    #            )
-
-    # def _interpolate_loaded_spline(self) -> None:
-    #    if self._spline_layer is None:
-    #        show_info("No spline layer to interpolate")
-    #        return
-    #    if self._spline_layer._data_view is None:
-    #        show_info("No shapes list in the spline layer")
-    #        return
-    #    if not self._spline_layer._data_view.shapes:
-    #        show_info("No spline created in the spline layer")
-    #        return
-    #    try:
-    #        for shape_object in self._spline_layer._data_view.shapes:
-    #            shape_object.interpolation_order = 3
-    #            shape_object._update_displayed_vertices()
-    #        self._spline_layer.refresh()
-    #    except (IndexError, AttributeError, TypeError):
-    #        pass
+        spline_layer: Shapes = self._spline_layer
+        shape_data = spline_layer._data_view.shapes[update_shape_index].data
+        spline_layer._data_view.edit(update_shape_index, shape_data)
+        spline_layer._data_view.shapes[
+            update_shape_index
+        ]._update_displayed_data()
+        spline_layer.edge_width = 5
+        spline_layer.refresh()
 
     def _update_layers_labels(self) -> None:
         if self._image_layer is not None:
@@ -352,19 +253,60 @@ class RegionWidget(QWidget):
             show_info("No regions path set")
             return
         regions_path: str = self._regions_path
+        spline_file_path = os.path.join(regions_path, SPLINE_NAME)
+        if os.path.exists(spline_file_path):
+            # ask to confirm_dialog
+            dialog_result: bool = confirm_dialog(
+                self._napari_viewer, "Spline file already exists, overwrite?"
+            )
+            if not dialog_result:
+                return
+            else:
+                os.remove(spline_file_path)
         save_layer_as_csv(
             self._spline_layer, os.path.join(regions_path, SPLINE_NAME)
         )
+        self._set_spline_saved_state(True)
+
+    def _display_spline(self):
+        if self._spline_layer is None:
+            return
+        spline_layer = self._spline_layer
+        shape_obj = spline_layer._data_view.shapes[0]
+        if shape_obj.interpolation_order > 1:
+            return
+        shape_obj.interpolation_order = 3
+        shape_obj.edge_width = 5
+        shape_data = shape_obj.data
+        spline_layer._data_view.edit(0, shape_data)
+        shape_obj._update_displayed_data()
+        spline_layer.edge_width = 5
+        spline_layer.refresh()
 
     def _on_shape_finished(self, layer, event):
         """Triggered only when the user double-clicks to finish a shape."""
         if len(layer.data) == 0:
             return
+        shape_obj = layer._data_view.shapes[-1]
+        if shape_obj.interpolation_order > 1:
+            return
         try:
-            shape_obj = layer._data_view.shapes[-1]
             shape_obj.interpolation_order = 3
+            shape_obj.edge_width = 5
             shape_obj._update_displayed_vertices()
-            layer.refresh()
-            print(f"Shape {len(layer.data)} completed and interpolated.")
         except (IndexError, AttributeError, TypeError):
             pass
+
+    def _set_spline_saved_state(self, saved_state: bool) -> None:
+        if saved_state:
+            self._spline_saved_label.setText(SPLINE_SAVED_TEXT)
+            print(f"color: {GOOD_LABEL_COLOR_CSS}")
+            self._spline_saved_label.setStyleSheet(
+                f"color:{GOOD_LABEL_COLOR_CSS}"
+            )
+        else:
+            self._spline_saved_label.setText(SPLINE_NOT_SAVED_TEXT)
+            print(f"color: {BAD_LABEL_COLOR_CSS}")
+            self._spline_saved_label.setStyleSheet(
+                f"color:{BAD_LABEL_COLOR_CSS}"
+            )
