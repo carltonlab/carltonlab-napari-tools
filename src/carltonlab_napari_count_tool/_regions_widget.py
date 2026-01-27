@@ -1,11 +1,12 @@
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from napari.layers import Image, Shapes
 from napari.utils.notifications import show_info
 from qtpy.QtWidgets import (
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -19,6 +20,10 @@ from carltonlab_napari_count_tool._model import (
     open_image_as_layer,
     save_layer_as_csv,
 )
+from carltonlab_napari_count_tool._regions_widget_model import (
+    get_spline_equal_segments,
+    verify_spline_interpolation,
+)
 from carltonlab_napari_count_tool._shared_widgets import confirm_dialog
 
 if TYPE_CHECKING:
@@ -31,6 +36,9 @@ GOOD_LABEL_COLOR_CSS = "rgb(60,255,60)"
 BAD_LABEL_COLOR_CSS = "rgb(255,60,60)"
 SPLINE_SAVED_TEXT = "Spline saved"
 SPLINE_NOT_SAVED_TEXT = "Spline not saved"
+REGIONS_LAYER_DEFAULT_NAME = "clt_regions_layer"
+SPLINE_EDGE_COLOR = "eb3434"
+REGION_COLOR = "#27adf5"
 
 
 class RegionWidget(QWidget):
@@ -73,6 +81,28 @@ class RegionWidget(QWidget):
         self._spline_layer_line_edit.setDisabled(True)
         self._layout.addWidget(self._spline_layer_line_edit)
 
+        self._interpolation_order_container: QWidget = QWidget()
+        self._interpolation_order_container_layout = QHBoxLayout()
+        self._interpolation_order_container.setLayout(
+            self._interpolation_order_container_layout
+        )
+        self._interpolation_order_label = QLabel("Interpolation order")
+        self._interpolation_order_container_layout.addWidget(
+            self._interpolation_order_label
+        )
+        self._interpolation_order_spin_box = QSpinBox()
+        self._interpolation_order_spin_box.setValue(3)
+        self._interpolation_order_spin_box.setSingleStep(1)
+        self._interpolation_order_spin_box.setMinimum(1)
+        self._interpolation_order_spin_box.valueChanged.connect(
+            self._display_spline
+        )
+        self._interpolation_order_container_layout.addWidget(
+            self._interpolation_order_spin_box
+        )
+
+        self._layout.addWidget(self._interpolation_order_container)
+
         self._display_spline_button = QPushButton("Display spline")
         self._display_spline_button.clicked.connect(self._display_spline)
         self._layout.addWidget(self._display_spline_button)
@@ -99,6 +129,7 @@ class RegionWidget(QWidget):
         self._layout.addWidget(self._number_regions_spinner)
 
         self._confirm_button: QPushButton = QPushButton("Confirm")
+        self._confirm_button.clicked.connect(self._confirm_button_pressed)  # type: ignore
         self._layout.addWidget(self._confirm_button)
 
     def _reset_gui(self) -> None:
@@ -171,12 +202,6 @@ class RegionWidget(QWidget):
         self._spline_layer = self._napari_viewer.add_shapes(
             name="clt-spline-layer"
         )
-        # connect_callback_to_layer_data_event(
-        #    self._spline_layer, self._spline_layer_changed_callback
-        # )
-        # self._spline_layer.mouse_double_click_callbacks.append(
-        #    self._on_shape_finished
-        # )
         self._update_layers_labels()
         self._set_spline_saved_state(False)
 
@@ -232,6 +257,7 @@ class RegionWidget(QWidget):
             self._selected_image_line_edit.setText(self._image_layer.name)
         if self._spline_layer is not None:
             self._spline_layer_line_edit.setText(self._spline_layer.name)
+            self._spline_layer.edge_color = SPLINE_EDGE_COLOR
 
     def _save_spline_button_pressed(self) -> None:
         if self._spline_layer is None:
@@ -273,9 +299,16 @@ class RegionWidget(QWidget):
             return
         spline_layer = self._spline_layer
         shape_obj = spline_layer._data_view.shapes[0]
-        if shape_obj.interpolation_order > 1:
+        selected_interpolation_order = (
+            self._interpolation_order_spin_box.value()
+        )
+        if not verify_spline_interpolation(
+            self._spline_layer, self._interpolation_order_spin_box.value()
+        ):
             return
-        shape_obj.interpolation_order = 3
+        if shape_obj.interpolation_order == selected_interpolation_order:
+            return
+        shape_obj.interpolation_order = selected_interpolation_order
         shape_obj.edge_width = 5
         shape_data = shape_obj.data
         spline_layer._data_view.edit(0, shape_data)
@@ -310,3 +343,33 @@ class RegionWidget(QWidget):
             self._spline_saved_label.setStyleSheet(
                 f"color:{BAD_LABEL_COLOR_CSS}"
             )
+
+    def _confirm_button_pressed(self) -> None:
+        if self._spline_layer is None or self._image_layer is None:
+            show_info("Please set both spline and image layers")
+            return
+        spline_layer: Shapes = cast(Shapes, self._spline_layer)
+        if len(spline_layer._data_view.shapes) != 1:
+            show_info("Please draw a single polyline as a shape")
+            return
+        shape_obj = spline_layer._data_view.shapes[0]
+        if shape_obj.interpolation_order < 2:
+            show_info(
+                "Please make the polyline a spline and make sure the interpolation order is setup correctly"
+            )
+            return
+        if not verify_spline_interpolation(
+            spline_layer, self._interpolation_order_spin_box.value()
+        ):
+            return
+        spline_object = get_spline_equal_segments(
+            shape_obj,
+            self._number_regions_spinner.value(),
+            points_per_segment=10,
+        )
+        self._regions_layer = self._napari_viewer.add_shapes(
+            name=REGIONS_LAYER_DEFAULT_NAME
+        )
+        self._regions_layer.add_paths(
+            spline_object, edge_width=5, edge_color=REGION_COLOR
+        )
