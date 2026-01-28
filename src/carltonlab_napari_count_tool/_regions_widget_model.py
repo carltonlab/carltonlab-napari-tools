@@ -1,9 +1,154 @@
+import os
+from pathlib import Path
+from typing import Literal
+
 import numpy as np
-from napari.layers import Shapes
+from napari.layers import Image, Shapes
 from napari.layers.shapes._shapes_models import Shape
 from napari.layers.shapes._shapes_models.shape import remove_path_duplicates
 from napari.utils.notifications import show_info
+from napari.viewer import ViewerModel
 from scipy.interpolate import splev, splprep
+
+from carltonlab_napari_count_tool._model import (
+    open_csv_as_shape_layer,
+    open_image_as_layer,
+    save_layer_as_csv,
+)
+from carltonlab_napari_count_tool._shared_widgets import confirm_dialog
+
+REGIONS_LAYER_DEFAULT_NAME = "clt_regions_layer"
+SPLINE_LAYER_DEFAULT_NAME = "clt_spline_layer"
+REGIONS_DEFAULT_WIDTH = 3
+REGION_COLOR = "#27adf5"
+
+DEFAULT_PROJECT_NAME = "cl_score_points_project"
+DEFAULT_PROJECT_EXTENSION = "_clscp"
+REGIONS_DIR_NAME = "regions"
+
+SPLINE_FILE_NAME = "clt_spline_layer.csv"
+REGIONS_FILE_NAME = "clt_regions_layer.csv"
+
+EDITED_REGIONS_LAYER_NAME = "clt_edited_regions_layer"
+EDITED_REGION_COLOR = "#000000"
+
+
+def open_project(
+    napari_viewer: ViewerModel, image_path: str
+) -> Literal["load", "failed"] | tuple[str, Image, Shapes]:
+    parent_dir: str = os.path.dirname(image_path)
+    searching_project_path: str = os.path.join(
+        parent_dir, DEFAULT_PROJECT_NAME
+    )
+    if os.path.exists(searching_project_path):
+        show_info(
+            f"The image is part of a project with path {searching_project_path} already exists. Loading project"
+        )
+        return "load"
+    returning_tuple: tuple[str, Image, Shapes] | None = create_new_project(
+        image_path, napari_viewer
+    )
+    if returning_tuple is None:
+        return "failed"
+    return returning_tuple
+
+
+def create_new_project(
+    file_path: str, napari_viewer: "ViewerModel"
+) -> tuple[str, Image, Shapes] | None:
+    parent_dir = os.path.dirname(file_path)
+    image_file_path_object: Path = Path(file_path)
+    image_file_name_no_ext: str = image_file_path_object.stem
+    image_file_name: str = image_file_path_object.name
+    new_project_path: str = os.path.join(
+        parent_dir, image_file_name_no_ext + DEFAULT_PROJECT_EXTENSION
+    )
+    if not os.path.exists(new_project_path):
+        os.makedirs(new_project_path)
+    new_project_image_path: str = os.path.join(
+        new_project_path, image_file_name
+    )
+    if not os.path.exists(new_project_image_path):
+        os.rename(file_path, new_project_image_path)
+    project_new_dir_path: str = os.path.join(
+        new_project_path, DEFAULT_PROJECT_NAME
+    )
+    if not os.path.exists(project_new_dir_path):
+        os.makedirs(project_new_dir_path)
+    regions_path: str = os.path.join(project_new_dir_path, REGIONS_DIR_NAME)
+    if not os.path.exists(regions_path):
+        os.makedirs(regions_path)
+    image_layer: Image | None = open_image_as_layer(
+        napari_viewer, new_project_image_path
+    )
+    if image_layer is None:
+        show_info("Image could not be loaded")
+        return None
+    spline_layer: Shapes = napari_viewer.add_shapes(
+        name=SPLINE_LAYER_DEFAULT_NAME
+    )
+    return (regions_path, image_layer, spline_layer)
+
+
+def load_project_files(
+    napari_viewer: ViewerModel, image_path: str
+) -> tuple[str, Image, Shapes, Shapes | None] | None:
+    parent_dir = os.path.dirname(image_path)
+    regions_path = os.path.join(
+        parent_dir,
+        DEFAULT_PROJECT_NAME,
+        REGIONS_DIR_NAME,
+    )
+    returning_list = []
+    returning_list.append(regions_path)
+    image_layer = open_image_as_layer(napari_viewer, image_path)
+    returning_list.append(image_layer)
+    spline_layer_path: str = os.path.join(
+        parent_dir, DEFAULT_PROJECT_NAME, REGIONS_DIR_NAME, SPLINE_FILE_NAME
+    )
+    if not os.path.exists(spline_layer_path):
+        show_info("No spline layer file found")
+        spline_layer = napari_viewer.add_shapes(name="ctl_spline_layer")
+    else:
+        spline_layer = open_csv_as_shape_layer(
+            napari_viewer,
+            os.path.join(
+                parent_dir,
+                DEFAULT_PROJECT_NAME,
+                REGIONS_DIR_NAME,
+                SPLINE_FILE_NAME,
+            ),
+        )
+    returning_list.append(spline_layer)
+    regions_layer_path = os.path.join(
+        parent_dir, DEFAULT_PROJECT_NAME, REGIONS_DIR_NAME, REGIONS_FILE_NAME
+    )
+    if os.path.exists(regions_layer_path):
+        regions_layer = open_csv_as_shape_layer(
+            napari_viewer,
+            regions_layer_path,
+        )
+        returning_list.append(regions_layer)
+    else:
+        regions_layer = None
+        returning_list.append(regions_layer)
+    return tuple(returning_list)
+
+
+def save_spline_layer(
+    napari_viewer: ViewerModel, spline_layer: Shapes, saving_dir: str
+) -> bool:
+    spline_file_path: str = os.path.join(saving_dir, SPLINE_FILE_NAME)
+    if os.path.exists(spline_file_path):
+        dialog_result: bool = confirm_dialog(
+            napari_viewer, "Spline file already exists, overwrite?"
+        )
+        if not dialog_result:
+            return False
+        else:
+            os.remove(spline_file_path)
+    save_layer_as_csv(spline_layer, spline_file_path)
+    return True
 
 
 def verify_spline_interpolation(
@@ -135,3 +280,66 @@ def get_spline_equal_segments(
         tck, u_breaks, points_per_segment, closed=is_closed
     )
     return paths
+
+
+def create_regions_layer(
+    napari_viewer: ViewerModel, spline_points: list[np.ndarray]
+) -> Shapes:
+    regions_layer = napari_viewer.add_shapes(name=REGIONS_LAYER_DEFAULT_NAME)
+    regions_layer.add_paths(
+        spline_points,
+        edge_width=REGIONS_DEFAULT_WIDTH,
+        edge_color=REGION_COLOR,
+    )
+    return regions_layer
+
+
+def create_edited_regions_layer(
+    napari_viewer: "ViewerModel", regions_layer: Shapes
+) -> Shapes:
+    edited_regions_layer = napari_viewer.add_shapes(
+        name=EDITED_REGIONS_LAYER_NAME,
+        edge_width=REGIONS_DEFAULT_WIDTH,
+        edge_color=EDITED_REGION_COLOR,
+    )
+    data_list = []
+    for shape_obj in regions_layer._data_view.shapes:
+        shape_obj_data = shape_obj.data.copy()
+        data_list.append(shape_obj_data)
+    edited_regions_layer.add_paths(data_list)
+    return edited_regions_layer
+
+
+def display_splines(
+    spline_layer: Shapes,
+    setting_interpolation_order: int,
+    shape_index_list: tuple[int] = (0,),
+) -> None:
+    number_of_shapes_in_layer: int = len(spline_layer._data_view.shapes)
+    number_of_changing_shapes: int = len(shape_index_list)
+    if number_of_shapes_in_layer <= 0 or number_of_changing_shapes <= 0:
+        return
+    for shape_index in shape_index_list:
+        if shape_index >= number_of_shapes_in_layer:
+            show_info(f"Cannot access shape with index: {shape_index}")
+            continue
+        shape_object = spline_layer._data_view.shapes[shape_index]
+        if not verify_spline_interpolation(
+            spline_layer, setting_interpolation_order
+        ):
+            continue
+        if shape_object.interpolation_order == setting_interpolation_order:
+            continue
+        shape_object.interpolation_order = setting_interpolation_order
+        shape_object.edge_width = REGIONS_DEFAULT_WIDTH
+        shape_data = shape_object.data
+        spline_layer._data_view.edit(shape_index, shape_data)
+        shape_object._update_displayed_data()
+    spline_layer.edge_width = REGIONS_DEFAULT_WIDTH
+    spline_layer.refresh()
+    return
+
+
+def save_regions_layer(regions_layer: Shapes, regions_dir_path: str) -> None:
+    regions_layer_path = os.path.join(regions_dir_path, REGIONS_FILE_NAME)
+    save_layer_as_csv(regions_layer, regions_layer_path)
