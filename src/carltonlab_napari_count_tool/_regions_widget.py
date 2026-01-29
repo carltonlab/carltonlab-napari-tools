@@ -18,6 +18,7 @@ from carltonlab_napari_count_tool._regions_widget_model import (
     create_edited_regions_layer,
     create_regions_layer,
     display_splines,
+    expand_shape,
     get_spline_equal_segments,
     load_project_files,
     open_project,
@@ -226,7 +227,7 @@ class RegionWidget(QWidget):
 
         self._spline_container.setVisible(False)
         self._number_of_regions_container.setVisible(False)
-        self._individual_regions_container.setVisible(False)
+        self._edit_regions_container.setVisible(True)
 
     def _reset_gui(self) -> None:
         self._image_layer = None
@@ -430,7 +431,9 @@ class RegionWidget(QWidget):
         save_regions_layer(self._regions_layer, regions_path)
         self._set_regions_created_state(True)
         self._update_layers_labels()
-        create_edited_regions_layer(self._napari_viewer, self._regions_layer)
+        self._edited_regions_layer = create_edited_regions_layer(
+            self._napari_viewer, self._regions_layer
+        )
         self._update_edited_regions_widget()
         self._regions_layer.visible = False
         self._edit_regions_container.setVisible(True)
@@ -444,19 +447,25 @@ class RegionWidget(QWidget):
                 self._napari_viewer,
                 self._regions_layer._data_view.shapes[shape_index],
                 self._regions_layer,
-                shape_index + 1,
+                self._edited_regions_layer,
+                shape_index,
             )
 
     def _add_individual_widget_to_list(
         self,
         napari_viewer: "ViewerModel",
         shape_object: Shape,
-        shape_layer: Shapes,
-        region_number: int | None = None,
+        spline_layer: Shapes,
+        expanded_shapes_layer: Shapes,
+        region_index: int,
     ) -> None:
         individual_region_widget: IndividualRegionWidget = (
             IndividualRegionWidget(
-                napari_viewer, shape_object, shape_layer, region_number
+                napari_viewer,
+                shape_object,
+                spline_layer,
+                expanded_shapes_layer,
+                region_index,
             )
         )
         self._individual_regions_widgets_list.append(individual_region_widget)
@@ -474,15 +483,19 @@ class IndividualRegionWidget(QWidget):
         self,
         napari_viewer,
         shape_object: Shape,
-        shape_layer: Shapes,
-        region_number: int | None = None,
+        spline_layer: Shapes,
+        expanded_shapes_layer: Shapes,
+        region_index: int,
     ):
         super().__init__()
         self._shape_object = shape_object
         self._napari_viewer = napari_viewer
         self._extended_shape_object: Shape | None = None
-        self._extended_shape_layer: Shapes
+        self._expanded_shapes_layer = expanded_shapes_layer
+        self._spline_layer: Shapes = spline_layer
         self._region_name = "region-"
+        self._region_index = region_index
+        region_number = region_index + 1
 
         self._layout = QHBoxLayout()
         self.setLayout(self._layout)
@@ -507,4 +520,10 @@ class IndividualRegionWidget(QWidget):
         return self._region_name
 
     def _on_spinbox_value_changed(self) -> None:
-        return
+        expand_shape(
+            self._spline_layer,
+            self._expanded_shapes_layer,
+            self._shape_object,
+            self._region_index,
+            self._region_edit_spinbox.value(),
+        )

@@ -343,3 +343,142 @@ def display_splines(
 def save_regions_layer(regions_layer: Shapes, regions_dir_path: str) -> None:
     regions_layer_path = os.path.join(regions_dir_path, REGIONS_FILE_NAME)
     save_layer_as_csv(regions_layer, regions_layer_path)
+
+
+def expand_shape(
+    spline_layer: Shapes,
+    expanded_shapes_layer: Shapes,
+    shape_object: Shape,
+    shape_index: int,
+    expanding_factor: int,
+) -> None:
+    setting_type = "polygon"
+    if expanding_factor < 0:
+        return
+    original_shape_data = spline_layer._data_view.shapes[shape_index].data
+    if expanding_factor == 0:
+        new_polyline_data = original_shape_data.copy()
+        setting_type = "path"
+    else:
+        new_polyline_data = polyline_to_offset_polygon(
+            original_shape_data, float(expanding_factor)
+        )
+    expanded_shapes_layer._data_view.edit(
+        shape_index, new_polyline_data, new_type=setting_type
+    )
+    shape_object._update_displayed_data()
+    expanded_shapes_layer.refresh()
+
+
+def _normalize(v: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    n = np.linalg.norm(v, axis=-1, keepdims=True)
+    return v / np.maximum(n, eps)
+
+
+def polyline_to_offset_polygon(
+    pts: np.ndarray,
+    width: float | np.ndarray,
+    *,
+    closed: bool = False,
+    join: str = "miter",  # "miter" or "bevel"
+    miter_limit: float = 4.0,  # max miter length / half_width
+) -> np.ndarray:
+    """
+    Expand a 2D polyline into a polygon by offsetting perpendicular to local slope.
+
+    Parameters
+    ----------
+    pts:
+        (N, 2) polyline vertices.
+    width:
+        Scalar width, or (N,) width per vertex.
+    closed:
+        If True, treat polyline as closed loop.
+    join:
+        "miter" gives sharp corners; "bevel" clips sharp corners.
+    miter_limit:
+        Limits extreme miters at acute angles (only relevant for join="miter").
+
+    Returns
+    -------
+    polygon:
+        (2N (+1), 2) array of polygon vertices (closed; last point repeats first).
+    """
+    pts = np.asarray(pts, dtype=float)
+    if pts.ndim != 2 or pts.shape[1] != 2:
+        raise ValueError("pts must be (N, 2).")
+    n = len(pts)
+    if n < 2:
+        raise ValueError("Need at least 2 points.")
+
+    # Width handling
+    if np.isscalar(width):
+        w = np.full(n, float(width), dtype=float)
+    else:
+        w = np.asarray(width, dtype=float).reshape(-1)
+        if w.shape[0] != n:
+            raise ValueError("width must be scalar or shape (N,).")
+    half = 0.5 * w
+
+    # Segment tangents
+    if closed:
+        p_next = np.roll(pts, -1, axis=0)
+        seg = p_next - pts  # (N,2) segments, last wraps to first
+        t = _normalize(seg)  # unit tangents per segment (N,2)
+        # segment normals: rotate tangent by +90deg => (-ty, tx)
+        nseg = np.stack([-t[:, 1], t[:, 0]], axis=1)
+        # vertex normals: average adjacent segment normals
+        n_prev = np.roll(nseg, 1, axis=0)
+        n_vert = _normalize(n_prev + nseg)
+        # If any nearly straight/degenerate, fall back to one of the normals
+        bad = np.linalg.norm(n_prev + nseg, axis=1) < 1e-9
+        n_vert[bad] = nseg[bad]
+    else:
+        seg = np.diff(pts, axis=0)  # (N-1,2)
+        t = _normalize(seg)
+        nseg = np.stack([-t[:, 1], t[:, 0]], axis=1)  # (N-1,2)
+
+        n_vert = np.zeros((n, 2), dtype=float)
+        # endpoints use nearest segment normal
+        n_vert[0] = nseg[0]
+        n_vert[-1] = nseg[-1]
+        # interior: average adjacent normals
+        avg = nseg[:-1] + nseg[1:]
+        n_vert[1:-1] = _normalize(avg)
+        bad = np.linalg.norm(avg, axis=1) < 1e-9
+        n_vert[1:-1][bad] = nseg[1:][bad]
+
+    # Join style: miter needs scaling so offsets intersect cleanly at corners.
+    if join not in {"miter", "bevel"}:
+        raise ValueError("join must be 'miter' or 'bevel'.")
+
+    if join == "miter":
+        # Compute miter length factor = 1 / dot(n_vert, nseg_current_or_prev?)
+        # A common approximation: use bisector normal n_vert and one adjacent segment normal
+        if closed:
+            # choose "current" segment normal for each vertex
+            ref = nseg
+        else:
+            ref = np.zeros_like(n_vert)
+            ref[0] = nseg[0]
+            ref[-1] = nseg[-1]
+            ref[1:-1] = nseg[:-1]  # use previous segment normal as reference
+
+        denom = np.sum(n_vert * ref, axis=1)  # cos of half-angle
+        denom = np.clip(denom, 1e-6, 1.0)
+        miter_len = 1.0 / denom
+        # Limit extreme miters
+        miter_len = np.minimum(miter_len, miter_limit)
+    else:
+        miter_len = np.ones(n, dtype=float)
+
+    left = pts + (half * miter_len)[:, None] * n_vert
+    right = pts - (half * miter_len)[:, None] * n_vert
+
+    # Build polygon by walking left forward, then right backward
+    poly = np.concatenate([left, right[::-1]], axis=0)
+
+    # Close polygon explicitly (napari polygons can be closed without repeating,
+    # but repeating is often convenient)
+    poly = np.vstack([poly, poly[0]])
+    return poly
