@@ -15,6 +15,9 @@ from qtpy.QtWidgets import (
 )
 
 from carltonlab_napari_count_tool._regions_widget_model import (
+    EDITED_REGIONS_FILE_NAME,
+    REGIONS_FILE_NAME,
+    SPLINE_FILE_NAME,
     create_edited_regions_layer,
     create_regions_layer,
     display_splines,
@@ -22,8 +25,8 @@ from carltonlab_napari_count_tool._regions_widget_model import (
     get_spline_equal_segments,
     load_project_files,
     open_project,
-    save_regions_layer,
-    save_spline_layer,
+    save_expansion_spinbox_values,
+    save_shapes_layer,
     verify_spline_interpolation,
 )
 from carltonlab_napari_count_tool._shared_widgets import confirm_dialog
@@ -213,7 +216,7 @@ class RegionWidget(QWidget):
             "Save edited regions"
         )
         self._save_individual_regions_button.clicked.connect(
-            self._save_individual_regions_button_pressed
+            self._save_edited_regions_button_pressed
         )
         self._edit_regions_container_layout.addWidget(
             self._save_individual_regions_button
@@ -227,16 +230,37 @@ class RegionWidget(QWidget):
 
         self._spline_container.setVisible(False)
         self._number_of_regions_container.setVisible(False)
-        self._edit_regions_container.setVisible(True)
+        self._edit_regions_container.setVisible(False)
 
     def _reset_gui(self) -> None:
         self._image_layer = None
         self._spline_layer = None
+        self._regions_layer = None
+        self._edited_regions_layer = None
         self._image_directory = None
+        self._regions_path = None
+        self._individual_regions_widgets_list = []
 
         self._selected_image_line_edit.setText("")
         self._spline_layer_line_edit.setText("")
+        self._regions_line_edit.setText("")
         self._number_regions_spinner.setValue(7)
+
+        while self._individual_regions_container_layout.count():
+            q_item = self._individual_regions_container_layout.takeAt(0)
+            q_widget = q_item.widget()
+            if q_widget is not None:
+                q_widget.setParent(None)
+                q_widget.deleteLater()
+                continue
+
+        self._spline_container.setVisible(False)
+        self._number_of_regions_container.setVisible(False)
+        self._edit_regions_container.setVisible(False)
+
+        self._set_spline_saved_state(False)
+        self._set_regions_created_state(False)
+        self._set_edited_regions_state(False)
 
     def open_image_button_pressed(self) -> None:
         if self._image_layer is not None:
@@ -272,9 +296,9 @@ class RegionWidget(QWidget):
         self._spline_container.setVisible(True)
 
     def _load_project(self, image_path) -> None:
-        returning_tuple: tuple[str, Image, Shapes, Shapes | None] | None = (
-            load_project_files(self._napari_viewer, image_path)
-        )
+        returning_tuple: (
+            tuple[str, Image, Shapes, Shapes | None, Shapes | None] | None
+        ) = load_project_files(self._napari_viewer, image_path)
         if returning_tuple is None:
             show_info("Couldn't load project. ERROR")
             return
@@ -293,6 +317,14 @@ class RegionWidget(QWidget):
             self._regions_layer = returning_tuple[3]
             self._number_of_regions_container.setVisible(True)
             self._set_regions_created_state(True)
+        else:
+            self._set_regions_created_state(False)
+        if returning_tuple[4] is not None:
+            self._edited_regions_layer = returning_tuple[4]
+            self._edit_regions_container.setVisible(True)
+            self._set_edited_regions_state(True)
+        else:
+            self._set_edited_regions_state(False)
         self._update_layers_labels()
 
     def _update_displayed_vertices(self, update_shape_index: int) -> None:
@@ -337,8 +369,11 @@ class RegionWidget(QWidget):
         if self._regions_path is None:
             show_info("No regions path set")
             return
-        saved_state = save_spline_layer(
-            self._napari_viewer, self._spline_layer, self._regions_path
+        saved_state = save_shapes_layer(
+            self._napari_viewer,
+            self._spline_layer,
+            self._regions_path,
+            SPLINE_FILE_NAME,
         )
         if not saved_state:
             show_info("Spline layer not saved")
@@ -428,7 +463,12 @@ class RegionWidget(QWidget):
             self._napari_viewer, spline_paths
         )
         self._spline_layer.visible = False
-        save_regions_layer(self._regions_layer, regions_path)
+        save_shapes_layer(
+            self._napari_viewer,
+            self._regions_layer,
+            regions_path,
+            REGIONS_FILE_NAME,
+        )
         self._set_regions_created_state(True)
         self._update_layers_labels()
         self._edited_regions_layer = create_edited_regions_layer(
@@ -440,6 +480,8 @@ class RegionWidget(QWidget):
 
     def _update_edited_regions_widget(self) -> None:
         if self._regions_layer is None:
+            return
+        if self._edited_regions_layer is None:
             return
         number_of_shapes = len(self._regions_layer._data_view.shapes)
         for shape_index in range(number_of_shapes):
@@ -472,9 +514,35 @@ class RegionWidget(QWidget):
         self._individual_regions_container_layout.addWidget(
             individual_region_widget
         )
-        print("added widget to invisible")
 
-    def _save_individual_regions_button_pressed(self) -> None:
+    def _save_edited_regions_button_pressed(self) -> None:
+        if self._edited_regions_layer is None:
+            show_info("No edited regions layer to save")
+            return
+        shapes_list = self._edited_regions_layer._data_view
+        if not shapes_list:
+            show_info("No shapes list in the edited regions layer")
+        if not len(shapes_list.shapes):
+            show_info("No edited regions created in the edited regions layer")
+        if self._regions_path is None:
+            show_info("No regions path set")
+            return
+        saved_state = save_shapes_layer(
+            self._napari_viewer,
+            self._edited_regions_layer,
+            self._regions_path,
+            EDITED_REGIONS_FILE_NAME,
+        )
+        if not saved_state:
+            show_info("Edited regions layer not saved")
+            return
+        expansion_values = []
+        for individual_widget in self._individual_regions_widgets_list:
+            expansion_values.append(
+                individual_widget.get_expansion_spinbox_value()
+            )
+        save_expansion_spinbox_values(expansion_values, self._regions_path)
+        self._set_edited_regions_state(True)
         return
 
 
@@ -527,3 +595,6 @@ class IndividualRegionWidget(QWidget):
             self._region_index,
             self._region_edit_spinbox.value(),
         )
+
+    def get_expansion_spinbox_value(self) -> int:
+        return self._region_edit_spinbox.value()

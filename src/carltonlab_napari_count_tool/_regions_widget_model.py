@@ -1,4 +1,5 @@
 import os
+from configparser import ConfigParser
 from pathlib import Path
 from typing import Literal
 
@@ -23,11 +24,15 @@ REGIONS_DEFAULT_WIDTH = 3
 REGION_COLOR = "#27adf5"
 
 DEFAULT_PROJECT_NAME = "cl_score_points_project"
-DEFAULT_PROJECT_EXTENSION = "_clscp"
+DEFAULT_PROJECT_EXTENSION = "_clsp"
 REGIONS_DIR_NAME = "regions"
 
 SPLINE_FILE_NAME = "clt_spline_layer.csv"
 REGIONS_FILE_NAME = "clt_regions_layer.csv"
+EDITED_REGIONS_FILE_NAME = "clt_expanded_regions_layer.csv"
+EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME = (
+    "clt_expanded_regions_values.config"
+)
 
 EDITED_REGIONS_LAYER_NAME = "clt_edited_regions_layer"
 EDITED_REGION_COLOR = "#000000"
@@ -92,7 +97,7 @@ def create_new_project(
 
 def load_project_files(
     napari_viewer: ViewerModel, image_path: str
-) -> tuple[str, Image, Shapes, Shapes | None] | None:
+) -> tuple[str, Image, Shapes, Shapes | None, Shapes | None] | None:
     parent_dir = os.path.dirname(image_path)
     regions_path = os.path.join(
         parent_dir,
@@ -128,26 +133,44 @@ def load_project_files(
             napari_viewer,
             regions_layer_path,
         )
-        returning_list.append(regions_layer)
     else:
         regions_layer = None
-        returning_list.append(regions_layer)
+    returning_list.append(regions_layer)
+    edited_regions_path = os.path.join(
+        parent_dir,
+        DEFAULT_PROJECT_NAME,
+        REGIONS_DIR_NAME,
+        EDITED_REGIONS_FILE_NAME,
+    )
+    if os.path.exists(edited_regions_path):
+        edited_regions_layer = open_csv_as_shape_layer(
+            napari_viewer,
+            edited_regions_path,
+        )
+    else:
+        edited_regions_layer = None
+    returning_list.append(edited_regions_layer)
     return tuple(returning_list)
 
 
-def save_spline_layer(
-    napari_viewer: ViewerModel, spline_layer: Shapes, saving_dir: str
+def save_shapes_layer(
+    napari_viewer: ViewerModel,
+    spline_layer: Shapes,
+    saving_dir: str,
+    saving_file_name: str,
 ) -> bool:
-    spline_file_path: str = os.path.join(saving_dir, SPLINE_FILE_NAME)
-    if os.path.exists(spline_file_path):
+    # spline_file_path: str = os.path.join(saving_dir, SPLINE_FILE_NAME)
+    shapes_layer_file_path: str = os.path.join(saving_dir, saving_file_name)
+    if os.path.exists(shapes_layer_file_path):
         dialog_result: bool = confirm_dialog(
-            napari_viewer, "Spline file already exists, overwrite?"
+            napari_viewer,
+            f"{saving_file_name} file already exists, overwrite?",
         )
         if not dialog_result:
             return False
         else:
-            os.remove(spline_file_path)
-    save_layer_as_csv(spline_layer, spline_file_path)
+            os.remove(shapes_layer_file_path)
+    save_layer_as_csv(spline_layer, shapes_layer_file_path)
     return True
 
 
@@ -355,13 +378,15 @@ def expand_shape(
     setting_type = "polygon"
     if expanding_factor < 0:
         return
-    original_shape_data = spline_layer._data_view.shapes[shape_index].data
+    original_shape_data = spline_layer._data_view.shapes[
+        shape_index
+    ].data.copy()
     if expanding_factor == 0:
         new_polyline_data = original_shape_data.copy()
         setting_type = "path"
     else:
-        new_polyline_data = polyline_to_offset_polygon(
-            original_shape_data, float(expanding_factor)
+        new_polyline_data = stroke_polyline_to_polygon(
+            original_shape_data, expanding_factor
         )
     expanded_shapes_layer._data_view.edit(
         shape_index, new_polyline_data, new_type=setting_type
@@ -375,110 +400,167 @@ def _normalize(v: np.ndarray, eps: float = 1e-12) -> np.ndarray:
     return v / np.maximum(n, eps)
 
 
-def polyline_to_offset_polygon(
+def _line_intersection(p1, d1, p2, d2, eps=1e-12):
+    """
+    Intersection of lines: p1 + t d1 and p2 + u d2 in 2D.
+    Returns point or None if (near) parallel.
+    """
+
+    # Solve p1 + t d1 = p2 + u d2
+    # using 2D cross products
+    def cross(a, b):  # scalar
+        return a[0] * b[1] - a[1] * b[0]
+
+    denom = cross(d1, d2)
+    if abs(denom) < eps:
+        return None
+
+    t = cross((p2 - p1), d2) / denom
+    return p1 + t * d1
+
+
+def _clean_consecutive_duplicates(
+    pts: np.ndarray, eps: float = 1e-6
+) -> np.ndarray:
+    if len(pts) == 0:
+        return pts
+    out = [pts[0]]
+    for p in pts[1:]:
+        if np.linalg.norm(p - out[-1]) > eps:
+            out.append(p)
+    return np.asarray(out)
+
+
+def stroke_polyline_to_polygon(
     pts: np.ndarray,
-    width: float | np.ndarray,
+    width: float,
     *,
     closed: bool = False,
-    join: str = "miter",  # "miter" or "bevel"
-    miter_limit: float = 4.0,  # max miter length / half_width
+    miter_limit: float = 4.0,  # in units of half-width
+    drop_eps: float = 1e-6,
 ) -> np.ndarray:
     """
-    Expand a 2D polyline into a polygon by offsetting perpendicular to local slope.
-
-    Parameters
-    ----------
-    pts:
-        (N, 2) polyline vertices.
-    width:
-        Scalar width, or (N,) width per vertex.
-    closed:
-        If True, treat polyline as closed loop.
-    join:
-        "miter" gives sharp corners; "bevel" clips sharp corners.
-    miter_limit:
-        Limits extreme miters at acute angles (only relevant for join="miter").
-
-    Returns
-    -------
-    polygon:
-        (2N (+1), 2) array of polygon vertices (closed; last point repeats first).
+    2D polyline -> polygon outline using segment offsets and miter-with-clamp joins.
+    Output polygon is NOT explicitly closed (napari closes polygons implicitly).
     """
-    pts = np.asarray(pts, dtype=float)
+    pts = np.asarray(pts, float)
     if pts.ndim != 2 or pts.shape[1] != 2:
-        raise ValueError("pts must be (N, 2).")
+        raise ValueError(f"Expected (N,2), got {pts.shape}")
+    if len(pts) < 2:
+        raise ValueError("Need at least 2 points")
+
+    # Remove non-finite and consecutive duplicates / zero-length segments
+    pts = pts[np.isfinite(pts).all(axis=1)]
+    if len(pts) < 2:
+        raise ValueError("Not enough finite points")
+
+    d = np.diff(pts, axis=0)
+    keep = np.concatenate([[True], np.linalg.norm(d, axis=1) > drop_eps])
+    pts = pts[keep]
+
+    if (
+        closed
+        and len(pts) >= 3
+        and np.linalg.norm(pts[0] - pts[-1]) <= drop_eps
+    ):
+        pts = pts[:-1]
+
     n = len(pts)
     if n < 2:
-        raise ValueError("Need at least 2 points.")
+        raise ValueError("Degenerate after cleaning")
 
-    # Width handling
-    if np.isscalar(width):
-        w = np.full(n, float(width), dtype=float)
-    else:
-        w = np.asarray(width, dtype=float).reshape(-1)
-        if w.shape[0] != n:
-            raise ValueError("width must be scalar or shape (N,).")
-    half = 0.5 * w
+    half = 0.5 * float(width)
 
-    # Segment tangents
-    if closed:
-        p_next = np.roll(pts, -1, axis=0)
-        seg = p_next - pts  # (N,2) segments, last wraps to first
-        t = _normalize(seg)  # unit tangents per segment (N,2)
-        # segment normals: rotate tangent by +90deg => (-ty, tx)
-        nseg = np.stack([-t[:, 1], t[:, 0]], axis=1)
-        # vertex normals: average adjacent segment normals
-        n_prev = np.roll(nseg, 1, axis=0)
-        n_vert = _normalize(n_prev + nseg)
-        # If any nearly straight/degenerate, fall back to one of the normals
-        bad = np.linalg.norm(n_prev + nseg, axis=1) < 1e-9
-        n_vert[bad] = nseg[bad]
-    else:
-        seg = np.diff(pts, axis=0)  # (N-1,2)
-        t = _normalize(seg)
-        nseg = np.stack([-t[:, 1], t[:, 0]], axis=1)  # (N-1,2)
+    # Segment directions and normals
+    ## edited this. Problem might rise
+    # if closed:
+    #    seg = np.roll(pts, -1, axis=0) - pts  # (N,2)
+    # else:
+    #    seg = np.diff(pts, axis=0)  # (N-1,2)
+    seg = np.roll(pts, -1, axis=0) - pts if closed else np.diff(pts, axis=0)
 
-        n_vert = np.zeros((n, 2), dtype=float)
-        # endpoints use nearest segment normal
-        n_vert[0] = nseg[0]
-        n_vert[-1] = nseg[-1]
-        # interior: average adjacent normals
-        avg = nseg[:-1] + nseg[1:]
-        n_vert[1:-1] = _normalize(avg)
-        bad = np.linalg.norm(avg, axis=1) < 1e-9
-        n_vert[1:-1][bad] = nseg[1:][bad]
+    t = _normalize(seg)
+    nseg = np.stack([-t[:, 1], t[:, 0]], axis=1)  # left normal per segment
 
-    # Join style: miter needs scaling so offsets intersect cleanly at corners.
-    if join not in {"miter", "bevel"}:
-        raise ValueError("join must be 'miter' or 'bevel'.")
+    def build_side(sign: float) -> np.ndarray:
+        # sign=+1 for left, sign=-1 for right
+        out = []
 
-    if join == "miter":
-        # Compute miter length factor = 1 / dot(n_vert, nseg_current_or_prev?)
-        # A common approximation: use bisector normal n_vert and one adjacent segment normal
-        if closed:
-            # choose "current" segment normal for each vertex
-            ref = nseg
-        else:
-            ref = np.zeros_like(n_vert)
-            ref[0] = nseg[0]
-            ref[-1] = nseg[-1]
-            ref[1:-1] = nseg[:-1]  # use previous segment normal as reference
+        if not closed:
+            # start cap (butt)
+            out.append(pts[0] + sign * half * nseg[0])
 
-        denom = np.sum(n_vert * ref, axis=1)  # cos of half-angle
-        denom = np.clip(denom, 1e-6, 1.0)
-        miter_len = 1.0 / denom
-        # Limit extreme miters
-        miter_len = np.minimum(miter_len, miter_limit)
-    else:
-        miter_len = np.ones(n, dtype=float)
+            for i in range(1, n - 1):
+                p = pts[i]
 
-    left = pts + (half * miter_len)[:, None] * n_vert
-    right = pts - (half * miter_len)[:, None] * n_vert
+                # previous segment (i-1) and next segment (i)
+                d1 = t[i - 1]
+                d2 = t[i]
+                o1 = p + sign * half * nseg[i - 1]
+                o2 = p + sign * half * nseg[i]
 
-    # Build polygon by walking left forward, then right backward
-    poly = np.concatenate([left, right[::-1]], axis=0)
+                x = _line_intersection(o1, d1, o2, d2)
 
-    # Close polygon explicitly (napari polygons can be closed without repeating,
-    # but repeating is often convenient)
-    poly = np.vstack([poly, poly[0]])
+                if x is None:
+                    # parallel: just bevel
+                    out.append(o1)
+                    out.append(o2)
+                else:
+                    # miter length check
+                    if np.linalg.norm(x - p) > miter_limit * half:
+                        out.append(o1)
+                        out.append(o2)
+                    else:
+                        out.append(x)
+
+            # end cap (butt)
+            out.append(pts[-1] + sign * half * nseg[-1])
+            return _clean_consecutive_duplicates(np.asarray(out))
+
+        # closed: every vertex has prev and next segments
+        for i in range(n):
+            p = pts[i]
+            d1 = t[i - 1]
+            d2 = t[i]
+            o1 = p + sign * half * nseg[i - 1]
+            o2 = p + sign * half * nseg[i]
+
+            x = _line_intersection(o1, d1, o2, d2)
+            if x is None:
+                out.append(o1)
+                out.append(o2)
+            else:
+                if np.linalg.norm(x - p) > miter_limit * half:
+                    out.append(o1)
+                    out.append(o2)
+                else:
+                    out.append(x)
+
+        return _clean_consecutive_duplicates(np.asarray(out))
+
+    left = build_side(+1.0)
+    right = build_side(-1.0)
+
+    poly = np.vstack([left, right[::-1]])
+
+    # final sanity
+    if not np.isfinite(poly).all():
+        raise ValueError("Polygon has NaN/inf")
+    if len(poly) < 3:
+        raise ValueError("Polygon too small")
     return poly
+
+
+def save_expansion_spinbox_values(
+    expanded_shapes_values: list[int], saving_directory: str
+) -> None:
+    config_parser = ConfigParser()
+    config_parser.add_section("ExpandedRegions")
+    for expanded_index, expanded_value in enumerate(expanded_shapes_values):
+        region_string = "region-" + str(expanded_index + 1)
+        config_parser["ExpandedRegions"][region_string] = str(expanded_value)
+    config_file_path = os.path.join(
+        saving_directory, EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME
+    )
+    with open(config_file_path, "w") as config_file:
+        config_parser.write(config_file)
