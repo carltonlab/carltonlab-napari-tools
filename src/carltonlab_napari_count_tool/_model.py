@@ -2,7 +2,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
-from napari.layers import Image, Layer, Shapes
+from napari.layers import Image, Layer, Points, Shapes
 
 if TYPE_CHECKING:
     from napari.viewer import ViewerModel
@@ -24,6 +24,22 @@ def open_csv_as_shape_layer(
     if isinstance(opened_layer[0], Shapes):
         return opened_layer[0]
     return None
+
+
+def open_csv_as_points_layer(
+    napari_viewer: "ViewerModel", csv_path: str
+) -> "Points | None":
+    opened_layer = napari_viewer.open(csv_path)
+    if isinstance(opened_layer[0], Points):
+        return opened_layer[0]
+    return None
+
+
+def create_points_layer(
+    napari_viewer: "ViewerModel", layer_name: str
+) -> Points:
+    points_layer = napari_viewer.add_points(name=layer_name)
+    return points_layer
 
 
 def save_layer_as_csv(layer: Layer, csv_path: str) -> None:

@@ -16,6 +16,10 @@ from carltonlab_napari_count_tool._model import (
     open_image_as_layer,
     save_layer_as_csv,
 )
+from carltonlab_napari_count_tool._shared_variables import (
+    EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME,
+    REGIONS_DIR_NAME,
+)
 from carltonlab_napari_count_tool._shared_widgets import confirm_dialog
 
 REGIONS_LAYER_DEFAULT_NAME = "clt_regions_layer"
@@ -25,14 +29,10 @@ REGION_COLOR = "#27adf5"
 
 DEFAULT_PROJECT_NAME = "cl_score_points_project"
 DEFAULT_PROJECT_EXTENSION = "_clsp"
-REGIONS_DIR_NAME = "regions"
 
 SPLINE_FILE_NAME = "clt_spline_layer.csv"
 REGIONS_FILE_NAME = "clt_regions_layer.csv"
 EDITED_REGIONS_FILE_NAME = "clt_expanded_regions_layer.csv"
-EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME = (
-    "clt_expanded_regions_values.config"
-)
 
 EDITED_REGIONS_LAYER_NAME = "clt_edited_regions_layer"
 EDITED_REGION_COLOR = "#000000"

@@ -15,6 +15,7 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from carltonlab_napari_count_tool._pick_nuclei_widget import PickNucleiWidget
 from carltonlab_napari_count_tool._regions_widget import RegionWidget
 
 if TYPE_CHECKING:
@@ -481,7 +482,10 @@ class CarltonLabCountTool(QWidget):
         print("_blind_gonads_button_pressed")
 
     def _launch_pick_nuclei_widget(self) -> None:
-        print("_launch_pick_nuclei_widget")
+        setting_widget = PickNucleiWidget(self, self._napari_viewer)
+        self._napari_viewer.window.add_dock_widget(
+            setting_widget, name="clt Pick Nuclei"
+        )
 
     def _launch_regions_widget(self) -> None:
         setting_widget = RegionWidget(self, self._napari_viewer)
