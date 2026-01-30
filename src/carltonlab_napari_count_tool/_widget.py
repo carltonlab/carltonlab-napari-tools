@@ -486,5 +486,5 @@ class CarltonLabCountTool(QWidget):
     def _launch_regions_widget(self) -> None:
         setting_widget = RegionWidget(self, self._napari_viewer)
         self._napari_viewer.window.add_dock_widget(
-            setting_widget, ["clt Regions"]
+            setting_widget, name="clt Regions"
         )
