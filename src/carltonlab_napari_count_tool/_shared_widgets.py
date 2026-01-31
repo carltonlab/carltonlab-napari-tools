@@ -6,14 +6,19 @@ if TYPE_CHECKING:
     from napari.components import ViewerModel
 
 
-def confirm_dialog(napari_viewer: "ViewerModel", message: str) -> bool:
+def confirm_dialog(
+    napari_viewer: "ViewerModel", message: str, no_mode: bool = False
+) -> bool:
     parent = getattr(
         getattr(napari_viewer, "window", None), "_qt_window", None
     )
 
     message_box = QMessageBox(parent=parent)
     message_box.setText(message)
-    message_box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+    if not no_mode:
+        message_box.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+    if no_mode:
+        message_box.setStandardButtons(QMessageBox.No | QMessageBox.Ok)
     message_box.setDefaultButton(QMessageBox.Ok)
     message_box.exec_()
 
