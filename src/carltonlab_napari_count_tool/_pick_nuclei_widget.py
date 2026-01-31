@@ -10,6 +10,7 @@ from qtpy.QtWidgets import (
     QPushButton,
     QVBoxLayout,
     QWidget,
+    QSpinBox,
 )
 
 from carltonlab_napari_count_tool._pick_nuclei_widget_model import open_project
@@ -70,8 +71,51 @@ class PickNucleiWidget(QWidget):
         self._regions_qlist: QListWidget = QListWidget()
         self._regions_container_layout.addWidget(self._regions_qlist)
 
+        self._nuclei_points_title_label: QLabel = QLabel("Nuclei points")
+        self._regions_container_layout.addWidget(
+            self._nuclei_points_title_label
+        )
+
         self._points_qlist: QListWidget = QListWidget()
         self._regions_container_layout.addWidget(self._points_qlist)
+
+        self._confirm_points_container: QWidget = QWidget()
+        self._confirm_points_container_layout = QVBoxLayout()
+        self._confirm_points_container.setLayout(
+            self._confirm_points_container_layout
+        )
+
+        self._point_size_title_label: QLabel = QLabel("Point size")
+        self._point_size_title_label.setStyleSheet("font-weight: bold")
+        self._confirm_points_container_layout.addWidget(
+            self._point_size_title_label
+        )
+
+        self._square_size_spinbox: QSpinBox = QSpinBox()
+        self._square_size_spinbox.setRange(0, 1000000)
+        self._square_size_spinbox.setValue(90)
+        self._square_size_spinbox.valueChanged.connect(
+            self._square_size_spinbox_value_changed
+        )
+        self._confirm_points_container_layout.addWidget(
+            self._square_size_spinbox
+        )
+
+        self._create_squares_button: QPushButton = QPushButton(
+            "Create squares"
+        )
+        self._create_squares_button.clicked.connect(
+            self._create_squares_button_pressed
+        )
+        self._layout.addWidget(self._confirm_points_container)
+
+        self._save_squares_button: QPushButton = QPushButton("Save squares")
+        self._save_squares_button.clicked.connect(
+            self._save_squares_button_pressed
+        )
+        self._layout.addWidget(self._save_squares_button)
+
+        self._reset_gui()
 
     def _reset_gui(self) -> None:
         return
@@ -118,3 +162,12 @@ class PickNucleiWidget(QWidget):
         else:
             self._image_opened_label.setText("Image not opened")
             self._image_opened_label.setStyleSheet("color: red")
+
+    def _square_size_spinbox_value_changed(self) -> None:
+        return
+
+    def _create_squares_button_pressed(self) -> None:
+        return
+
+    def _save_squares_button_pressed(self) -> None:
+        return
