@@ -12,6 +12,7 @@ from carltonlab_napari_count_tool._model import (
     open_csv_as_points_layer,
     open_csv_as_shape_layer,
     open_image_as_layer,
+    save_layer_as_csv,
 )
 from carltonlab_napari_count_tool._shared_variables import (
     DEFAULT_PROJECT_NAME,
@@ -21,13 +22,14 @@ from carltonlab_napari_count_tool._shared_variables import (
     POINTS_SUMMARY_FILE_NAME,
     REGION_ROOT_NAME,
     REGIONS_DIR_NAME,
+    POINT_FILE_NAME_EXTENSION,
     SQUARES_FILE_NAME_EXTENSION,
 )
 
 
 def open_project(
     napari_viewer: ViewerModel, image_path: str
-) -> Literal["failed"] | tuple[str, Image, list[Points], Shapes]:
+) -> Literal["failed"] | tuple[str, Image, list[Points], Shapes, Shapes]:
     """
     The returns are
     tuple with a string with the pick_nuclei_directory_path, the image layer and the points layer
@@ -65,17 +67,17 @@ def open_project(
     regions_points_list: list[Points] = []
     number_of_regions = get_number_of_saved_regions(searching_project_path)
     for region_index in range(number_of_regions):
-        current_region_points_name = (
-            "region-" + str(region_index + 1) + "_points"
+        current_region_string = "region-" + str(region_index + 1)
+        current_region_points_file_name = (
+            current_region_string + POINT_FILE_NAME_EXTENSION
         )
-        current_region_points_file_name = current_region_points_name + ".csv"
         current_region_points_layer_path: str = os.path.join(
             pick_nuclei_directory, current_region_points_file_name
         )
         current_region_points_layer: Points | None
         if not os.path.exists(current_region_points_layer_path):
             current_region_points_layer = create_points_layer(
-                napari_viewer, current_region_points_name
+                napari_viewer, current_region_string + "_points"
             )
             regions_points_list.append(current_region_points_layer)
         else:
@@ -87,7 +89,9 @@ def open_project(
                     f"Couldn't load the points layer with path: {current_region_points_layer_path}."
                 )
                 continue
-            current_region_points_layer.name = current_region_points_name
+            current_region_points_layer.name = (
+                current_region_string + "_points"
+            )
             regions_points_list.append(current_region_points_layer)
     edited_regions_path: str = os.path.join(
         searching_project_path, REGIONS_DIR_NAME, EDITED_REGIONS_FILE_NAME
@@ -103,11 +107,15 @@ def open_project(
     if edited_regions_layer is None:
         show_info("Couldn't load the edited regions layer")
         return "failed"
+    current_region_layer: Shapes = napari_viewer.add_shapes(
+        name="current_region"
+    )
     return (
         pick_nuclei_directory,
         image_layer,
         regions_points_list,
         edited_regions_layer,
+        current_region_layer,
     )
 
 
@@ -129,12 +137,12 @@ def get_points_saved_list(
         pick_nuclei_directory, POINTS_SUMMARY_FILE_NAME
     )
     summary_parser = load_points_summary_file(points_summary_file_path)
-
     if summary_parser is None:
         summary_parser = create_summary_file(
             pick_nuclei_directory, number_of_regions
         )
     if len(summary_parser["NucleiCount"]) <= 0:
+        print("Returning without loading?")
         return points_saved_list
     for region_index in range(len(summary_parser["NucleiCount"])):
         region_str: str = "region-" + str(region_index + 1)
@@ -235,11 +243,14 @@ def save_points_summary_file(
 def load_points_summary_file(summary_file_path) -> ConfigParser | None:
     loaded_parser: ConfigParser | None = ConfigParser()
     try:
-        loaded_parser.read(summary_file_path)
+        read_file = loaded_parser.read(summary_file_path)
+        if not read_file:
+            loaded_parser = None
     except ConfigParserError:
         show_info("Couldn't load the points summary file")
         loaded_parser = None
         return loaded_parser
+    return loaded_parser
 
 
 def validate_image_open(
@@ -289,3 +300,36 @@ def open_squares_layers(
             shape_layer = napari_viewer.add_shapes(None, name=layer_name)
         returning_list.append(shape_layer)
     return returning_list
+
+
+def save_points_layer(
+    saving_layer: Points,
+    number_of_points: int,
+    pick_nuclei_directory: str,
+    region_index: int,
+) -> bool:
+    summary_file_path: str = os.path.join(
+        pick_nuclei_directory, POINTS_SUMMARY_FILE_NAME
+    )
+    summary_file_parser: ConfigParser | None = load_points_summary_file(
+        summary_file_path
+    )
+    if summary_file_parser is None:
+        return False
+    region_string: str = "region-" + str(region_index + 1)
+    summary_file_parser["NucleiCount"][region_string] = str(number_of_points)
+    summary_file_parser["SavedPointsState"][region_string] = "True"
+    try:
+        with open(summary_file_path, "w") as config_file:
+            summary_file_parser.write(config_file)
+    except ConfigParserError:
+        show_info("Error saving the points layer")
+        return False
+    if number_of_points == 0:
+        return True
+    region_points_file_name: str = region_string + POINT_FILE_NAME_EXTENSION
+    region_points_file_path: str = os.path.join(
+        pick_nuclei_directory, region_points_file_name
+    )
+    save_layer_as_csv(saving_layer, region_points_file_path)
+    return True

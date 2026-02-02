@@ -20,6 +20,7 @@ from carltonlab_napari_count_tool._pick_nuclei_widget_model import (
     get_points_saved_list,
     open_project,
     open_squares_layers,
+    save_points_layer,
 )
 from carltonlab_napari_count_tool._shared_widgets import confirm_dialog
 
@@ -37,6 +38,7 @@ class PickNucleiWidget(QWidget):
         self._points_layers: list[Points] | None = None
         self._squares_shapes_layers: list[Shapes] | None = None
         self._edited_regions_layer: Shapes | None = None
+        self._current_region_layer: Shapes | None = None
         self._pick_nuclei_directory: str | None = None
         self._number_of_regions: int
         # The points saved list contains a list of the regions. If the entry is None,
@@ -246,7 +248,7 @@ class PickNucleiWidget(QWidget):
                             self._napari_viewer.layers.remove(napari_layer)
                             break
         open_answer: (
-            Literal["failed"] | tuple[str, Image, list[Points], Shapes]
+            Literal["failed"] | tuple[str, Image, list[Points], Shapes, Shapes]
         ) = open_project(self._napari_viewer, file_path)
         if open_answer == "failed":
             show_info("Failed to open project")
@@ -255,6 +257,7 @@ class PickNucleiWidget(QWidget):
         self._image_layer = open_answer[1]
         self._points_layers = open_answer[2]
         self._edited_regions_layer = open_answer[3]
+        self._current_region_layer = open_answer[4]
         self._number_of_regions = len(
             self._edited_regions_layer._data_view.shapes
         )
@@ -262,6 +265,7 @@ class PickNucleiWidget(QWidget):
         self._squares_shapes_layers = self._open_squares_layers()
         self._update_labels()
         self._update_list()
+        self._evaluate_points_saved()
 
     def _load_points_saved_list(self, number_of_regions: int) -> None:
         self._points_saved_list = get_points_saved_list(
@@ -316,7 +320,7 @@ class PickNucleiWidget(QWidget):
             q_list_widget.set_squares_created_label_state(saved_squares_state)
             q_list_widget.set_sbs_cut_label_state(saved_sbs_state)
         q_list.repaint()
-        print("Updated list with number_of_regions")
+        self._evaluate_points_saved()
 
     def _set_open_image_label_state(self, state: bool) -> None:
         if state:
@@ -370,37 +374,95 @@ class PickNucleiWidget(QWidget):
 
     def _regions_qlist_item_selection_changed(self) -> None:
         widget_selected_index = self._regions_qlist.currentRow()
-        corresponding_tuple: tuple[int, bool, bool, bool] = cast(
-            tuple[int, bool, bool, bool],
-            self._points_saved_list[widget_selected_index],
-        )
         image_layer = cast(Image, self._image_layer)
-        edited_regions_layer = cast(Points, self._edited_regions_layer)
+        edited_regions_layer = cast(Shapes, self._edited_regions_layer)
+        current_region_data_copy = edited_regions_layer._data_view.shapes[
+            widget_selected_index
+        ].data.copy()
+        current_region_layer = cast(Shapes, self._current_region_layer)
+        current_region_layer.data = []
+        current_region_layer.add_polygons(current_region_data_copy)
+        current_region_layer.visible = True
+        current_region_layer.refresh()
         for layer in self._napari_viewer.layers:
             if layer.name == image_layer.name:
                 continue
-            if layer.name == edited_regions_layer.name:
+            if layer.name == current_region_layer.name:
                 continue
             layer.visible = False
-        if not corresponding_tuple[1]:
-            points_layers_list: list[Points] = cast(
-                list[Points], self._points_layers
-            )
-            points_layers_list[widget_selected_index].visible = True
-            self._napari_viewer.layers.selection.active = points_layers_list[
-                widget_selected_index
-            ]
-            return
+        points_layers_list: list[Points] = cast(
+            list[Points], self._points_layers
+        )
+        points_layers_list[widget_selected_index].visible = True
         squares_shapes_layers_list: list[Shapes] = cast(
             list[Shapes], self._squares_shapes_layers
         )
         squares_shapes_layers_list[widget_selected_index].visible = True
+        current_saved_points_tuple: tuple[int, bool, bool, bool] = cast(
+            tuple[int, bool, bool, bool],
+            self._points_saved_list[widget_selected_index],
+        )
+        if not current_saved_points_tuple[1]:
+            self._napari_viewer.layers.selection.active = points_layers_list[
+                widget_selected_index
+            ]
+            return
         self._napari_viewer.layers.selection.active = (
             squares_shapes_layers_list[widget_selected_index]
         )
 
     def _save_points_button_pressed(self) -> None:
+        print("")
+        print("Really before:")
+        print(self._points_saved_list)
+        if self._pick_nuclei_directory is None:
+            return
+        selected_region_index = self._regions_qlist.currentRow()
+        casting_first: list[Points] = cast(list[Points], self._points_layers)
+        saving_points_layer: Points = cast(
+            Points, casting_first[selected_region_index]
+        )
+        number_of_points: int = len(saving_points_layer.data)
+        print("The number of points is:")
+        print(number_of_points)
+
+        if save_points_layer(
+            saving_points_layer,
+            number_of_points,
+            self._pick_nuclei_directory,
+            selected_region_index,
+        ):
+            print("Before change: ")
+            print(self._points_saved_list)
+            tuple_element: tuple[int, bool, bool, bool] = cast(
+                tuple[int, bool, bool, bool],
+                self._points_saved_list[selected_region_index],
+            )
+            new_tuple_element: tuple[int, bool, bool, bool] = (
+                number_of_points,
+                True,
+                tuple_element[2],
+                tuple_element[3],
+            )
+            self._points_saved_list[selected_region_index] = new_tuple_element
+            print("after change:")
+            print(self._points_saved_list)
+        self._update_list()
+        self._evaluate_points_saved()
+
         return
+
+    def _evaluate_points_saved(self) -> None:
+        points_saved_list = self._points_saved_list
+        if points_saved_list is None:
+            return
+        all_points_saved_list: list[bool] = [
+            save_tuple[1] for save_tuple in points_saved_list
+        ]
+        if not any(all_points_saved_list):
+            self._set_points_saved_label_state(False)
+        else:
+            self._set_points_saved_label_state(True)
 
     def _square_size_spinbox_value_changed(self) -> None:
         return
