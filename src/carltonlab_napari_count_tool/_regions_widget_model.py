@@ -90,7 +90,7 @@ def create_new_project(
         show_info("Image could not be loaded")
         return None
     spline_layer: Shapes = napari_viewer.add_shapes(
-        name=SPLINE_LAYER_DEFAULT_NAME
+        name=SPLINE_LAYER_DEFAULT_NAME, ndim=2
     )
     return (regions_path, image_layer, spline_layer)
 
@@ -306,9 +306,15 @@ def get_spline_equal_segments(
 
 
 def create_regions_layer(
-    napari_viewer: ViewerModel, spline_points: list[np.ndarray]
+    napari_viewer: ViewerModel,
+    spline_points: list[np.ndarray],
+    image_layer_dims: int,
 ) -> Shapes:
-    regions_layer = napari_viewer.add_shapes(name=REGIONS_LAYER_DEFAULT_NAME)
+    print(f"Creating layer with dim: {image_layer_dims}")
+    regions_layer = napari_viewer.add_shapes(
+        name=REGIONS_LAYER_DEFAULT_NAME, ndim=2
+    )
+    spline_points = rectify_path_dimensions(spline_points, image_layer_dims)
     regions_layer.add_paths(
         spline_points,
         edge_width=REGIONS_DEFAULT_WIDTH,
@@ -317,13 +323,49 @@ def create_regions_layer(
     return regions_layer
 
 
+def rectify_path_dimensions(
+    spline_points: list[np.ndarray], image_layer_dims: int
+) -> list[np.ndarray]:
+    target_dims = image_layer_dims
+    if target_dims < 2:
+        raise ValueError(f"image_layer_dims must be >= 2, got {target_dims}")
+
+    out: list[np.ndarray] = []
+
+    for i, p in enumerate(spline_points):
+        p = np.asarray(p, dtype=np.float32)
+
+        if p.ndim != 2:
+            raise ValueError(f"segment {i}: expected (N,D), got {p.shape}")
+
+        n, d = p.shape
+        if d < 2:
+            raise ValueError(
+                f"segment {i}: expected at least 2 cols, got {p.shape}"
+            )
+
+        # take the spline coords from the first two columns (your existing format)
+        xy = p[:, :2]
+
+        if target_dims == 2:
+            out.append(xy)
+            continue
+
+        full = np.zeros((n, target_dims), dtype=np.float32)
+        full[:, -2:] = xy  # last two axes are the spline points
+        out.append(full)
+
+    return out
+
+
 def create_edited_regions_layer(
-    napari_viewer: "ViewerModel", regions_layer: Shapes
+    napari_viewer: "ViewerModel", regions_layer: Shapes, image_layer_dims: int
 ) -> Shapes:
     edited_regions_layer = napari_viewer.add_shapes(
         name=EDITED_REGIONS_LAYER_NAME,
         edge_width=REGIONS_DEFAULT_WIDTH,
         edge_color=EDITED_REGION_COLOR,
+        ndim=2,
     )
     data_list = []
     for shape_obj in regions_layer._data_view.shapes:
@@ -378,21 +420,75 @@ def expand_shape(
     setting_type = "polygon"
     if expanding_factor < 0:
         return
+
     original_shape_data = spline_layer._data_view.shapes[
         shape_index
     ].data.copy()
+
+    # If data is (N, >2), treat last two columns as the 2D geometry (YX),
+    # and preserve the leading columns as metadata dims (e.g. Z,C).
+    if original_shape_data.ndim != 2 or original_shape_data.shape[1] < 2:
+        raise ValueError(
+            f"Expected (N,D) with D>=2, got {original_shape_data.shape}"
+        )
+
+    leading = None
+    xy = original_shape_data
+
+    if original_shape_data.shape[1] > 2:
+        leading = original_shape_data[:, :-2].copy()
+        xy = original_shape_data[:, -2:].copy()
+
     if expanding_factor == 0:
-        new_polyline_data = original_shape_data.copy()
+        # keep as path
+        new_polyline_data_xy = xy
         setting_type = "path"
     else:
-        new_polyline_data = stroke_polyline_to_polygon(
-            original_shape_data, expanding_factor
+        new_polyline_data_xy = stroke_polyline_to_polygon(xy, expanding_factor)
+
+    # Reattach leading dims (set them to the same values as the original)
+    if leading is not None:
+        # For polygons, the number of vertices changes, so broadcast the leading dims.
+        lead_row = leading[0:1, :]  # (1, D-2)
+        lead_full = np.repeat(lead_row, new_polyline_data_xy.shape[0], axis=0)
+        new_polyline_data = np.concatenate(
+            [lead_full, new_polyline_data_xy], axis=1
         )
+    else:
+        new_polyline_data = new_polyline_data_xy
+
     expanded_shapes_layer._data_view.edit(
         shape_index, new_polyline_data, new_type=setting_type
     )
     shape_object._update_displayed_data()
     expanded_shapes_layer.refresh()
+
+
+# def expand_shape(
+#    spline_layer: Shapes,
+#    expanded_shapes_layer: Shapes,
+#    shape_object: Shape,
+#    shape_index: int,
+#    expanding_factor: int,
+# ) -> None:
+#    setting_type = "polygon"
+#    if expanding_factor < 0:
+#        return
+#    original_shape_data = spline_layer._data_view.shapes[
+#        shape_index
+#    ].data.copy()
+#    if expanding_factor == 0:
+#        new_polyline_data = original_shape_data.copy()
+#        setting_type = "path"
+#    else:
+#        new_polyline_data = stroke_polyline_to_polygon(
+#            original_shape_data, expanding_factor
+#        )
+#    expanded_shapes_layer._data_view.edit(
+#        shape_index, new_polyline_data, new_type=setting_type
+#    )
+#    shape_object._update_displayed_data()
+#    expanded_shapes_layer.refresh()
 
 
 def _normalize(v: np.ndarray, eps: float = 1e-12) -> np.ndarray:

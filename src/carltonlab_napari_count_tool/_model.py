@@ -36,9 +36,9 @@ def open_csv_as_points_layer(
 
 
 def create_points_layer(
-    napari_viewer: "ViewerModel", layer_name: str
+    napari_viewer: "ViewerModel", layer_name: str, layer_dims: int = 2
 ) -> Points:
-    points_layer = napari_viewer.add_points(name=layer_name)
+    points_layer = napari_viewer.add_points(name=layer_name, ndim=layer_dims)
     return points_layer
 
 

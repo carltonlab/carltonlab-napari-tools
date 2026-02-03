@@ -8,7 +8,6 @@ from napari.utils.notifications import show_info
 from napari.viewer import ViewerModel
 
 from carltonlab_napari_count_tool._model import (
-    create_points_layer,
     open_csv_as_points_layer,
     open_csv_as_shape_layer,
     open_image_as_layer,
@@ -19,17 +18,29 @@ from carltonlab_napari_count_tool._shared_variables import (
     EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME,
     EDITED_REGIONS_FILE_NAME,
     PICK_NUCLEI_DIR_NAME,
+    POINT_FILE_NAME_EXTENSION,
     POINTS_SUMMARY_FILE_NAME,
     REGION_ROOT_NAME,
     REGIONS_DIR_NAME,
-    POINT_FILE_NAME_EXTENSION,
     SQUARES_FILE_NAME_EXTENSION,
 )
 
 
-def open_project(
-    napari_viewer: ViewerModel, image_path: str
-) -> Literal["failed"] | tuple[str, Image, list[Points], Shapes, Shapes]:
+def open_project(napari_viewer: ViewerModel, image_path: str) -> (
+    Literal["failed"]
+    | tuple[
+        str,
+        Image,
+        list[Points],
+        list[Shapes],
+        Shapes,
+        Shapes,
+        Shapes,
+        Points,
+        Shapes,
+        list[tuple[int, bool, bool, bool] | None],
+    ]
+):
     """
     The returns are
     tuple with a string with the pick_nuclei_directory_path, the image layer and the points layer
@@ -64,35 +75,18 @@ def open_project(
     if image_layer is None:
         show_info("Couldn't load the image layer")
         return "failed"
-    regions_points_list: list[Points] = []
+    image_layer_dims = image_layer.ndim
     number_of_regions = get_number_of_saved_regions(searching_project_path)
-    for region_index in range(number_of_regions):
-        current_region_string = "region-" + str(region_index + 1)
-        current_region_points_file_name = (
-            current_region_string + POINT_FILE_NAME_EXTENSION
-        )
-        current_region_points_layer_path: str = os.path.join(
-            pick_nuclei_directory, current_region_points_file_name
-        )
-        current_region_points_layer: Points | None
-        if not os.path.exists(current_region_points_layer_path):
-            current_region_points_layer = create_points_layer(
-                napari_viewer, current_region_string + "_points"
-            )
-            regions_points_list.append(current_region_points_layer)
-        else:
-            current_region_points_layer = open_csv_as_points_layer(
-                napari_viewer, current_region_points_layer_path
-            )
-            if current_region_points_layer is None:
-                show_info(
-                    f"Couldn't load the points layer with path: {current_region_points_layer_path}."
-                )
-                continue
-            current_region_points_layer.name = (
-                current_region_string + "_points"
-            )
-            regions_points_list.append(current_region_points_layer)
+    points_squares_tuple: (
+        tuple[list[Points], list[Shapes]] | Literal["failed"]
+    ) = open_points_and_squares_layers(
+        napari_viewer,
+        pick_nuclei_directory,
+        number_of_regions,
+        image_layer_dims,
+    )
+    if points_squares_tuple == "failed":
+        return "failed"
     edited_regions_path: str = os.path.join(
         searching_project_path, REGIONS_DIR_NAME, EDITED_REGIONS_FILE_NAME
     )
@@ -108,15 +102,87 @@ def open_project(
         show_info("Couldn't load the edited regions layer")
         return "failed"
     current_region_layer: Shapes = napari_viewer.add_shapes(
-        name="current_region"
+        name="current_region", ndim=2
+    )
+    extra_regions_layer: Shapes = napari_viewer.add_shapes(
+        name="extra_regions", ndim=2
+    )
+    all_points_layer: Points = napari_viewer.add_points(
+        name="all_points_layer", ndim=2
+    )
+    all_squares_layer: Shapes = napari_viewer.add_shapes(
+        name="all_squares_layer", ndim=2
+    )
+    saved_points_list: list[tuple[int, bool, bool, bool] | None] = (
+        get_points_saved_list(pick_nuclei_directory, number_of_regions)
     )
     return (
         pick_nuclei_directory,
         image_layer,
-        regions_points_list,
+        points_squares_tuple[0],
+        points_squares_tuple[1],
         edited_regions_layer,
         current_region_layer,
+        extra_regions_layer,
+        all_points_layer,
+        all_squares_layer,
+        saved_points_list,
     )
+
+
+def open_points_and_squares_layers(
+    napari_viewer: ViewerModel,
+    pick_nuclei_directory: str,
+    number_of_regions: int,
+    image_dims: int,
+) -> tuple[list[Points], list[Shapes]] | Literal["failed"]:
+    returning_points: list[Points] = []
+    returning_squares: list[Shapes] = []
+    for region_index in range(number_of_regions):
+        current_region_string = "region-" + str(region_index + 1)
+        current_points_file_name: str = os.path.join(
+            current_region_string + POINT_FILE_NAME_EXTENSION
+        )
+        current_points_file_path: str = os.path.join(
+            pick_nuclei_directory, current_points_file_name
+        )
+        current_point_layer: Points | None
+        if not os.path.exists(current_points_file_path):
+            current_point_layer = napari_viewer.add_points(
+                name=current_region_string + "_points", ndim=image_dims
+            )
+        else:
+            current_point_layer = open_csv_as_points_layer(
+                napari_viewer, current_points_file_path
+            )
+        if current_point_layer is None:
+            show_info(
+                f"Couldn't load the points layer {current_points_file_path}"
+            )
+            return "failed"
+        returning_points.append(current_point_layer)
+        current_square_file_name: str = os.path.join(
+            current_region_string + SQUARES_FILE_NAME_EXTENSION
+        )
+        current_square_file_path: str = os.path.join(
+            pick_nuclei_directory, current_square_file_name
+        )
+        current_square_layer: Shapes | None
+        if not os.path.exists(current_square_file_path):
+            current_square_layer = napari_viewer.add_shapes(
+                name=current_region_string + "_squares", ndim=2
+            )
+        else:
+            current_square_layer = open_csv_as_shape_layer(
+                napari_viewer, current_square_file_path
+            )
+        if current_square_layer is None:
+            show_info(
+                f"Couldn't load the squares layer {current_square_file_path}"
+            )
+            return "failed"
+        returning_squares.append(current_square_layer)
+    return (returning_points, returning_squares)
 
 
 def str_to_bool(value: str) -> bool:
@@ -269,13 +335,16 @@ def open_squares_layers(
     napari_viewer: ViewerModel,
     pick_nuclei_directory: str,
     saved_points_list: list[tuple[int, bool, bool, bool] | None],
+    image_layer_dims: int,
 ) -> list[Shapes]:
     returning_list: list[Shapes] = []
     for region_index in range(len(saved_points_list)):
         shape_layer: Shapes | None
         layer_name: str = "region-" + str(region_index + 1) + "_squares"
         if saved_points_list[region_index] is None:
-            shape_layer = napari_viewer.add_shapes(None, name=layer_name)
+            shape_layer = napari_viewer.add_shapes(
+                None, name=layer_name, ndim=image_layer_dims
+            )
             returning_list.append(shape_layer)
             continue
         tuple_element: tuple[int, bool, bool, bool] = cast(
@@ -297,7 +366,9 @@ def open_squares_layers(
                 return []
             shape_layer.name = layer_name
         else:
-            shape_layer = napari_viewer.add_shapes(None, name=layer_name)
+            shape_layer = napari_viewer.add_shapes(
+                None, name=layer_name, ndim=image_layer_dims
+            )
         returning_list.append(shape_layer)
     return returning_list
 
@@ -333,3 +404,11 @@ def save_points_layer(
     )
     save_layer_as_csv(saving_layer, region_points_file_path)
     return True
+
+
+def create_squares_layers_from_points_layer(
+    points_layer: Points, squares_layer: Shapes, square_width: int
+) -> None:
+    if not len(points_layer.data):
+        show_info("There's no points in the layer to crete squares")
+        return

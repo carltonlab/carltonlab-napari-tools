@@ -460,7 +460,7 @@ class RegionWidget(QWidget):
             points_per_segment=10,
         )
         self._regions_layer = create_regions_layer(
-            self._napari_viewer, spline_paths
+            self._napari_viewer, spline_paths, 2
         )
         self._spline_layer.visible = False
         save_shapes_layer(
@@ -472,7 +472,7 @@ class RegionWidget(QWidget):
         self._set_regions_created_state(True)
         self._update_layers_labels()
         self._edited_regions_layer = create_edited_regions_layer(
-            self._napari_viewer, self._regions_layer
+            self._napari_viewer, self._regions_layer, 2
         )
         self._update_edited_regions_widget()
         self._regions_layer.visible = False

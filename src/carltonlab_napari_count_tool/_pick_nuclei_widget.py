@@ -1,9 +1,10 @@
 from typing import TYPE_CHECKING, Literal, cast
 
-from napari.layers import Image, Points, Shapes
+from napari.layers import Image, Layer, Points, Shapes
 from napari.utils.notifications import show_info
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -17,6 +18,7 @@ from qtpy.QtWidgets import (
 )
 
 from carltonlab_napari_count_tool._pick_nuclei_widget_model import (
+    create_squares_layers_from_points_layer,
     get_points_saved_list,
     open_project,
     open_squares_layers,
@@ -39,6 +41,9 @@ class PickNucleiWidget(QWidget):
         self._squares_shapes_layers: list[Shapes] | None = None
         self._edited_regions_layer: Shapes | None = None
         self._current_region_layer: Shapes | None = None
+        self._extra_regions_layer: Shapes | None = None
+        self._all_points_layer: Points | None = None
+        self._all_squares_layer: Shapes | None = None
         self._pick_nuclei_directory: str | None = None
         self._number_of_regions: int
         # The points saved list contains a list of the regions. If the entry is None,
@@ -91,6 +96,17 @@ class PickNucleiWidget(QWidget):
             self._regions_qlist_item_selection_changed
         )
         self._regions_container_layout.addWidget(self._regions_qlist)
+
+        self._show_all_regions_checkbox: QCheckBox = QCheckBox(
+            "Show all regions"
+        )
+        self._show_all_regions_checkbox.setChecked(True)
+        self._show_all_regions_checkbox.stateChanged.connect(
+            self._show_all_regions_checkbox_state_changed
+        )
+        self._regions_container_layout.addWidget(
+            self._show_all_regions_checkbox
+        )
 
         self._confirm_points_container: QWidget = QWidget()
         self._confirm_points_container_layout = QVBoxLayout()
@@ -248,7 +264,19 @@ class PickNucleiWidget(QWidget):
                             self._napari_viewer.layers.remove(napari_layer)
                             break
         open_answer: (
-            Literal["failed"] | tuple[str, Image, list[Points], Shapes, Shapes]
+            Literal["failed"]
+            | tuple[
+                str,
+                Image,
+                list[Points],
+                list[Shapes],
+                Shapes,
+                Shapes,
+                Shapes,
+                Points,
+                Shapes,
+                list[tuple[int, bool, bool, bool] | None],
+            ]
         ) = open_project(self._napari_viewer, file_path)
         if open_answer == "failed":
             show_info("Failed to open project")
@@ -256,13 +284,16 @@ class PickNucleiWidget(QWidget):
         self._pick_nuclei_directory = open_answer[0]
         self._image_layer = open_answer[1]
         self._points_layers = open_answer[2]
-        self._edited_regions_layer = open_answer[3]
-        self._current_region_layer = open_answer[4]
+        self._squares_shapes_layers = open_answer[3]
+        self._edited_regions_layer = open_answer[4]
+        self._current_region_layer = open_answer[5]
+        self._extra_regions_layer = open_answer[6]
+        self._all_points_layer = open_answer[7]
+        self._all_squares_layer = open_answer[8]
+        self._points_saved_list = open_answer[9]
         self._number_of_regions = len(
             self._edited_regions_layer._data_view.shapes
         )
-        self._load_points_saved_list(self._number_of_regions)
-        self._squares_shapes_layers = self._open_squares_layers()
         self._update_labels()
         self._update_list()
         self._evaluate_points_saved()
@@ -275,10 +306,13 @@ class PickNucleiWidget(QWidget):
     def _open_squares_layers(self) -> list[Shapes]:
         if self._pick_nuclei_directory is None:
             return []
+        if self._image_layer is None:
+            return []
         return open_squares_layers(
             self._napari_viewer,
             self._pick_nuclei_directory,
             self._points_saved_list,
+            self._image_layer.ndim,
         )
 
     def _update_labels(self) -> None:
@@ -372,32 +406,79 @@ class PickNucleiWidget(QWidget):
             self._create_sbs_files_label.setText("SBS files not created")
             self._create_sbs_files_label.setStyleSheet("color: red")
 
+    def _set_layers_color_and_opacity(
+        self, setting_layer: Layer, opacity: float, color: str
+    ):
+        setting_layer.opacity = opacity
+        if isinstance(setting_layer, Shapes):
+            setting_layer.edge_color = color
+        if isinstance(setting_layer, Points):
+            setting_layer.border_color = color
+        if isinstance(setting_layer, Shapes | Points):
+            setting_layer.face_color = color
+            setting_layer.refresh_colors()
+        setting_layer.refresh()
+
     def _regions_qlist_item_selection_changed(self) -> None:
-        widget_selected_index = self._regions_qlist.currentRow()
         image_layer = cast(Image, self._image_layer)
-        edited_regions_layer = cast(Shapes, self._edited_regions_layer)
-        current_region_data_copy = edited_regions_layer._data_view.shapes[
-            widget_selected_index
-        ].data.copy()
         current_region_layer = cast(Shapes, self._current_region_layer)
-        current_region_layer.data = []
-        current_region_layer.add_polygons(current_region_data_copy)
-        current_region_layer.visible = True
-        current_region_layer.refresh()
         for layer in self._napari_viewer.layers:
             if layer.name == image_layer.name:
                 continue
             if layer.name == current_region_layer.name:
                 continue
             layer.visible = False
+        show_all_regions_state = self._show_all_regions_checkbox.isChecked()
+        widget_selected_index = self._regions_qlist.currentRow()
+        edited_regions_layer = cast(Shapes, self._edited_regions_layer)
+        edited_regions_layer.visible = False
+        current_region_data_copy = edited_regions_layer._data_view.shapes[
+            widget_selected_index
+        ].data.copy()
+        current_region_layer.data = []
+        current_region_layer.add_polygons(current_region_data_copy)
+        current_region_layer.visible = True
+        self._set_layers_color_and_opacity(current_region_layer, 0.5, "yellow")
+        extra_regions_layer = cast(Shapes, self._extra_regions_layer)
+        if show_all_regions_state:
+            new_appending_data = []
+            for shape_index, shape_object in enumerate(
+                edited_regions_layer._data_view.shapes
+            ):
+                if shape_index != widget_selected_index:
+                    new_appending_data.append(shape_object.data)
+            extra_regions_layer.data = new_appending_data
+            extra_regions_layer.visible = True
+            self._set_layers_color_and_opacity(extra_regions_layer, 0.3, "red")
         points_layers_list: list[Points] = cast(
             list[Points], self._points_layers
         )
-        points_layers_list[widget_selected_index].visible = True
-        squares_shapes_layers_list: list[Shapes] = cast(
+        squares_layers_list: list[Shapes] = cast(
             list[Shapes], self._squares_shapes_layers
         )
-        squares_shapes_layers_list[widget_selected_index].visible = True
+        if show_all_regions_state:
+            for points_layer_index, points_layer in enumerate(
+                points_layers_list
+            ):
+                if points_layer_index == widget_selected_index:
+                    continue
+                self._set_layers_color_and_opacity(points_layer, 0.3, "red")
+                points_layer.visible = True
+            for shapes_layer_index, shapes_layer in enumerate(
+                squares_layers_list
+            ):
+                if shapes_layer_index == widget_selected_index:
+                    continue
+                self._set_layers_color_and_opacity(shapes_layer, 0.3, "red")
+                shapes_layer.visible = True
+        points_layers_list[widget_selected_index].visible = True
+        self._set_layers_color_and_opacity(
+            points_layers_list[widget_selected_index], 1.0, "yellow"
+        )
+        squares_layers_list[widget_selected_index].visible = True
+        self._set_layers_color_and_opacity(
+            squares_layers_list[widget_selected_index], 0.4, "yellow"
+        )
         current_saved_points_tuple: tuple[int, bool, bool, bool] = cast(
             tuple[int, bool, bool, bool],
             self._points_saved_list[widget_selected_index],
@@ -407,9 +488,9 @@ class PickNucleiWidget(QWidget):
                 widget_selected_index
             ]
             return
-        self._napari_viewer.layers.selection.active = (
-            squares_shapes_layers_list[widget_selected_index]
-        )
+        self._napari_viewer.layers.selection.active = squares_layers_list[
+            widget_selected_index
+        ]
 
     def _save_points_button_pressed(self) -> None:
         print("")
@@ -468,6 +549,28 @@ class PickNucleiWidget(QWidget):
         return
 
     def _create_squares_button_pressed(self) -> None:
+        current_list_index = self._regions_qlist.currentRow()
+        if self._points_layers is None or self._squares_shapes_layers is None:
+            show_info("The points of squares layers are not open. EROR")
+            return
+        if (
+            self._points_layers[current_list_index] is None
+            or self._squares_shapes_layers[current_list_index] is None
+        ):
+            show_info("The points of squares layers are not open. EROR")
+            return
+        if len(self._squares_shapes_layers[current_list_index].data):
+            confirm_result = confirm_dialog(
+                self._napari_viewer, "Squares are created, replace?", True
+            )
+            if not confirm_result:
+                return
+        square_width: int = self._square_size_spinbox.value()
+        create_squares_layers_from_points_layer(
+            self._points_layers[current_list_index],
+            self._squares_shapes_layers[current_list_index],
+            square_width,
+        )
         return
 
     def _save_squares_button_pressed(self) -> None:
@@ -481,6 +584,9 @@ class PickNucleiWidget(QWidget):
 
     def _show_region_squares_layer_button_pressed(self) -> None:
         return
+
+    def _show_all_regions_checkbox_state_changed(self) -> None:
+        self._regions_qlist_item_selection_changed()
 
 
 class RegionListWidget(QWidget):
