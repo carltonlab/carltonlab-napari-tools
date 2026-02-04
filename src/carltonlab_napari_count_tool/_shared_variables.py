@@ -7,6 +7,8 @@ SBS_ROOT_NAME = "sbs-"
 POINT_FILE_NAME_EXTENSION = "_points_layer.csv"
 SQUARES_FILE_NAME_EXTENSION = "_squares_layer.csv"
 SBS_FILE_NAME_EXTENSION = "_cut_nuclei.tif"
+CUT_SBS_DIR_NAME = "cut_sbs"
+SBS_FILE_NAME_EXTENSION = "_cut_sbs.tif"
 
 
 REGIONS_DIR_NAME = "regions"

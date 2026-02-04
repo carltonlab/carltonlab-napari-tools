@@ -3,9 +3,11 @@ from configparser import ConfigParser
 from configparser import Error as ConfigParserError
 from typing import Literal, cast
 
+import numpy as np
 from napari.layers import Image, Points, Shapes
 from napari.utils.notifications import show_info
 from napari.viewer import ViewerModel
+from numpy.typing import NDArray
 
 from carltonlab_napari_count_tool._model import (
     open_csv_as_points_layer,
@@ -14,6 +16,7 @@ from carltonlab_napari_count_tool._model import (
     save_layer_as_csv,
 )
 from carltonlab_napari_count_tool._shared_variables import (
+    CUT_SBS_DIR_NAME,
     DEFAULT_PROJECT_NAME,
     EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME,
     EDITED_REGIONS_FILE_NAME,
@@ -22,6 +25,7 @@ from carltonlab_napari_count_tool._shared_variables import (
     POINTS_SUMMARY_FILE_NAME,
     REGION_ROOT_NAME,
     REGIONS_DIR_NAME,
+    SBS_FILE_NAME_EXTENSION,
     SQUARES_FILE_NAME_EXTENSION,
 )
 
@@ -36,6 +40,7 @@ def open_project(napari_viewer: ViewerModel, image_path: str) -> (
         Shapes,
         Shapes,
         Shapes,
+        Points,
         Points,
         Shapes,
         list[tuple[int, bool, bool, bool] | None],
@@ -108,7 +113,10 @@ def open_project(napari_viewer: ViewerModel, image_path: str) -> (
         name="extra_regions", ndim=2
     )
     all_points_layer: Points = napari_viewer.add_points(
-        name="all_points_layer", ndim=2
+        name="all_points_layer", ndim=image_layer_dims
+    )
+    all_points_2d_layer: Points = napari_viewer.add_points(
+        name="all_points_2d", ndim=2
     )
     all_squares_layer: Shapes = napari_viewer.add_shapes(
         name="all_squares_layer", ndim=2
@@ -125,6 +133,7 @@ def open_project(napari_viewer: ViewerModel, image_path: str) -> (
         current_region_layer,
         extra_regions_layer,
         all_points_layer,
+        all_points_2d_layer,
         all_squares_layer,
         saved_points_list,
     )
@@ -373,9 +382,9 @@ def open_squares_layers(
     return returning_list
 
 
-def save_points_layer(
-    saving_layer: Points,
-    number_of_points: int,
+def save_points_or_square_layer(
+    saving_layer: Points | Shapes,
+    number_of_points: int | None,
     pick_nuclei_directory: str,
     region_index: int,
 ) -> bool:
@@ -388,8 +397,13 @@ def save_points_layer(
     if summary_file_parser is None:
         return False
     region_string: str = "region-" + str(region_index + 1)
-    summary_file_parser["NucleiCount"][region_string] = str(number_of_points)
-    summary_file_parser["SavedPointsState"][region_string] = "True"
+    if isinstance(saving_layer, Points):
+        summary_file_parser["NucleiCount"][region_string] = str(
+            number_of_points
+        )
+        summary_file_parser["SavedPointsState"][region_string] = "True"
+    if isinstance(saving_layer, Shapes):
+        summary_file_parser["SavedSquaresState"][region_string] = "True"
     try:
         with open(summary_file_path, "w") as config_file:
             summary_file_parser.write(config_file)
@@ -398,11 +412,24 @@ def save_points_layer(
         return False
     if number_of_points == 0:
         return True
-    region_points_file_name: str = region_string + POINT_FILE_NAME_EXTENSION
-    region_points_file_path: str = os.path.join(
-        pick_nuclei_directory, region_points_file_name
-    )
-    save_layer_as_csv(saving_layer, region_points_file_path)
+    saving_file_path = ""
+    if isinstance(saving_layer, Points):
+        region_points_file_name: str = (
+            region_string + POINT_FILE_NAME_EXTENSION
+        )
+        region_points_file_path: str = os.path.join(
+            pick_nuclei_directory, region_points_file_name
+        )
+        saving_file_path = region_points_file_path
+    if isinstance(saving_layer, Shapes):
+        region_squares_file_name: str = (
+            region_string + SQUARES_FILE_NAME_EXTENSION
+        )
+        region_squares_file_path: str = os.path.join(
+            pick_nuclei_directory, region_squares_file_name
+        )
+        saving_file_path = region_squares_file_path
+    save_layer_as_csv(saving_layer, saving_file_path)
     return True
 
 
@@ -412,3 +439,55 @@ def create_squares_layers_from_points_layer(
     if not len(points_layer.data):
         show_info("There's no points in the layer to crete squares")
         return
+    points_data = points_layer.data
+    points_np_data = np.asarray(points_data)
+    half_size = square_width / 2
+    xy_points = points_np_data[:, (-2, -1)]
+    offsets = np.array(
+        [
+            [-half_size, -half_size],
+            [half_size, -half_size],
+            [half_size, half_size],
+            [-half_size, half_size],
+        ],
+        dtype=xy_points.dtype,
+    )
+    squares_np_data = xy_points[:, None, :] + offsets[None, :, :]
+    squares_layer.data = squares_np_data
+    squares_layer.refresh()
+
+
+def cut_sbs_files_from_squares_and_image_layers(
+    image_layer: Image,
+    squares_layer: Shapes,
+    pick_nuclei_directory: str,
+    region_index: int,
+) -> bool:
+    region_str: str = "region-" + str(region_index + 1)
+    squares_array = squares_layer.data
+    image_data: NDArray[np.generic] = np.asarray(image_layer.data)
+    cut_sbs_dir: str = os.path.join(pick_nuclei_directory, CUT_SBS_DIR_NAME)
+    os.makedirs(cut_sbs_dir, exist_ok=True)
+    img_y, img_x = image_data.shape[-2:]
+    for square_index, square_array in enumerate(squares_array):
+        current_square = np.asarray(square_array)
+        y1, x1 = np.floor(current_square.min(axis=0)).astype(int)
+        y2, x2 = np.floor(current_square.max(axis=0)).astype(int) + 1
+        y1 = max(0, y1)
+        x1 = max(0, x1)
+        y2 = min(img_y, y2)
+        x2 = min(img_x, x2)
+        if y2 <= y1 or x2 <= x1:
+            continue
+        cropped_image = image_data[..., y1:y2, x1:x2]
+        sbs_name = (
+            region_str
+            + "_sbs"
+            + str(square_index + 1)
+            + SBS_FILE_NAME_EXTENSION
+        )
+        cropped_layer: Image = Image(cropped_image, name=sbs_name)
+        saving_file_path = os.path.join(cut_sbs_dir, sbs_name)
+        cropped_layer.save(saving_file_path)
+
+    return True
