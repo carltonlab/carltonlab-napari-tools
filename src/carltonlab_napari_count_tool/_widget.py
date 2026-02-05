@@ -15,6 +15,9 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from carltonlab_napari_count_tool._multi_gonad_widget import (
+    MakeMultiGonadWidget,
+)
 from carltonlab_napari_count_tool._pick_nuclei_widget import PickNucleiWidget
 from carltonlab_napari_count_tool._regions_widget import RegionWidget
 
@@ -27,7 +30,9 @@ class VerticalButton(QPushButton):
     def __init__(self, text="", parent=None, rotation=-90):  # Defaulted to -90
         super().__init__(text, parent)
         self.rotation = rotation
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding
+        )
 
     def sizeHint(self):
         s = super().sizeHint()
@@ -166,7 +171,7 @@ class NucleiPickerToolButtons:
 
 
 @_tool_button
-class BlindGonadsButtons:
+class MakeMultiGonadProjectButton:
     _vert_button: QPushButton
     _hori_button: QPushButton
     _button_text: str
@@ -178,84 +183,12 @@ class BlindGonadsButtons:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
 
-        self._button_text = "3.Blind Gonads"
+        self._button_text = "3.Make multi gonad project"
 
         self._vert_button = QPushButton(self._button_text)
         self._hori_button = VerticalButton(self._button_text)
 
-        self._connecting_method_str = "_blind_gonads_button_pressed"
-
-    def get_button(self, orientation: str) -> QPushButton:
-        assert orientation in ["vertical", "horizontal"]
-        if orientation == "vertical":
-            return self._vert_button
-        else:
-            return self._hori_button
-
-    def deactivate_buttons(self) -> None:
-        self._vert_button.setEnabled(False)
-        self._hori_button.setEnabled(False)
-
-    def activate_buttons(self) -> None:
-        self._vert_button.setEnabled(True)
-        self._hori_button.setEnabled(True)
-
-
-@_tool_button
-class ScoreNucleiButtons:
-    _vert_button: QPushButton
-    _hori_button: QPushButton
-    _button_text: str
-    _connecting_method_str: str
-
-    def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
-    ) -> None:
-        self._napari_viewer = napari_viewer
-        self._main_widget = main_widget
-
-        self._button_text = "4.Score Nuclei"
-
-        self._vert_button = QPushButton(self._button_text)
-        self._hori_button = VerticalButton(self._button_text)
-
-        self._connecting_method_str = "_launch_score_nuclei_widget"
-
-    def get_button(self, orientation: str) -> QPushButton:
-        assert orientation in ["vertical", "horizontal"]
-        if orientation == "vertical":
-            return self._vert_button
-        else:
-            return self._hori_button
-
-    def deactivate_buttons(self) -> None:
-        self._vert_button.setEnabled(False)
-        self._hori_button.setEnabled(False)
-
-    def activate_buttons(self) -> None:
-        self._vert_button.setEnabled(True)
-        self._hori_button.setEnabled(True)
-
-
-@_tool_button
-class UnblindGonadsButtons:
-    _vert_button: QPushButton
-    _hori_button: QPushButton
-    _button_text: str
-    _connecting_method_str: str
-
-    def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
-    ) -> None:
-        self._napari_viewer = napari_viewer
-        self._main_widget = main_widget
-
-        self._button_text = "5.Unblind Gonads"
-
-        self._vert_button = QPushButton(self._button_text)
-        self._hori_button = VerticalButton(self._button_text)
-
-        self._connecting_method_str = "_unblind_gonads_button_pressed"
+        self._connecting_method_str = "_launch_make_multi_gonad_widget"
 
     def get_button(self, orientation: str) -> QPushButton:
         assert orientation in ["vertical", "horizontal"]
@@ -294,42 +227,6 @@ class GenerateProjectReports:
         self._connecting_method_str = (
             "_generate_projects_reports_button_pressed"
         )
-
-    def get_button(self, orientation: str) -> QPushButton:
-        assert orientation in ["vertical", "horizontal"]
-        if orientation == "vertical":
-            return self._vert_button
-        else:
-            return self._hori_button
-
-    def deactivate_buttons(self) -> None:
-        self._vert_button.setEnabled(False)
-        self._hori_button.setEnabled(False)
-
-    def activate_buttons(self) -> None:
-        self._vert_button.setEnabled(True)
-        self._hori_button.setEnabled(True)
-
-
-@_tool_button
-class IndividualScoringButton:
-    _vert_button: QPushButton
-    _hori_button: QPushButton
-    _button_text: str
-    _connecting_method_str: str
-
-    def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
-    ) -> None:
-        self._napari_viewer = napari_viewer
-        self._main_widget = main_widget
-
-        self._button_text = "(Option) Individual Scoring"
-
-        self._vert_button = QPushButton(self._button_text)
-        self._hori_button = VerticalButton(self._button_text)
-
-        self._connecting_method_str = "_launch_individual_scoring_widget"
 
     def get_button(self, orientation: str) -> QPushButton:
         assert orientation in ["vertical", "horizontal"]
@@ -466,25 +363,19 @@ class CarltonLabCountTool(QWidget):
     #   Button connections
     ##################################################################
 
-    def _launch_individual_scoring_widget(self) -> None:
-        print("launching individual scoring widget")
-
     def _generate_projects_reports_button_pressed(self) -> None:
         print("generating project reports")
-
-    def _unblind_gonads_button_pressed(self) -> None:
-        print("_unblind_gonads_button_pressed")
-
-    def _launch_score_nuclei_widget(self) -> None:
-        print("_launch_score_nuclei_widget")
-
-    def _blind_gonads_button_pressed(self) -> None:
-        print("_blind_gonads_button_pressed")
 
     def _launch_pick_nuclei_widget(self) -> None:
         setting_widget = PickNucleiWidget(self, self._napari_viewer)
         self._napari_viewer.window.add_dock_widget(
             setting_widget, name="clt Pick Nuclei"
+        )
+
+    def _launch_make_multi_gonad_widget(self) -> None:
+        setting_widget = MakeMultiGonadWidget(self, self._napari_viewer)
+        self._napari_viewer.window.add_dock_widget(
+            setting_widget, name="clt Make Multi Gonad Project"
         )
 
     def _launch_regions_widget(self) -> None:

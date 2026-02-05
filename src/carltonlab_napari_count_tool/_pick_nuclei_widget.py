@@ -279,6 +279,7 @@ class PickNucleiWidget(QWidget):
         self._update_list()
         self._evaluate_points_saved()
         self._evaluate_squares_saved()
+        self._evaluate_sbs_saved()
 
     def _load_points_saved_list(self, number_of_regions: int) -> None:
         self._points_saved_list = get_points_saved_list(
@@ -576,7 +577,6 @@ class PickNucleiWidget(QWidget):
             self._points_saved_list[selected_region_index] = new_tuple_element
         self._update_list()
         self._evaluate_points_saved()
-
         return
 
     def _evaluate_points_saved(self) -> None:
@@ -649,7 +649,6 @@ class PickNucleiWidget(QWidget):
             self._points_saved_list[selected_region_index] = new_tuple_element
         self._update_list()
         self._evaluate_squares_saved()
-
         return
 
     def _evaluate_squares_saved(self) -> None:
@@ -673,14 +672,38 @@ class PickNucleiWidget(QWidget):
         )
         cutting_square_layer: Shapes = squares_list[selected_region_index]
         image_layer: Image = cast(Image, self._image_layer)
-        cut_sbs_files_from_squares_and_image_layers(
+        if cut_sbs_files_from_squares_and_image_layers(
             image_layer,
             cutting_square_layer,
             self._pick_nuclei_directory,
             selected_region_index,
-        )
-        print("Saved sbs")
+        ):
+            tuple_element: tuple[int, bool, bool, bool] = cast(
+                tuple[int, bool, bool, bool],
+                self._points_saved_list[selected_region_index],
+            )
+            new_tuple_element: tuple[int, bool, bool, bool] = (
+                tuple_element[0],
+                tuple_element[1],
+                tuple_element[2],
+                True,
+            )
+            self._points_saved_list[selected_region_index] = new_tuple_element
+            self._update_list()
+            self._evaluate_sbs_saved()
         return
+
+    def _evaluate_sbs_saved(self) -> None:
+        points_saved_list = self._points_saved_list
+        if points_saved_list is None:
+            return
+        all_sbs_saved_list: list[bool] = [
+            save_tuple[3] for save_tuple in points_saved_list
+        ]
+        if not any(all_sbs_saved_list):
+            self._set_create_sbs_files_label_state(False)
+        else:
+            self._set_create_sbs_files_label_state(True)
 
     def _show_all_regions_checkbox_state_changed(self) -> None:
         self._regions_qlist_item_selection_changed()

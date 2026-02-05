@@ -16,3 +16,6 @@ EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME = (
     "clt_expanded_regions_values.config"
 )
 EDITED_REGIONS_FILE_NAME = "clt_expanded_regions_layer.csv"
+
+MULTI_GONAD_FILE_SUFFIX = "clsp_"
+MULTI_GONAD_FILE_EXTENSION = "_multi_gonad_file.config"
