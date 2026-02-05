@@ -25,6 +25,7 @@ from carltonlab_napari_count_tool._pick_nuclei_widget_model import (
     open_project,
     open_squares_layers,
     save_points_or_square_layer,
+    save_points_summary_file,
 )
 from carltonlab_napari_count_tool._shared_widgets import confirm_dialog
 
@@ -689,6 +690,12 @@ class PickNucleiWidget(QWidget):
                 True,
             )
             self._points_saved_list[selected_region_index] = new_tuple_element
+            points_saved_list: list[tuple[int, bool, bool, bool]] = cast(
+                list[tuple[int, bool, bool, bool]], self._points_saved_list
+            )
+            save_points_summary_file(
+                points_saved_list, self._pick_nuclei_directory
+            )
             self._update_list()
             self._evaluate_sbs_saved()
         return

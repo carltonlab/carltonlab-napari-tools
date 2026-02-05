@@ -37,6 +37,19 @@ def get_directory(
     return directory or None
 
 
+def get_file(
+    parent: QWidget | None = None,
+    caption: str = "Select file",
+) -> str | None:
+    file_path, _ = QFileDialog.getOpenFileName(
+        parent,
+        caption,
+        "",
+        "TIFF images (*.tif *.tiff);;Config files (*.config)",
+    )
+    return file_path or None
+
+
 ClspPickResult = list[str] | None | Literal["non-clsp"]
 
 
