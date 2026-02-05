@@ -1,9 +1,11 @@
 import os
+import pandas as pd
 from configparser import ConfigParser
-from typing import Literal
+from typing import Literal, cast
 
 from napari.utils.notifications import show_info
 from napari.viewer import ViewerModel
+from napari.layers import Layer, Image, Points
 from qtpy.QtWidgets import QWidget
 
 from carltonlab_napari_count_tool._shared_variables import (
@@ -39,15 +41,16 @@ class CLSPSbsObject:
         self._points_layer_file_name: str = (
             region_name + "_" + name + SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION
         )
+        self._zero_points_file_name: str = (
+            region_name + "_" + name + "_zero_points.txt"
+        )
         self._image_file_path: str = sbs_file_path
         self._gonad_file_name: str = gonad_file_name
-        self._number_of_points: int = 0
+        self._number_of_points: int
+        self._saved_state: bool
 
     def saved_state(self) -> bool:
-        points_layer_file_path: str = os.path.join(
-            self._scored_nuclei_dir, self._points_layer_file_name
-        )
-        return os.path.exists(points_layer_file_path)
+        return self._saved_state
 
     def get_image_path(self) -> str:
         return self._image_file_path
@@ -61,11 +64,98 @@ class CLSPSbsObject:
             + self._name
         )
 
+    def load_number_of_points(self) -> int | None:
+        points_file_path: str = os.path.join(
+            self._scored_nuclei_dir, self._points_layer_file_name
+        )
+        if os.path.exists(points_file_path):
+            pandas_df = pd.read_csv(points_file_path)
+            number_of_points: int = len(pandas_df)
+            self._number_of_points = number_of_points
+            self._saved_state: bool = True
+            return number_of_points
+        elif os.path.exists(
+            os.path.join(self._scored_nuclei_dir, self._zero_points_file_name)
+        ):
+            self._saved_state: bool = True
+            self._number_of_points = 0
+            return 0
+        else:
+            self._saved_state: bool = False
+            self._number_of_points = 0
+
     def get_number_of_points(self) -> int:
         return self._number_of_points
 
+    def get_points_file_path(self) -> str | None:
+        points_file_path: str = os.path.join(
+            self._scored_nuclei_dir, self._points_layer_file_name
+        )
+        if os.path.exists(points_file_path):
+            return points_file_path
+        return None
+
+    def save_zeros_file(self) -> None:
+        points_file_path: str = os.path.join(
+            self._scored_nuclei_dir, self._points_layer_file_name
+        )
+        if os.path.exists(points_file_path):
+            os.remove(points_file_path)
+        zeros_file_path: str = os.path.join(
+            self._scored_nuclei_dir, self._zero_points_file_name
+        )
+        with open(zeros_file_path, "w") as _:
+            pass
+
+    def save_points_layer(self, saving_layer: Points) -> None:
+        zeros_file_path: str = os.path.join(
+            self._scored_nuclei_dir, self._zero_points_file_name
+        )
+        if os.path.exists(zeros_file_path):
+            os.remove(zeros_file_path)
+        points_file_path: str = os.path.join(
+            self._scored_nuclei_dir, self._points_layer_file_name
+        )
+        saving_layer.save(points_file_path)
+
 
 OpenFileReturns = Literal["failed"] | None | tuple[list[CLSPSbsObject], str]
+
+
+def open_image_layer_from_clsp_object(
+    napari_viewer: ViewerModel, clsp_object: CLSPSbsObject, blind: bool = False
+) -> Image | None:
+    image_path: str = clsp_object.get_image_path()
+    if not os.path.exists(image_path):
+        return None
+    image_layers: list[Layer] = napari_viewer.open(image_path)
+    first_image_layer: Image = cast(Image, image_layers[0])
+    if blind:
+        first_image_layer.name = "blind_sbs_image"
+    return cast(Image, image_layers[0])
+
+
+def open_points_layer_from_clsp_object(
+    napari_viewer: ViewerModel, clsp_object: CLSPSbsObject
+):
+    points_file_name: str | None = clsp_object.get_points_file_path()
+    if points_file_name is None:
+        return napari_viewer.add_points(name="old_points")
+    points_layers: list[Layer] = napari_viewer.open(points_file_name)
+    first_point_layer: Points = cast(Points, points_layers[0])
+    first_point_layer.name = "old_points"
+    return first_point_layer
+
+
+def save_points_layer_from_clsp_object(
+    saving_layer: Points,
+    clsp_object: CLSPSbsObject,
+):
+    number_of_points: int = len(saving_layer.data)
+    if number_of_points == 0:
+        clsp_object.save_zeros_file()
+    else:
+        clsp_object.save_points_layer(saving_layer)
 
 
 def open_scoring_file(
