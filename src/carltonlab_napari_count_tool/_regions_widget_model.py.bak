@@ -439,40 +439,12 @@ def expand_shape(
         leading = original_shape_data[:, :-2].copy()
         xy = original_shape_data[:, -2:].copy()
 
-    def _direction_from_points(
-        points: np.ndarray, at_start: bool
-    ) -> np.ndarray | None:
-        if points.shape[0] < 2:
-            return None
-        xy = points[:, -2:] if points.shape[1] > 2 else points
-        vec = xy[1] - xy[0] if at_start else xy[-1] - xy[-2]
-        norm = np.linalg.norm(vec)
-        if norm == 0:
-            return None
-        return vec / norm
-
     if expanding_factor == 0:
         # keep as path
         new_polyline_data_xy = xy
         setting_type = "path"
     else:
-        prev_dir = None
-        next_dir = None
-        if shape_index > 0:
-            prev_data = spline_layer._data_view.shapes[shape_index - 1].data
-            prev_data = np.asarray(prev_data, dtype=np.float32)
-            prev_dir = _direction_from_points(prev_data, at_start=False)
-        if shape_index + 1 < len(spline_layer._data_view.shapes):
-            next_data = spline_layer._data_view.shapes[shape_index + 1].data
-            next_data = np.asarray(next_data, dtype=np.float32)
-            next_dir = _direction_from_points(next_data, at_start=True)
-
-        new_polyline_data_xy = stroke_polyline_to_polygon(
-            xy,
-            expanding_factor,
-            start_join_dir=prev_dir,
-            end_join_dir=next_dir,
-        )
+        new_polyline_data_xy = stroke_polyline_to_polygon(xy, expanding_factor)
 
     # Reattach leading dims (set them to the same values as the original)
     if leading is not None:
@@ -485,15 +457,11 @@ def expand_shape(
     else:
         new_polyline_data = new_polyline_data_xy
 
-    data_list = list(expanded_shapes_layer.data)
-    data_list[shape_index] = new_polyline_data
-    expanded_shapes_layer.data = data_list
-
-    shape_types = list(expanded_shapes_layer.shape_type)
-    if len(shape_types) == len(data_list):
-        shape_types[shape_index] = setting_type
-        expanded_shapes_layer.shape_type = shape_types
-
+    expanded_shapes_layer._data_view.edit(
+        shape_index, new_polyline_data, new_type=setting_type
+    )
+    expanded_shape = expanded_shapes_layer._data_view.shapes[shape_index]
+    expanded_shape._update_displayed_data()
     expanded_shapes_layer.refresh()
 
 
@@ -567,8 +535,6 @@ def stroke_polyline_to_polygon(
     closed: bool = False,
     miter_limit: float = 4.0,  # in units of half-width
     drop_eps: float = 1e-6,
-    start_join_dir: np.ndarray | None = None,
-    end_join_dir: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     2D polyline -> polygon outline using segment offsets and miter-with-clamp joins.
@@ -613,39 +579,13 @@ def stroke_polyline_to_polygon(
     t = _normalize(seg)
     nseg = np.stack([-t[:, 1], t[:, 0]], axis=1)  # left normal per segment
 
-    def _miter_cap(
-        p: np.ndarray,
-        d1: np.ndarray,
-        d2: np.ndarray,
-        sign: float,
-    ) -> np.ndarray | None:
-        n1 = np.array([-d1[1], d1[0]])
-        n2 = np.array([-d2[1], d2[0]])
-        o1 = p + sign * half * n1
-        o2 = p + sign * half * n2
-        x = _line_intersection(o1, d1, o2, d2)
-        if x is None:
-            return None
-        if np.linalg.norm(x - p) > miter_limit * half:
-            return None
-        return x
-
     def build_side(sign: float) -> np.ndarray:
         # sign=+1 for left, sign=-1 for right
         out = []
 
         if not closed:
             # start cap (butt)
-            start_cap = None
-            if start_join_dir is not None:
-                d1 = _normalize(start_join_dir.reshape(1, 2))[0]
-                d2 = t[0]
-                start_cap = _miter_cap(pts[0], d1, d2, sign)
-            out.append(
-                start_cap
-                if start_cap is not None
-                else pts[0] + sign * half * nseg[0]
-            )
+            out.append(pts[0] + sign * half * nseg[0])
 
             for i in range(1, n - 1):
                 p = pts[i]
@@ -671,16 +611,7 @@ def stroke_polyline_to_polygon(
                         out.append(x)
 
             # end cap (butt)
-            end_cap = None
-            if end_join_dir is not None:
-                d1 = t[-1]
-                d2 = _normalize(end_join_dir.reshape(1, 2))[0]
-                end_cap = _miter_cap(pts[-1], d1, d2, sign)
-            out.append(
-                end_cap
-                if end_cap is not None
-                else pts[-1] + sign * half * nseg[-1]
-            )
+            out.append(pts[-1] + sign * half * nseg[-1])
             return _clean_consecutive_duplicates(np.asarray(out))
 
         # closed: every vertex has prev and next segments
