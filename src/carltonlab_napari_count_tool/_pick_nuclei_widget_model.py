@@ -1,3 +1,4 @@
+import csv
 import os
 from configparser import ConfigParser
 from configparser import Error as ConfigParserError
@@ -26,6 +27,7 @@ from carltonlab_napari_count_tool._shared_variables import (
     REGION_ROOT_NAME,
     REGIONS_DIR_NAME,
     SBS_FILE_NAME_EXTENSION,
+    SBS_METADATA_FILE_NAME,
     SQUARES_FILE_NAME_EXTENSION,
 )
 
@@ -469,6 +471,7 @@ def cut_sbs_files_from_squares_and_image_layers(
     cut_sbs_dir: str = os.path.join(pick_nuclei_directory, CUT_SBS_DIR_NAME)
     os.makedirs(cut_sbs_dir, exist_ok=True)
     img_y, img_x = image_data.shape[-2:]
+    metadata_rows = []
     for square_index, square_array in enumerate(squares_array):
         current_square = np.asarray(square_array)
         y1, x1 = np.floor(current_square.min(axis=0)).astype(int)
@@ -489,5 +492,32 @@ def cut_sbs_files_from_squares_and_image_layers(
         cropped_layer: Image = Image(cropped_image, name=sbs_name)
         saving_file_path = os.path.join(cut_sbs_dir, sbs_name)
         cropped_layer.save(saving_file_path)
+        metadata_rows.append(
+            {
+                "sbs_image_name": sbs_name,
+                "y1": int(y1),
+                "x1": int(x1),
+                "y2": int(y2),
+                "x2": int(x2),
+            }
+        )
+
+    if metadata_rows:
+        metadata_path = os.path.join(cut_sbs_dir, SBS_METADATA_FILE_NAME)
+        existing_rows = {}
+        if os.path.exists(metadata_path):
+            with open(metadata_path, newline="") as csv_file:
+                reader = csv.DictReader(csv_file)
+                for row in reader:
+                    if "sbs_image_name" in row:
+                        existing_rows[row["sbs_image_name"]] = row
+        for row in metadata_rows:
+            existing_rows[row["sbs_image_name"]] = row
+        fieldnames = ["sbs_image_name", "y1", "x1", "y2", "x2"]
+        with open(metadata_path, "w", newline="") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in existing_rows.values():
+                writer.writerow(row)
 
     return True

@@ -1,9 +1,10 @@
+from random import shuffle
 from typing import Literal, cast
 
+from napari.layers import Image, Points
 from napari.utils.notifications import show_info
-from napari.layers import Image, Points, image
 from napari.viewer import ViewerModel
-
+from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -17,15 +18,13 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qtpy.QtCore import Qt, QTimer
-
-from random import shuffle
 
 from carltonlab_napari_count_tool._score_nuclei_widget_model import (
     CLSPSbsObject,
-    open_scoring_file,
+    generate_scored_points_spline_summary,
     open_image_layer_from_clsp_object,
     open_points_layer_from_clsp_object,
+    open_scoring_file,
     save_points_layer_from_clsp_object,
 )
 from carltonlab_napari_count_tool._shared_widgets import confirm_dialog
@@ -222,6 +221,11 @@ class ScoreNucleiWidget(QWidget):
         self._peek_button: QPushButton = QPushButton("Peek")
         self._peek_button.clicked.connect(self._peek_button_pressed)
         self._main_layout.addWidget(self._peek_button)
+
+        # TODO: remove this from this section. this is just for testing
+        self._create_summary: QPushButton = QPushButton("Create summary")
+        self._create_summary.clicked.connect(self._create_summary_pressed)
+        self._main_layout.addWidget(self._create_summary)
 
     def _update_list(self) -> None:
         if len(self._scoring_sbs_list) == 0:
@@ -469,3 +473,10 @@ class ScoreNucleiWidget(QWidget):
         layer.out_of_slice_display = out_of_slice_display
         layer.refresh_colors()
         layer.refresh()
+
+    # TODO: this is to be removed
+    def _create_summary_pressed(self) -> None:
+        created_answer = generate_scored_points_spline_summary(
+            "/carlos-data/carltonlab/testing_nap_count_points/img_test2_clsp"
+        )
+        print(created_answer)

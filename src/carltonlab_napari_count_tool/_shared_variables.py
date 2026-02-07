@@ -9,6 +9,7 @@ SQUARES_FILE_NAME_EXTENSION = "_squares_layer.csv"
 SBS_FILE_NAME_EXTENSION = "_cut_nuclei.tif"
 CUT_SBS_DIR_NAME = "cut_sbs"
 SBS_FILE_NAME_EXTENSION = "_cut_sbs.tif"
+SBS_METADATA_FILE_NAME = "sbs_metadata.csv"
 
 
 REGIONS_DIR_NAME = "regions"
