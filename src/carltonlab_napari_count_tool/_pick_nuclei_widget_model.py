@@ -5,6 +5,7 @@ from configparser import ConfigParser
 from configparser import Error as ConfigParserError
 from typing import Literal, cast
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from napari.layers import Image, Points, Shapes
@@ -27,6 +28,8 @@ from carltonlab_napari_count_tool._shared_variables import (
     EDITED_REGIONS_FILE_NAME,
     PICK_NUCLEI_DIR_NAME,
     PICK_NUCLEI_REPORT_FILE_NAME,
+    PICK_NUCLEI_REPORT_PLOT_FILE_NAME,
+    PICK_NUCLEI_REPORT_PLOT_NORM_FILE_NAME,
     POINT_FILE_NAME_EXTENSION,
     POINTS_SUMMARY_FILE_NAME,
     REGION_ROOT_NAME,
@@ -646,18 +649,97 @@ def generate_pick_nuclei_spline_intensity_report(
 
     if not rows:
         return None
+    report_df = pd.DataFrame(rows)
+    norm_bins = [
+        (0.0, 0.2, "normalized_intensity_0_20"),
+        (0.2, 0.4, "normalized_intensity_20_40"),
+        (0.4, 0.6, "normalized_intensity_40_60"),
+        (0.6, 0.8, "normalized_intensity_60_80"),
+        (0.8, 1.0, "normalized_intensity_80_100"),
+    ]
+    for start, end, col_name in norm_bins:
+        region_mask = (report_df["relative_position_in_spline"] >= start) & (
+            report_df["relative_position_in_spline"] <= end
+        )
+        mean_intensity = report_df.loc[region_mask, "sum_intensity"].mean()
+        if pd.isna(mean_intensity) or mean_intensity == 0:
+            report_df[col_name] = np.nan
+        else:
+            report_df[col_name] = report_df["sum_intensity"] / mean_intensity
     output_csv_path = os.path.join(
         pick_nuclei_directory, PICK_NUCLEI_REPORT_FILE_NAME
     )
-    output_df = pd.DataFrame(
-        rows,
-        columns=[
-            "sbs_image_file_name",
-            "x_coordinate",
-            "y_coordinate",
-            "relative_position_in_spline",
-            "sum_intensity",
-        ],
-    )
-    output_df.to_csv(output_csv_path, index=False)
+    report_columns = [
+        "sbs_image_file_name",
+        "x_coordinate",
+        "y_coordinate",
+        "relative_position_in_spline",
+        "sum_intensity",
+    ] + [col_name for _, _, col_name in norm_bins]
+    report_df = report_df[report_columns]
+    report_df.to_csv(output_csv_path, index=False)
     return output_csv_path
+
+
+def generate_pick_nuclei_spline_intensity_plot(
+    pick_nuclei_directory: str,
+) -> str | None:
+    report_path = os.path.join(
+        pick_nuclei_directory, PICK_NUCLEI_REPORT_FILE_NAME
+    )
+    if not os.path.exists(report_path):
+        report_path = generate_pick_nuclei_spline_intensity_report(
+            pick_nuclei_directory
+        )
+        if report_path is None:
+            return None
+    report_df = pd.read_csv(report_path)
+    if not {
+        "relative_position_in_spline",
+        "sum_intensity",
+    }.issubset(report_df.columns):
+        return None
+    x = report_df["relative_position_in_spline"].to_numpy()
+    y = report_df["sum_intensity"].to_numpy()
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.scatter(x, y, s=12)
+    ax.set_xlabel("Relative position in spline")
+    ax.set_ylabel("Sum intensity")
+    ax.set_xlim(0, 1)
+    ax.grid(True, alpha=0.3)
+
+    output_path = os.path.join(
+        pick_nuclei_directory, PICK_NUCLEI_REPORT_PLOT_FILE_NAME
+    )
+    fig.tight_layout()
+    fig.savefig(output_path, format="pdf")
+    plt.close(fig)
+    norm_bins = [
+        ("normalized_intensity_0_20", "0-20"),
+        ("normalized_intensity_20_40", "20-40"),
+        ("normalized_intensity_40_60", "40-60"),
+        ("normalized_intensity_60_80", "60-80"),
+        ("normalized_intensity_80_100", "80-100"),
+    ]
+    for col_name, label in norm_bins:
+        if col_name not in report_df.columns:
+            continue
+        y_norm = report_df[col_name].to_numpy()
+        fig_norm, ax_norm = plt.subplots(figsize=(6, 4))
+        ax_norm.scatter(x, y_norm, s=12)
+        ax_norm.set_xlabel("Relative position in spline")
+        ax_norm.set_ylabel(f"Normalized intensity ({label})")
+        ax_norm.set_xlim(0, 1)
+        ax_norm.grid(True, alpha=0.3)
+
+        output_norm_path = os.path.join(
+            pick_nuclei_directory,
+            PICK_NUCLEI_REPORT_PLOT_NORM_FILE_NAME.replace(
+                ".pdf", f"_{label}.pdf"
+            ),
+        )
+        fig_norm.tight_layout()
+        fig_norm.savefig(output_norm_path, format="pdf")
+        plt.close(fig_norm)
+    return output_path

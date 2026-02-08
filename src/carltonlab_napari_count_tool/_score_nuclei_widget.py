@@ -21,6 +21,7 @@ from qtpy.QtWidgets import (
 
 from carltonlab_napari_count_tool._score_nuclei_widget_model import (
     CLSPSbsObject,
+    generate_scored_points_spline_plot,
     generate_scored_points_spline_summary,
     open_image_layer_from_clsp_object,
     open_points_layer_from_clsp_object,
@@ -222,10 +223,19 @@ class ScoreNucleiWidget(QWidget):
         self._peek_button.clicked.connect(self._peek_button_pressed)
         self._main_layout.addWidget(self._peek_button)
 
-        # TODO: remove this from this section. this is just for testing
-        self._create_summary: QPushButton = QPushButton("Create summary")
-        self._create_summary.clicked.connect(self._create_summary_pressed)
-        self._main_layout.addWidget(self._create_summary)
+        self._create_summary_button: QPushButton = QPushButton(
+            "Create spline summary"
+        )
+        self._create_summary_button.clicked.connect(
+            self._create_summary_pressed
+        )
+        self._main_layout.addWidget(self._create_summary_button)
+
+        self._create_plot_button: QPushButton = QPushButton(
+            "Create spline plot"
+        )
+        self._create_plot_button.clicked.connect(self._create_plot_pressed)
+        self._main_layout.addWidget(self._create_plot_button)
 
     def _update_list(self) -> None:
         if len(self._scoring_sbs_list) == 0:
@@ -474,9 +484,46 @@ class ScoreNucleiWidget(QWidget):
         layer.refresh_colors()
         layer.refresh()
 
-    # TODO: this is to be removed
     def _create_summary_pressed(self) -> None:
-        created_answer = generate_scored_points_spline_summary(
-            "/carlos-data/carltonlab/testing_nap_count_points/img_test2_clsp"
-        )
-        print(created_answer)
+        gonad_dirs = self._get_gonad_dirs()
+        if not gonad_dirs:
+            show_info("No scoring file loaded")
+            return
+        created_paths: list[str] = []
+        for gonad_dir in gonad_dirs:
+            created_path = generate_scored_points_spline_summary(gonad_dir)
+            if created_path is not None:
+                created_paths.append(created_path)
+        if not created_paths:
+            show_info("Failed to create scored points spline summary")
+            return
+        if len(created_paths) == 1:
+            show_info(f"Summary saved: {created_paths[0]}")
+        else:
+            show_info(f"Summaries saved: {len(created_paths)}")
+
+    def _create_plot_pressed(self) -> None:
+        gonad_dirs = self._get_gonad_dirs()
+        if not gonad_dirs:
+            show_info("No scoring file loaded")
+            return
+        created_paths: list[str] = []
+        for gonad_dir in gonad_dirs:
+            created_path = generate_scored_points_spline_plot(gonad_dir)
+            if created_path is not None:
+                created_paths.append(created_path)
+        if not created_paths:
+            show_info("Failed to create scored points spline plot")
+            return
+        if len(created_paths) == 1:
+            show_info(f"Plot saved: {created_paths[0]}")
+        else:
+            show_info(f"Plots saved: {len(created_paths)}")
+
+    def _get_gonad_dirs(self) -> list[str]:
+        if not self._scoring_sbs_list:
+            return []
+        gonad_dirs = []
+        for sbs_object in self._scoring_sbs_list:
+            gonad_dirs.append(sbs_object.get_gonad_dir())
+        return sorted(set(gonad_dirs))

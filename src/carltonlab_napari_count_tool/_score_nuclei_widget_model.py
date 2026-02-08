@@ -3,6 +3,7 @@ import os
 from configparser import ConfigParser
 from typing import Literal, cast
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from napari.layers import Image, Layer, Points
@@ -21,7 +22,9 @@ from carltonlab_napari_count_tool._shared_variables import (
     SBS_FILE_NAME_EXTENSION,
     SBS_METADATA_FILE_NAME,
     SCORED_NUCLEI_DIR_NAME,
+    SCORED_NUCLEI_PLOT_FILE_NAME,
     SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION,
+    SCORED_NUCLEI_SUMMARY_FILE_NAME,
 )
 from carltonlab_napari_count_tool._shared_widgets import (
     confirm_dialog,
@@ -99,6 +102,13 @@ class CLSPSbsObject:
         if os.path.exists(points_file_path):
             return points_file_path
         return None
+
+    def get_scored_nuclei_dir(self) -> str:
+        return self._scored_nuclei_dir
+
+    def get_gonad_dir(self) -> str:
+        project_dir = os.path.dirname(self._scored_nuclei_dir)
+        return os.path.dirname(project_dir)
 
     def save_zeros_file(self) -> None:
         points_file_path: str = os.path.join(
@@ -308,7 +318,7 @@ def generate_scored_points_spline_summary(
         return None
     if output_csv_path is None:
         output_csv_path = os.path.join(
-            scored_nuclei_dir, "scored_points_spline_summary.csv"
+            scored_nuclei_dir, SCORED_NUCLEI_SUMMARY_FILE_NAME
         )
     output_df = pd.DataFrame(
         rows,
@@ -323,6 +333,48 @@ def generate_scored_points_spline_summary(
     )
     output_df.to_csv(output_csv_path, index=False)
     return output_csv_path
+
+
+def generate_scored_points_spline_plot(
+    gonad_dir: str, summary_csv_path: str | None = None
+) -> str | None:
+    project_dir = os.path.join(gonad_dir, DEFAULT_PROJECT_NAME)
+    scored_nuclei_dir = os.path.join(project_dir, SCORED_NUCLEI_DIR_NAME)
+    if summary_csv_path is None:
+        summary_csv_path = os.path.join(
+            scored_nuclei_dir, SCORED_NUCLEI_SUMMARY_FILE_NAME
+        )
+    if not os.path.exists(summary_csv_path):
+        summary_csv_path = generate_scored_points_spline_summary(gonad_dir)
+        if summary_csv_path is None:
+            return None
+    summary_df = pd.read_csv(summary_csv_path)
+    if "normalized_arc-length_to_spline" not in summary_df.columns:
+        return None
+    positions = (
+        summary_df["normalized_arc-length_to_spline"]
+        .dropna()
+        .to_numpy(dtype=np.float64)
+    )
+    if positions.size == 0:
+        return None
+    positions = np.sort(positions)
+    cumulative_counts = np.cumsum(np.ones_like(positions, dtype=np.int64))
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(
+        positions, cumulative_counts, marker="o", markersize=3, linewidth=1
+    )
+    ax.set_xlabel("Relative spline position")
+    ax.set_ylabel("Cumulative points")
+    ax.set_xlim(0, 1)
+    ax.grid(True, alpha=0.3)
+
+    output_path = os.path.join(scored_nuclei_dir, SCORED_NUCLEI_PLOT_FILE_NAME)
+    fig.tight_layout()
+    fig.savefig(output_path, format="pdf")
+    plt.close(fig)
+    return output_path
 
 
 def open_scoring_file(
