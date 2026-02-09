@@ -9,6 +9,12 @@ SQUARES_FILE_NAME_EXTENSION = "_squares_layer.csv"
 SBS_FILE_NAME_EXTENSION = "_cut_nuclei.tif"
 CUT_SBS_DIR_NAME = "cut_sbs"
 SBS_FILE_NAME_EXTENSION = "_cut_sbs.tif"
+SBS_METADATA_FILE_NAME = "sbs_metadata.csv"
+PICK_NUCLEI_REPORT_FILE_NAME = "pick_nuclei_spline_intensity_report.csv"
+PICK_NUCLEI_REPORT_PLOT_FILE_NAME = "pick_nuclei_spline_intensity_report.pdf"
+PICK_NUCLEI_REPORT_PLOT_NORM_FILE_NAME = (
+    "pick_nuclei_spline_intensity_report_normalized.pdf"
+)
 
 
 REGIONS_DIR_NAME = "regions"
@@ -22,3 +28,5 @@ MULTI_GONAD_FILE_EXTENSION = "_multi_gonad_file.config"
 
 SCORED_NUCLEI_DIR_NAME = "scored_nuclei"
 SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION = "_scored_nuclei_points.csv"
+SCORED_NUCLEI_SUMMARY_FILE_NAME = "scored_points_spline_summary.csv"
+SCORED_NUCLEI_PLOT_FILE_NAME = "scored_points_spline_cumulative_plot.pdf"

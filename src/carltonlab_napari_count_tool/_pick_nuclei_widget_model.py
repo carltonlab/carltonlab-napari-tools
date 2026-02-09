@@ -1,13 +1,18 @@
+import csv
+import glob
 import os
 from configparser import ConfigParser
 from configparser import Error as ConfigParserError
 from typing import Literal, cast
 
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from napari.layers import Image, Points, Shapes
 from napari.utils.notifications import show_info
 from napari.viewer import ViewerModel
 from numpy.typing import NDArray
+from skimage.io import imread
 
 from carltonlab_napari_count_tool._model import (
     open_csv_as_points_layer,
@@ -15,17 +20,22 @@ from carltonlab_napari_count_tool._model import (
     open_image_as_layer,
     save_layer_as_csv,
 )
+from carltonlab_napari_count_tool._regions_widget_model import SPLINE_FILE_NAME
 from carltonlab_napari_count_tool._shared_variables import (
     CUT_SBS_DIR_NAME,
     DEFAULT_PROJECT_NAME,
     EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME,
     EDITED_REGIONS_FILE_NAME,
     PICK_NUCLEI_DIR_NAME,
+    PICK_NUCLEI_REPORT_FILE_NAME,
+    PICK_NUCLEI_REPORT_PLOT_FILE_NAME,
+    PICK_NUCLEI_REPORT_PLOT_NORM_FILE_NAME,
     POINT_FILE_NAME_EXTENSION,
     POINTS_SUMMARY_FILE_NAME,
     REGION_ROOT_NAME,
     REGIONS_DIR_NAME,
     SBS_FILE_NAME_EXTENSION,
+    SBS_METADATA_FILE_NAME,
     SQUARES_FILE_NAME_EXTENSION,
 )
 
@@ -332,9 +342,13 @@ def validate_image_open(
     napari_viewer: ViewerModel, image_path: str
 ) -> Image | None:
     layers_list = napari_viewer.layers
+    image_file_name: str = os.path.basename(image_path)
     for layer in layers_list:
         layer_path = layer.source.path
-        if layer_path == image_path:
+        if layer_path is None:
+            return None
+        layer_file_name: str = os.path.basename(layer_path)
+        if layer_file_name == image_file_name:
             image_layer: Image = cast(Image, layer)
             return image_layer
     return None
@@ -469,6 +483,7 @@ def cut_sbs_files_from_squares_and_image_layers(
     cut_sbs_dir: str = os.path.join(pick_nuclei_directory, CUT_SBS_DIR_NAME)
     os.makedirs(cut_sbs_dir, exist_ok=True)
     img_y, img_x = image_data.shape[-2:]
+    metadata_rows = []
     for square_index, square_array in enumerate(squares_array):
         current_square = np.asarray(square_array)
         y1, x1 = np.floor(current_square.min(axis=0)).astype(int)
@@ -489,5 +504,246 @@ def cut_sbs_files_from_squares_and_image_layers(
         cropped_layer: Image = Image(cropped_image, name=sbs_name)
         saving_file_path = os.path.join(cut_sbs_dir, sbs_name)
         cropped_layer.save(saving_file_path)
+        metadata_rows.append(
+            {
+                "sbs_image_name": sbs_name,
+                "y1": int(y1),
+                "x1": int(x1),
+                "y2": int(y2),
+                "x2": int(x2),
+            }
+        )
+
+    if metadata_rows:
+        metadata_path = os.path.join(cut_sbs_dir, SBS_METADATA_FILE_NAME)
+        existing_rows = {}
+        if os.path.exists(metadata_path):
+            with open(metadata_path, newline="") as csv_file:
+                reader = csv.DictReader(csv_file)
+                for row in reader:
+                    if "sbs_image_name" in row:
+                        existing_rows[row["sbs_image_name"]] = row
+        for row in metadata_rows:
+            existing_rows[row["sbs_image_name"]] = row
+        fieldnames = ["sbs_image_name", "y1", "x1", "y2", "x2"]
+        with open(metadata_path, "w", newline="") as csv_file:
+            writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in existing_rows.values():
+                writer.writerow(row)
 
     return True
+
+
+def _axis_columns_from_dataframe(df: pd.DataFrame) -> list[str]:
+    axis_cols = [col for col in df.columns if col.startswith("axis-")]
+    if not axis_cols:
+        return []
+    axis_cols.sort(key=lambda col: int(col.split("-")[-1]))
+    return axis_cols
+
+
+def _load_spline_polyline(spline_csv_path: str) -> np.ndarray | None:
+    if not os.path.exists(spline_csv_path):
+        return None
+    df = pd.read_csv(spline_csv_path)
+    axis_cols = _axis_columns_from_dataframe(df)
+    if len(axis_cols) < 2:
+        return None
+    axis_cols = axis_cols[-2:]
+    shape_df = df
+    if "shape_type" in df.columns:
+        shape_df = df[df["shape_type"] == "path"]
+        if shape_df.empty:
+            shape_df = df
+    if "index" in shape_df.columns:
+        min_index = shape_df["index"].min()
+        shape_df = shape_df[shape_df["index"] == min_index]
+    if "vertex_index" in shape_df.columns:
+        shape_df = shape_df.sort_values("vertex_index")
+    spline_points = shape_df[axis_cols].to_numpy()
+    if spline_points.ndim != 2 or spline_points.shape[0] < 2:
+        return None
+    return spline_points
+
+
+def _project_point_to_polyline(
+    point_yx: np.ndarray, polyline_yx: np.ndarray
+) -> float:
+    segments = polyline_yx[1:] - polyline_yx[:-1]
+    seg_len2 = (segments**2).sum(axis=1)
+    seg_len = np.sqrt(seg_len2)
+    cumlen = np.concatenate(([0.0], np.cumsum(seg_len)))
+    total_len = cumlen[-1]
+
+    best_dist2 = None
+    best_arc = 0.0
+    for i, (p0, seg, seg_l2) in enumerate(
+        zip(polyline_yx[:-1], segments, seg_len2, strict=True)
+    ):
+        if seg_l2 == 0:
+            continue
+        t = float(np.dot(point_yx - p0, seg) / seg_l2)
+        t = min(1.0, max(0.0, t))
+        proj = p0 + t * seg
+        dist2 = float(np.dot(point_yx - proj, point_yx - proj))
+        if best_dist2 is None or dist2 < best_dist2:
+            best_dist2 = dist2
+            best_arc = float(cumlen[i] + t * seg_len[i])
+
+    if total_len == 0:
+        return 0.0
+    return best_arc / total_len
+
+
+def generate_pick_nuclei_spline_intensity_report(
+    pick_nuclei_directory: str,
+) -> str | None:
+    project_dir = os.path.dirname(pick_nuclei_directory)
+    spline_csv_path = os.path.join(
+        project_dir, REGIONS_DIR_NAME, SPLINE_FILE_NAME
+    )
+    spline_points = _load_spline_polyline(spline_csv_path)
+    if spline_points is None:
+        return None
+
+    points_files = glob.glob(
+        os.path.join(
+            pick_nuclei_directory,
+            f"{REGION_ROOT_NAME}*{POINT_FILE_NAME_EXTENSION}",
+        )
+    )
+    if not points_files:
+        return None
+
+    cut_sbs_dir = os.path.join(pick_nuclei_directory, CUT_SBS_DIR_NAME)
+    rows = []
+    for points_file_path in points_files:
+        points_df = pd.read_csv(points_file_path)
+        axis_cols = _axis_columns_from_dataframe(points_df)
+        if len(axis_cols) < 2:
+            continue
+        axis_cols = axis_cols[-2:]
+        region_name = os.path.basename(points_file_path).replace(
+            POINT_FILE_NAME_EXTENSION, ""
+        )
+        for idx, row in points_df.iterrows():
+            point_y = float(row[axis_cols[0]])
+            point_x = float(row[axis_cols[1]])
+            sbs_name = f"{region_name}_sbs{idx + 1}{SBS_FILE_NAME_EXTENSION}"
+            sbs_path = os.path.join(cut_sbs_dir, sbs_name)
+            if os.path.exists(sbs_path):
+                sbs_data = np.asarray(imread(sbs_path))
+                sum_intensity = float(sbs_data.sum())
+            else:
+                sum_intensity = float("nan")
+            norm_arc = _project_point_to_polyline(
+                np.array([point_y, point_x], dtype=np.float64),
+                spline_points,
+            )
+            rows.append(
+                {
+                    "sbs_image_file_name": sbs_name,
+                    "x_coordinate": point_x,
+                    "y_coordinate": point_y,
+                    "relative_position_in_spline": norm_arc,
+                    "sum_intensity": sum_intensity,
+                }
+            )
+
+    if not rows:
+        return None
+    report_df = pd.DataFrame(rows)
+    norm_bins = [
+        (0.0, 0.2, "normalized_intensity_0_20"),
+        (0.2, 0.4, "normalized_intensity_20_40"),
+        (0.4, 0.6, "normalized_intensity_40_60"),
+        (0.6, 0.8, "normalized_intensity_60_80"),
+        (0.8, 1.0, "normalized_intensity_80_100"),
+    ]
+    for start, end, col_name in norm_bins:
+        region_mask = (report_df["relative_position_in_spline"] >= start) & (
+            report_df["relative_position_in_spline"] <= end
+        )
+        mean_intensity = report_df.loc[region_mask, "sum_intensity"].mean()
+        if pd.isna(mean_intensity) or mean_intensity == 0:
+            report_df[col_name] = np.nan
+        else:
+            report_df[col_name] = report_df["sum_intensity"] / mean_intensity
+    output_csv_path = os.path.join(
+        pick_nuclei_directory, PICK_NUCLEI_REPORT_FILE_NAME
+    )
+    report_columns = [
+        "sbs_image_file_name",
+        "x_coordinate",
+        "y_coordinate",
+        "relative_position_in_spline",
+        "sum_intensity",
+    ] + [col_name for _, _, col_name in norm_bins]
+    report_df = report_df[report_columns]
+    report_df.to_csv(output_csv_path, index=False)
+    return output_csv_path
+
+
+def generate_pick_nuclei_spline_intensity_plot(
+    pick_nuclei_directory: str,
+) -> str | None:
+    report_path = os.path.join(
+        pick_nuclei_directory, PICK_NUCLEI_REPORT_FILE_NAME
+    )
+    if not os.path.exists(report_path):
+        report_path = generate_pick_nuclei_spline_intensity_report(
+            pick_nuclei_directory
+        )
+        if report_path is None:
+            return None
+    report_df = pd.read_csv(report_path)
+    if not {
+        "relative_position_in_spline",
+        "sum_intensity",
+    }.issubset(report_df.columns):
+        return None
+    x = report_df["relative_position_in_spline"].to_numpy()
+    y = report_df["sum_intensity"].to_numpy()
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.scatter(x, y, s=12)
+    ax.set_xlabel("Relative position in spline")
+    ax.set_ylabel("Sum intensity")
+    ax.set_xlim(0, 1)
+    ax.grid(True, alpha=0.3)
+
+    output_path = os.path.join(
+        pick_nuclei_directory, PICK_NUCLEI_REPORT_PLOT_FILE_NAME
+    )
+    fig.tight_layout()
+    fig.savefig(output_path, format="pdf")
+    plt.close(fig)
+    norm_bins = [
+        ("normalized_intensity_0_20", "0-20"),
+        ("normalized_intensity_20_40", "20-40"),
+        ("normalized_intensity_40_60", "40-60"),
+        ("normalized_intensity_60_80", "60-80"),
+        ("normalized_intensity_80_100", "80-100"),
+    ]
+    for col_name, label in norm_bins:
+        if col_name not in report_df.columns:
+            continue
+        y_norm = report_df[col_name].to_numpy()
+        fig_norm, ax_norm = plt.subplots(figsize=(6, 4))
+        ax_norm.scatter(x, y_norm, s=12)
+        ax_norm.set_xlabel("Relative position in spline")
+        ax_norm.set_ylabel(f"Normalized intensity ({label})")
+        ax_norm.set_xlim(0, 1)
+        ax_norm.grid(True, alpha=0.3)
+
+        output_norm_path = os.path.join(
+            pick_nuclei_directory,
+            PICK_NUCLEI_REPORT_PLOT_NORM_FILE_NAME.replace(
+                ".pdf", f"_{label}.pdf"
+            ),
+        )
+        fig_norm.tight_layout()
+        fig_norm.savefig(output_norm_path, format="pdf")
+        plt.close(fig_norm)
+    return output_path

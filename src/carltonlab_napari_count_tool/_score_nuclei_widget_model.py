@@ -1,22 +1,30 @@
+import glob
 import os
-import pandas as pd
 from configparser import ConfigParser
 from typing import Literal, cast
 
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from napari.layers import Image, Layer, Points
 from napari.utils.notifications import show_info
 from napari.viewer import ViewerModel
-from napari.layers import Layer, Image, Points
 from qtpy.QtWidgets import QWidget
 
+from carltonlab_napari_count_tool._regions_widget_model import SPLINE_FILE_NAME
 from carltonlab_napari_count_tool._shared_variables import (
     CUT_SBS_DIR_NAME,
     DEFAULT_PROJECT_NAME,
     MULTI_GONAD_FILE_EXTENSION,
     PICK_NUCLEI_DIR_NAME,
     POINTS_SUMMARY_FILE_NAME,
+    REGIONS_DIR_NAME,
     SBS_FILE_NAME_EXTENSION,
+    SBS_METADATA_FILE_NAME,
     SCORED_NUCLEI_DIR_NAME,
+    SCORED_NUCLEI_PLOT_FILE_NAME,
     SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION,
+    SCORED_NUCLEI_SUMMARY_FILE_NAME,
 )
 from carltonlab_napari_count_tool._shared_widgets import (
     confirm_dialog,
@@ -95,6 +103,13 @@ class CLSPSbsObject:
             return points_file_path
         return None
 
+    def get_scored_nuclei_dir(self) -> str:
+        return self._scored_nuclei_dir
+
+    def get_gonad_dir(self) -> str:
+        project_dir = os.path.dirname(self._scored_nuclei_dir)
+        return os.path.dirname(project_dir)
+
     def save_zeros_file(self) -> None:
         points_file_path: str = os.path.join(
             self._scored_nuclei_dir, self._points_layer_file_name
@@ -156,6 +171,210 @@ def save_points_layer_from_clsp_object(
         clsp_object.save_zeros_file()
     else:
         clsp_object.save_points_layer(saving_layer)
+
+
+def _axis_columns_from_dataframe(df: pd.DataFrame) -> list[str]:
+    axis_cols = [col for col in df.columns if col.startswith("axis-")]
+    if not axis_cols:
+        return []
+    axis_cols.sort(key=lambda col: int(col.split("-")[-1]))
+    return axis_cols
+
+
+def _load_spline_polyline(spline_csv_path: str) -> np.ndarray | None:
+    if not os.path.exists(spline_csv_path):
+        return None
+    df = pd.read_csv(spline_csv_path)
+    axis_cols = _axis_columns_from_dataframe(df)
+    if len(axis_cols) < 2:
+        return None
+    axis_cols = axis_cols[-2:]
+    shape_df = df
+    if "shape_type" in df.columns:
+        shape_df = df[df["shape_type"] == "path"]
+        if shape_df.empty:
+            shape_df = df
+    if "index" in shape_df.columns:
+        min_index = shape_df["index"].min()
+        shape_df = shape_df[shape_df["index"] == min_index]
+    if "vertex_index" in shape_df.columns:
+        shape_df = shape_df.sort_values("vertex_index")
+    spline_points = shape_df[axis_cols].to_numpy()
+    if spline_points.ndim != 2 or spline_points.shape[0] < 2:
+        return None
+    return spline_points
+
+
+def _project_point_to_polyline(
+    point_yx: np.ndarray, polyline_yx: np.ndarray
+) -> tuple[np.ndarray, float]:
+    segments = polyline_yx[1:] - polyline_yx[:-1]
+    seg_len2 = (segments**2).sum(axis=1)
+    seg_len = np.sqrt(seg_len2)
+    cumlen = np.concatenate(([0.0], np.cumsum(seg_len)))
+    total_len = cumlen[-1]
+
+    best_dist2 = None
+    best_proj = None
+    best_arc = 0.0
+    for i, (p0, seg, seg_l2) in enumerate(
+        zip(polyline_yx[:-1], segments, seg_len2, strict=True)
+    ):
+        if seg_l2 == 0:
+            continue
+        t = float(np.dot(point_yx - p0, seg) / seg_l2)
+        t = min(1.0, max(0.0, t))
+        proj = p0 + t * seg
+        dist2 = float(np.dot(point_yx - proj, point_yx - proj))
+        if best_dist2 is None or dist2 < best_dist2:
+            best_dist2 = dist2
+            best_proj = proj
+            best_arc = float(cumlen[i] + t * seg_len[i])
+
+    if best_proj is None:
+        best_proj = polyline_yx[0]
+        best_arc = 0.0
+    norm_arc = 0.0 if total_len == 0 else best_arc / total_len
+    return best_proj, norm_arc
+
+
+def generate_scored_points_spline_summary(
+    gonad_dir: str, output_csv_path: str | None = None
+) -> str | None:
+    project_dir = os.path.join(gonad_dir, DEFAULT_PROJECT_NAME)
+    scored_nuclei_dir = os.path.join(project_dir, SCORED_NUCLEI_DIR_NAME)
+    spline_csv_path = os.path.join(
+        project_dir, REGIONS_DIR_NAME, SPLINE_FILE_NAME
+    )
+    metadata_csv_path = os.path.join(
+        project_dir,
+        PICK_NUCLEI_DIR_NAME,
+        CUT_SBS_DIR_NAME,
+        SBS_METADATA_FILE_NAME,
+    )
+
+    if not os.path.exists(scored_nuclei_dir):
+        return None
+    if not os.path.exists(metadata_csv_path):
+        return None
+
+    spline_points = _load_spline_polyline(spline_csv_path)
+    if spline_points is None:
+        return None
+
+    metadata_df = pd.read_csv(metadata_csv_path)
+    if "sbs_image_name" not in metadata_df.columns:
+        return None
+    metadata_map = {}
+    for _, row in metadata_df.iterrows():
+        metadata_map[row["sbs_image_name"]] = {
+            "y1": int(row["y1"]),
+            "x1": int(row["x1"]),
+        }
+
+    points_files = glob.glob(
+        os.path.join(
+            scored_nuclei_dir, f"*{SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION}"
+        )
+    )
+    if not points_files:
+        return None
+
+    rows = []
+    for points_file_path in points_files:
+        points_df = pd.read_csv(points_file_path)
+        axis_cols = _axis_columns_from_dataframe(points_df)
+        if len(axis_cols) < 2:
+            continue
+        axis_cols = axis_cols[-2:]
+        points_name = os.path.basename(points_file_path)
+        sbs_image_name = points_name.replace(
+            SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION, SBS_FILE_NAME_EXTENSION
+        )
+        if sbs_image_name not in metadata_map:
+            continue
+        offset = metadata_map[sbs_image_name]
+        for idx, row in points_df.iterrows():
+            point_yx = np.array(
+                [row[axis_cols[0]], row[axis_cols[1]]], dtype=np.float64
+            )
+            y_pos = float(offset["y1"] + point_yx[0])
+            x_pos = float(offset["x1"] + point_yx[1])
+            proj_yx, norm_arc = _project_point_to_polyline(
+                np.array([y_pos, x_pos], dtype=np.float64), spline_points
+            )
+            rows.append(
+                {
+                    "sbs_image_name": sbs_image_name,
+                    "point_number": int(idx + 1),
+                    "x_position": x_pos,
+                    "y_position": y_pos,
+                    "x_y_coord_intersection_to_spline": f"{proj_yx[1]},{proj_yx[0]}",
+                    "normalized_arc-length_to_spline": norm_arc,
+                }
+            )
+
+    if not rows:
+        return None
+    if output_csv_path is None:
+        output_csv_path = os.path.join(
+            scored_nuclei_dir, SCORED_NUCLEI_SUMMARY_FILE_NAME
+        )
+    output_df = pd.DataFrame(
+        rows,
+        columns=[
+            "sbs_image_name",
+            "point_number",
+            "x_position",
+            "y_position",
+            "x_y_coord_intersection_to_spline",
+            "normalized_arc-length_to_spline",
+        ],
+    )
+    output_df.to_csv(output_csv_path, index=False)
+    return output_csv_path
+
+
+def generate_scored_points_spline_plot(
+    gonad_dir: str, summary_csv_path: str | None = None
+) -> str | None:
+    project_dir = os.path.join(gonad_dir, DEFAULT_PROJECT_NAME)
+    scored_nuclei_dir = os.path.join(project_dir, SCORED_NUCLEI_DIR_NAME)
+    if summary_csv_path is None:
+        summary_csv_path = os.path.join(
+            scored_nuclei_dir, SCORED_NUCLEI_SUMMARY_FILE_NAME
+        )
+    if not os.path.exists(summary_csv_path):
+        summary_csv_path = generate_scored_points_spline_summary(gonad_dir)
+        if summary_csv_path is None:
+            return None
+    summary_df = pd.read_csv(summary_csv_path)
+    if "normalized_arc-length_to_spline" not in summary_df.columns:
+        return None
+    positions = (
+        summary_df["normalized_arc-length_to_spline"]
+        .dropna()
+        .to_numpy(dtype=np.float64)
+    )
+    if positions.size == 0:
+        return None
+    positions = np.sort(positions)
+    cumulative_counts = np.cumsum(np.ones_like(positions, dtype=np.int64))
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(
+        positions, cumulative_counts, marker="o", markersize=3, linewidth=1
+    )
+    ax.set_xlabel("Relative spline position")
+    ax.set_ylabel("Cumulative points")
+    ax.set_xlim(0, 1)
+    ax.grid(True, alpha=0.3)
+
+    output_path = os.path.join(scored_nuclei_dir, SCORED_NUCLEI_PLOT_FILE_NAME)
+    fig.tight_layout()
+    fig.savefig(output_path, format="pdf")
+    plt.close(fig)
+    return output_path
 
 
 def open_scoring_file(

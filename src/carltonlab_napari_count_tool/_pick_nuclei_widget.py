@@ -21,6 +21,8 @@ from qtpy.QtWidgets import (
 from carltonlab_napari_count_tool._pick_nuclei_widget_model import (
     create_squares_layers_from_points_layer,
     cut_sbs_files_from_squares_and_image_layers,
+    generate_pick_nuclei_spline_intensity_plot,
+    generate_pick_nuclei_spline_intensity_report,
     get_points_saved_list,
     open_project,
     open_squares_layers,
@@ -202,6 +204,26 @@ class PickNucleiWidget(QWidget):
             self._create_sbs_files_label
         )
         self._set_create_sbs_files_label_state(False)
+
+        self._create_spline_report_button: QPushButton = QPushButton(
+            "Create spline intensity report"
+        )
+        self._create_spline_report_button.clicked.connect(
+            self._create_spline_report_button_pressed
+        )
+        self._confirm_points_container_layout.addWidget(
+            self._create_spline_report_button
+        )
+
+        self._create_spline_plot_button: QPushButton = QPushButton(
+            "Create spline intensity plot"
+        )
+        self._create_spline_plot_button.clicked.connect(
+            self._create_spline_plot_button_pressed
+        )
+        self._confirm_points_container_layout.addWidget(
+            self._create_spline_plot_button
+        )
 
         self._reset_gui()
 
@@ -699,6 +721,30 @@ class PickNucleiWidget(QWidget):
             self._update_list()
             self._evaluate_sbs_saved()
         return
+
+    def _create_spline_report_button_pressed(self) -> None:
+        if self._pick_nuclei_directory is None:
+            show_info("Pick nuclei directory not set")
+            return
+        report_path = generate_pick_nuclei_spline_intensity_report(
+            self._pick_nuclei_directory
+        )
+        if report_path is None:
+            show_info("Failed to create spline intensity report")
+            return
+        show_info(f"Report saved: {report_path}")
+
+    def _create_spline_plot_button_pressed(self) -> None:
+        if self._pick_nuclei_directory is None:
+            show_info("Pick nuclei directory not set")
+            return
+        plot_path = generate_pick_nuclei_spline_intensity_plot(
+            self._pick_nuclei_directory
+        )
+        if plot_path is None:
+            show_info("Failed to create spline intensity plot")
+            return
+        show_info(f"Plot saved: {plot_path}")
 
     def _evaluate_sbs_saved(self) -> None:
         points_saved_list = self._points_saved_list
