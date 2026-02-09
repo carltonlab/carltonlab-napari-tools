@@ -342,9 +342,13 @@ def validate_image_open(
     napari_viewer: ViewerModel, image_path: str
 ) -> Image | None:
     layers_list = napari_viewer.layers
+    image_file_name: str = os.path.basename(image_path)
     for layer in layers_list:
         layer_path = layer.source.path
-        if layer_path == image_path:
+        if layer_path is None:
+            return None
+        layer_file_name: str = os.path.basename(layer_path)
+        if layer_file_name == image_file_name:
             image_layer: Image = cast(Image, layer)
             return image_layer
     return None
