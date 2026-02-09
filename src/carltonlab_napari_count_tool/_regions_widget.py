@@ -9,6 +9,7 @@ from qtpy.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -65,10 +66,19 @@ class RegionWidget(QWidget):
         self._layout: QVBoxLayout = QVBoxLayout()
         self.setLayout(self._layout)
 
+        self._main_scroll_area: QScrollArea = QScrollArea()
+        self._main_scroll_area.setWidgetResizable(True)
+        self._layout.addWidget(self._main_scroll_area)
+
+        self._main_container: QWidget = QWidget()
+        self._main_scroll_area.setWidget(self._main_container)
+        self._main_layout: QVBoxLayout = QVBoxLayout()
+        self._main_container.setLayout(self._main_layout)
+
         self._image_container: QWidget = QWidget()
         self._image_container_layout = QVBoxLayout()
         self._image_container.setLayout(self._image_container_layout)
-        self._layout.addWidget(self._image_container)
+        self._main_layout.addWidget(self._image_container)
 
         self._image_title_label: QLabel = QLabel("Project Image")
         self._image_title_label.setStyleSheet("font-weight: bold")
@@ -85,7 +95,7 @@ class RegionWidget(QWidget):
         self._spline_container: QWidget = QWidget()
         self._spline_container_layout = QVBoxLayout()
         self._spline_container.setLayout(self._spline_container_layout)
-        self._layout.addWidget(self._spline_container)
+        self._main_layout.addWidget(self._spline_container)
 
         self._spline_layer_title: QLabel = QLabel("Spline layer")
         self._spline_layer_title.setStyleSheet("font-weight: bold")
@@ -140,7 +150,7 @@ class RegionWidget(QWidget):
         self._number_of_regions_container.setLayout(
             self._number_of_regions_container_layout
         )
-        self._layout.addWidget(self._number_of_regions_container)
+        self._main_layout.addWidget(self._number_of_regions_container)
 
         self._regions_title_label: QLabel = QLabel("Regions layer")
         self._regions_title_label.setStyleSheet("font-weight: bold")
@@ -191,7 +201,7 @@ class RegionWidget(QWidget):
             self._edit_regions_container_layout
         )
 
-        self._layout.addWidget(self._edit_regions_container)
+        self._main_layout.addWidget(self._edit_regions_container)
 
         self._edit_regions_title_label: QLabel = QLabel("Edit regions")
         self._edit_regions_title_label.setStyleSheet("font-weight: bold")
@@ -227,6 +237,8 @@ class RegionWidget(QWidget):
             self._edited_regions_label
         )
         self._set_edited_regions_state(False)
+
+        self._main_layout.addStretch(1)
 
         self._spline_container.setVisible(False)
         self._number_of_regions_container.setVisible(False)

@@ -13,6 +13,7 @@ from qtpy.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -63,11 +64,20 @@ class PickNucleiWidget(QWidget):
         self._layout = QVBoxLayout()
         self.setLayout(self._layout)
 
+        self._main_scroll_area: QScrollArea = QScrollArea()
+        self._main_scroll_area.setWidgetResizable(True)
+        self._layout.addWidget(self._main_scroll_area)
+
+        self._main_container: QWidget = QWidget()
+        self._main_scroll_area.setWidget(self._main_container)
+        self._main_layout: QVBoxLayout = QVBoxLayout()
+        self._main_container.setLayout(self._main_layout)
+
         self._open_image_container: QWidget = QWidget()
         self._open_image_container_layout = QVBoxLayout()
         self._open_image_container.setLayout(self._open_image_container_layout)
 
-        self._layout.addWidget(self._open_image_container)
+        self._main_layout.addWidget(self._open_image_container)
 
         self._open_image_container.setVisible(True)
 
@@ -92,7 +102,7 @@ class PickNucleiWidget(QWidget):
         self._regions_container: QWidget = QWidget()
         self._regions_container_layout = QVBoxLayout()
         self._regions_container.setLayout(self._regions_container_layout)
-        self._layout.addWidget(self._regions_container)
+        self._main_layout.addWidget(self._regions_container)
 
         self._regions_title_label: QLabel = QLabel("Regions")
         self._regions_title_label.setStyleSheet("font-weight: bold")
@@ -131,7 +141,7 @@ class PickNucleiWidget(QWidget):
         self._confirm_points_container.setLayout(
             self._confirm_points_container_layout
         )
-        self._layout.addWidget(self._confirm_points_container)
+        self._main_layout.addWidget(self._confirm_points_container)
 
         self._save_points_button: QPushButton = QPushButton(
             "Save points layer"
@@ -208,6 +218,7 @@ class PickNucleiWidget(QWidget):
         self._create_spline_report_button: QPushButton = QPushButton(
             "Create spline intensity report"
         )
+        self._create_spline_report_button.setEnabled(False)
         self._create_spline_report_button.clicked.connect(
             self._create_spline_report_button_pressed
         )
@@ -218,12 +229,15 @@ class PickNucleiWidget(QWidget):
         self._create_spline_plot_button: QPushButton = QPushButton(
             "Create spline intensity plot"
         )
+        self._create_spline_plot_button.setEnabled(False)
         self._create_spline_plot_button.clicked.connect(
             self._create_spline_plot_button_pressed
         )
         self._confirm_points_container_layout.addWidget(
             self._create_spline_plot_button
         )
+
+        self._main_layout.addStretch(1)
 
         self._reset_gui()
 
@@ -461,7 +475,7 @@ class PickNucleiWidget(QWidget):
         current_region_layer.data = []
         current_region_layer.add_polygons(current_region_data_copy)
         current_region_layer.visible = True
-        self._set_layers_color_and_opacity(current_region_layer, 0.5, "yellow")
+        self._set_layers_color_and_opacity(current_region_layer, 0.2, "blue")
         extra_regions_layer = cast(Shapes, self._extra_regions_layer)
         if show_all_regions_state:
             new_appending_data = []
@@ -609,7 +623,7 @@ class PickNucleiWidget(QWidget):
         all_points_saved_list: list[bool] = [
             save_tuple[1] for save_tuple in points_saved_list
         ]
-        if not any(all_points_saved_list):
+        if not all(all_points_saved_list):
             self._set_points_saved_label_state(False)
         else:
             self._set_points_saved_label_state(True)
@@ -681,7 +695,7 @@ class PickNucleiWidget(QWidget):
         all_squares_saved_list: list[bool] = [
             save_tuple[2] for save_tuple in points_saved_list
         ]
-        if not any(all_squares_saved_list):
+        if not all(all_squares_saved_list):
             self._set_saved_squares_label_state(False)
         else:
             self._set_saved_squares_label_state(True)
@@ -753,7 +767,7 @@ class PickNucleiWidget(QWidget):
         all_sbs_saved_list: list[bool] = [
             save_tuple[3] for save_tuple in points_saved_list
         ]
-        if not any(all_sbs_saved_list):
+        if not all(all_sbs_saved_list):
             self._set_create_sbs_files_label_state(False)
         else:
             self._set_create_sbs_files_label_state(True)
