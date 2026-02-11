@@ -83,16 +83,13 @@ def create_new_project(
     regions_path: str = os.path.join(project_new_dir_path, REGIONS_DIR_NAME)
     if not os.path.exists(regions_path):
         os.makedirs(regions_path)
-    image_layer: Image | None = open_image_as_layer(
+    image_layer: list[Image] = open_image_as_layer(
         napari_viewer, new_project_image_path
     )
-    if image_layer is None:
-        show_info("Image could not be loaded")
-        return None
     spline_layer: Shapes = napari_viewer.add_shapes(
         name=SPLINE_LAYER_DEFAULT_NAME, ndim=2
     )
-    return (regions_path, image_layer, spline_layer)
+    return (regions_path, image_layer[0], spline_layer)
 
 
 def load_project_files(
