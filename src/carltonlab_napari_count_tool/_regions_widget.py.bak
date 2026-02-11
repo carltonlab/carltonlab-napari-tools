@@ -208,9 +208,9 @@ class RegionWidget(QWidget):
             self._individual_regions_container
         )
 
-        self._individual_regions_widgets_list: list[IndividualRegionWidget] = (
-            []
-        )
+        self._individual_regions_widgets_list: list[
+            IndividualRegionWidget
+        ] = []
 
         self._save_individual_regions_button: QPushButton = QPushButton(
             "Save edited regions"
@@ -342,7 +342,7 @@ class RegionWidget(QWidget):
 
     def _update_layers_labels(self) -> None:
         if self._image_layer is not None:
-            self._selected_image_line_edit.setText(self._image_layer.name)
+            self._selected_image_line_edit.setText(self._image_layer[0].name)
         if self._spline_layer is not None:
             self._spline_layer_line_edit.setText(self._spline_layer.name)
             self._spline_layer.edge_color = SPLINE_EDGE_COLOR

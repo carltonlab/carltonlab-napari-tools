@@ -3,6 +3,8 @@ import os
 from configparser import ConfigParser
 from typing import Literal, cast
 
+import tifffile
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -15,6 +17,7 @@ from carltonlab_napari_count_tool._regions_widget_model import SPLINE_FILE_NAME
 from carltonlab_napari_count_tool._shared_variables import (
     CUT_SBS_DIR_NAME,
     DEFAULT_PROJECT_NAME,
+    IMAGE_CONTRASTS_FILE_NAME,
     MULTI_GONAD_FILE_EXTENSION,
     PICK_NUCLEI_DIR_NAME,
     POINTS_SUMMARY_FILE_NAME,
@@ -29,6 +32,10 @@ from carltonlab_napari_count_tool._shared_variables import (
 from carltonlab_napari_count_tool._shared_widgets import (
     confirm_dialog,
     get_file,
+)
+from carltonlab_napari_count_tool._set_contrast_widget_model import (
+    get_loaded_image_contrasts,
+    set_layer_contrast_limits,
 )
 
 
@@ -139,15 +146,54 @@ OpenFileReturns = Literal["failed"] | None | tuple[list[CLSPSbsObject], str]
 
 def open_image_layer_from_clsp_object(
     napari_viewer: ViewerModel, clsp_object: CLSPSbsObject, blind: bool = False
-) -> Image | None:
+) -> tuple[Image, Image]:
     image_path: str = clsp_object.get_image_path()
-    if not os.path.exists(image_path):
-        return None
-    image_layers: list[Layer] = napari_viewer.open(image_path)
-    first_image_layer: Image = cast(Image, image_layers[0])
+    project_dir: str = clsp_object.get_gonad_dir()
+    layers_contrasts: dict[int, tuple[float, float]] | None = (
+        _load_layers_contrasts(project_dir)
+    )
+    print(f"The layers contrasts are: {layers_contrasts}")
+    image_data = tifffile.imread(image_path)
+    images_layers: Image | list[Image] = napari_viewer.add_image(
+        np.asarray(image_data.data), channel_axis=1
+    )
+    if isinstance(images_layers, Image):
+        raise ValueError(
+            f"Expected 2 channels along axis=1, but add_image returned a single layer"
+            f"image_data.shape={image_data.shape}"
+        )
+    image_layers = cast(list[Image], images_layers)
+    first_layer = image_layers[0]
+    second_layer = image_layers[1]
+    if layers_contrasts is not None:
+        set_layer_contrast_limits(
+            first_layer, layers_contrasts[0][0], layers_contrasts[0][1]
+        )
+        set_layer_contrast_limits(
+            second_layer, layers_contrasts[1][0], layers_contrasts[1][1]
+        )
+        print(
+            f"Contrasts set to {layers_contrasts[0]} and {layers_contrasts[1]}"
+        )
     if blind:
-        first_image_layer.name = "blind_sbs_image"
-    return cast(Image, image_layers[0])
+        first_layer.name = "blind_dapi"
+        second_layer.name = "blind_rad51"
+    return (first_layer, second_layer)
+
+
+def _load_layers_contrasts(
+    project_path: str,
+) -> dict[int, tuple[float, float]] | None:
+    contrast_file_path: str = os.path.join(project_path, DEFAULT_PROJECT_NAME)
+    print(f"The project path is: {contrast_file_path}")
+    if not os.path.exists(contrast_file_path):
+        print("Doesnt exist")
+        return None
+    loaded_contrasts: dict[int, tuple[float, float]] | None = (
+        get_loaded_image_contrasts(contrast_file_path)
+    )
+    print(f"The loaded contrasts are: {loaded_contrasts}")
+    return loaded_contrasts
 
 
 def open_points_layer_from_clsp_object(

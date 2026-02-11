@@ -1,5 +1,7 @@
 DEFAULT_PROJECT_NAME = "cl_score_points_project"
 
+IMAGE_CONTRASTS_FILE_NAME = "cl_image_contrasts.config"
+
 PICK_NUCLEI_DIR_NAME = "pick_nuclei"
 POINTS_SUMMARY_FILE_NAME = "points_summary.csv"
 REGION_ROOT_NAME = "region-"

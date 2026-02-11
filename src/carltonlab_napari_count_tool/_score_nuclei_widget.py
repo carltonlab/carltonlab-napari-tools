@@ -95,6 +95,7 @@ class ScoreNucleiWidget(QWidget):
 
         self._napari_viewer = napari_viewer
         self._scoring_layer: Image | None = None
+        self._extra_layer: Image | None = None
         self._showing_points_layer: Points | None = None
         self._adding_points_layer: Points | None = None
         self._scoring_sbs_list: list[CLSPSbsObject] = []
@@ -424,20 +425,23 @@ class ScoreNucleiWidget(QWidget):
             self._napari_viewer.layers.remove(self._showing_points_layer)
         if self._adding_points_layer is not None:
             self._napari_viewer.layers.remove(self._adding_points_layer)
+        if self._extra_layer is not None:
+            self._napari_viewer.layers.remove(self._extra_layer)
         blind_state: bool = self._blind_score_checkbox.isChecked()
         selected_item: QListWidgetItem = self._sbs_list_widget.currentItem()
         selected_widget: SBSListItemWidget = cast(
             SBSListItemWidget, self._sbs_list_widget.itemWidget(selected_item)
         )
         selected_widget.set_data(blind_state)
-        opening_image_layer: Image | None = open_image_layer_from_clsp_object(
-            self._napari_viewer,
-            selected_widget.get_clsp_object(),
-            blind=blind_state,
+        opening_image_layer: tuple[Image, Image] = (
+            open_image_layer_from_clsp_object(
+                self._napari_viewer,
+                selected_widget.get_clsp_object(),
+                blind=blind_state,
+            )
         )
-        if opening_image_layer is None:
-            show_info("Couldn't load the image. ERROR")
-        self._scoring_layer = opening_image_layer
+        self._scoring_layer = opening_image_layer[1]
+        self._extra_layer = opening_image_layer[0]
         opening_points_layer: Points = open_points_layer_from_clsp_object(
             self._napari_viewer,
             selected_widget.get_clsp_object(),
