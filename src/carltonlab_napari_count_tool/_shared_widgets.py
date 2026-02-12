@@ -3,9 +3,9 @@ from typing import TYPE_CHECKING, Literal
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
+    QLayout,
     QMessageBox,
     QWidget,
-    QLayout,
 )
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ def get_directory(
 
 
 def get_file(
-    parent: QWidget | None = None,
+    parent: QWidget,
     caption: str = "Select file",
 ) -> str | None:
     file_path, _ = QFileDialog.getOpenFileName(

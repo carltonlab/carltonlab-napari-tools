@@ -1,4 +1,5 @@
 DEFAULT_PROJECT_NAME = "cl_score_points_project"
+DEFAULT_PROJECT_EXTENSION = "_clsp"
 
 IMAGE_CONTRASTS_FILE_NAME = "cl_image_contrasts.config"
 
@@ -32,3 +33,5 @@ SCORED_NUCLEI_DIR_NAME = "scored_nuclei"
 SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION = "_scored_nuclei_points.csv"
 SCORED_NUCLEI_SUMMARY_FILE_NAME = "scored_points_spline_summary.csv"
 SCORED_NUCLEI_PLOT_FILE_NAME = "scored_points_spline_cumulative_plot.pdf"
+
+RESULTS_DIR = "summaries_and_plots"

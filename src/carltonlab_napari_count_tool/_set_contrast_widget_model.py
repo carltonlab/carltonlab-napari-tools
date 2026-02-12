@@ -1,11 +1,15 @@
 import os
-from typing import cast
-from napari.utils.misc import re
-from pydantic.v1 import config
+from configparser import ConfigParser
+
 import tifffile
-from napari.layers import Image, image
+from napari.layers import Image
 from napari.viewer import ViewerModel
 from qtpy.QtWidgets import QWidget
+
+from carltonlab_napari_count_tool._model import (
+    get_file_name_from_path,
+    verify_project_directory_from_image_path,
+)
 from carltonlab_napari_count_tool._shared_variables import (
     DEFAULT_PROJECT_NAME,
     IMAGE_CONTRASTS_FILE_NAME,
@@ -14,8 +18,6 @@ from carltonlab_napari_count_tool._shared_widgets import (
     confirm_dialog,
     get_file,
 )
-from carltonlab_napari_count_tool._model import get_image_contrasts
-from configparser import ConfigParser
 
 
 def set_layer_contrast_limits(
@@ -71,15 +73,31 @@ def open_image_contrasts(
     )
     if open_image_path is None:
         return None
+    new_image_path: bool | str = verify_project_directory_from_image_path(
+        open_image_path, create_project_if_not_exist=True
+    )
+    if isinstance(new_image_path, str):
+        open_image_path = new_image_path
     image_data = tifffile.imread(open_image_path)
+    if len(image_data.shape) < 4:
+        raise ValueError(
+            f"The image shape is: {image_data.shape}, expected at least 4 dimensions"
+            f"The cannel axis must be index 1"
+        )
     image_layers: list[Image] | Image = napari_viewer.add_image(
         image_data, channel_axis=1
+    )
+    file_name_tuple: tuple[str, str, str] = get_file_name_from_path(
+        open_image_path
     )
     if isinstance(image_layers, Image):
         raise ValueError(
             f"Expected 2 channels along axis=1, but add_image returned a single layer"
             f"The image shape is: {image_data.shape}"
         )
+    for image_index, image_layer in enumerate(image_layers):
+        channel_string: str = f"c{image_index + 1}"
+        image_layer.name = file_name_tuple[1] + " - " + channel_string
     return (image_layers, open_image_path)
 
 

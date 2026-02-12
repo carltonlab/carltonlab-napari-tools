@@ -3,21 +3,23 @@ import os
 from configparser import ConfigParser
 from typing import Literal, cast
 
-import tifffile
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import tifffile
 from napari.layers import Image, Layer, Points
 from napari.utils.notifications import show_info
 from napari.viewer import ViewerModel
 from qtpy.QtWidgets import QWidget
 
 from carltonlab_napari_count_tool._regions_widget_model import SPLINE_FILE_NAME
+from carltonlab_napari_count_tool._set_contrast_widget_model import (
+    get_loaded_image_contrasts,
+    set_layer_contrast_limits,
+)
 from carltonlab_napari_count_tool._shared_variables import (
     CUT_SBS_DIR_NAME,
     DEFAULT_PROJECT_NAME,
-    IMAGE_CONTRASTS_FILE_NAME,
     MULTI_GONAD_FILE_EXTENSION,
     PICK_NUCLEI_DIR_NAME,
     POINTS_SUMMARY_FILE_NAME,
@@ -32,10 +34,6 @@ from carltonlab_napari_count_tool._shared_variables import (
 from carltonlab_napari_count_tool._shared_widgets import (
     confirm_dialog,
     get_file,
-)
-from carltonlab_napari_count_tool._set_contrast_widget_model import (
-    get_loaded_image_contrasts,
-    set_layer_contrast_limits,
 )
 
 
@@ -433,6 +431,7 @@ def open_scoring_file(
         )
         if not confirmed_result:
             return None
+    napari_viewer.layers.clear()
     file_path = get_file(
         parent_widget,
         f"Select scoring image (.tif) or multi gonad file (*{MULTI_GONAD_FILE_EXTENSION})",

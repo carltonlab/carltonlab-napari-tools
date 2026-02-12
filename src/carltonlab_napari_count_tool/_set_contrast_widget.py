@@ -1,31 +1,30 @@
 from typing import cast
+
+from napari.layers import Image
+from napari.viewer import ViewerModel
+from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
-    QScrollArea,
-    QLineEdit,
-    QPushButton,
-    QSlider,
-    QSizePolicy,
 )
 
-from qtpy.QtCore import Qt, QSignalBlocker
-
-from carltonlab_napari_count_tool._set_contrast_widget_model import (
-    set_layer_contrast_limits,
-    save_contrasts,
-    open_image_contrasts,
-)
 from carltonlab_napari_count_tool._model import (
     get_image_contrasts,
-    get_image_path_from_layer,
+)
+from carltonlab_napari_count_tool._set_contrast_widget_model import (
+    open_image_contrasts,
+    save_contrasts,
+    set_layer_contrast_limits,
 )
 from carltonlab_napari_count_tool._shared_widgets import clear_layout
-from napari.layers import Image
-from napari.viewer import ViewerModel
 
 
 class ContrastLimitWidget(QWidget):
@@ -45,9 +44,19 @@ class ContrastLimitWidget(QWidget):
         self._layout = QVBoxLayout()
         self.setLayout(self._layout)
 
-        self._title: QLabel = QLabel(f"Channel {self._layer_index + 1}")
+        self._title: QLabel = QLabel(
+            f"Channel {self._layer_index + 1} --- {image_layer.name}"
+        )
         self._title.setStyleSheet("font-weight: bold")
         self._layout.addWidget(self._title)
+
+        self._set_from_current_contrast_button = QPushButton(
+            "Set from viewer contrast"
+        )
+        self._set_from_current_contrast_button.clicked.connect(
+            self._set_from_current_contrast_button_pressed
+        )
+        self._layout.addWidget(self._set_from_current_contrast_button)
 
         self._min_container: QWidget = QWidget()
         self._min_container_layout: QHBoxLayout = QHBoxLayout()
@@ -100,6 +109,21 @@ class ContrastLimitWidget(QWidget):
             self._on_max_spinbox_value_changed
         )
         self._max_container_layout.addWidget(self._max_spin_box)
+
+    def _set_from_current_contrast_button_pressed(self) -> None:
+        image_layer: Image = self._image_layer
+        image_layer_contrasts: list[float | None] = image_layer.contrast_limits
+        if all(contrast is not None for contrast in image_layer_contrasts):
+            min_contrast: int = int(cast(int, image_layer_contrasts[0]))
+            max_contrast: int = int(cast(int, image_layer_contrasts[1]))
+            with QSignalBlocker(self._min_spin_box):
+                self._min_spin_box.setValue(min_contrast)
+            with QSignalBlocker(self._min_slider):
+                self._min_slider.setValue(min_contrast)
+            with QSignalBlocker(self._max_spin_box):
+                self._max_spin_box.setValue(max_contrast)
+            with QSignalBlocker(self._max_slider):
+                self._max_slider.setValue(max_contrast)
 
     def _on_min_spinbox_value_changed(self, value) -> None:
         with QSignalBlocker(self._min_slider):
@@ -189,16 +213,16 @@ class SetContrastWidget(QWidget):
         self._open_image_line_edit.setDisabled(True)
         self._top_container_layout.addWidget(self._open_image_line_edit)
 
-        self._open_image_label: QLabel = QLabel("")
-        self._top_container_layout.addWidget(self._open_image_label)
-
-        self._set_open_image_label_state(False)
-
         self._open_image_button: QPushButton = QPushButton("Open image")
         self._open_image_button.clicked.connect(
             self._open_image_button_pressed
         )
         self._top_container_layout.addWidget(self._open_image_button)
+
+        self._open_image_label: QLabel = QLabel("")
+        self._top_container_layout.addWidget(self._open_image_label)
+
+        self._set_open_image_label_state(False)
 
         self._contrast_container: QWidget = QWidget()
         self._contrast_container_layout: QVBoxLayout = QVBoxLayout()
@@ -272,12 +296,14 @@ class SetContrastWidget(QWidget):
             self._napari_viewer, self
         )
         if open_result is None:
+            print("Result was none")
             return
         self._image_tuple = tuple(open_result[0])
         self._image_path = open_result[1]
         self._create_contrast_widgets()
         self._load_contrasts()
         self._set_open_image_label_state(True)
+        self._open_image_line_edit.setText(self._image_path)
 
     def _set_save_image_label_state(self, state: bool) -> None:
         if state:

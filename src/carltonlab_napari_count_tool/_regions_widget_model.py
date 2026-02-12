@@ -17,6 +17,7 @@ from carltonlab_napari_count_tool._model import (
     save_layer_as_csv,
 )
 from carltonlab_napari_count_tool._shared_variables import (
+    DEFAULT_PROJECT_EXTENSION,
     EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME,
     EDITED_REGIONS_FILE_NAME,
     REGIONS_DIR_NAME,
@@ -29,7 +30,6 @@ REGIONS_DEFAULT_WIDTH = 3
 REGION_COLOR = "#27adf5"
 
 DEFAULT_PROJECT_NAME = "cl_score_points_project"
-DEFAULT_PROJECT_EXTENSION = "_clsp"
 
 SPLINE_FILE_NAME = "clt_spline_layer.csv"
 REGIONS_FILE_NAME = "clt_regions_layer.csv"
@@ -83,13 +83,16 @@ def create_new_project(
     regions_path: str = os.path.join(project_new_dir_path, REGIONS_DIR_NAME)
     if not os.path.exists(regions_path):
         os.makedirs(regions_path)
-    image_layer: list[Image] = open_image_as_layer(
+    image_layer: Image | list[Image] = open_image_as_layer(
         napari_viewer, new_project_image_path
     )
     spline_layer: Shapes = napari_viewer.add_shapes(
         name=SPLINE_LAYER_DEFAULT_NAME, ndim=2
     )
-    return (regions_path, image_layer[0], spline_layer)
+    if isinstance(image_layer, list):
+        return (regions_path, image_layer[0], spline_layer)
+    else:
+        return (regions_path, image_layer, spline_layer)
 
 
 def load_project_files(
