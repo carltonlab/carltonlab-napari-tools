@@ -40,7 +40,11 @@ from carltonlab_napari_count_tool._shared_variables import (
 )
 
 
-def open_project(napari_viewer: ViewerModel, image_path: str) -> (
+def open_project(
+    napari_viewer: ViewerModel,
+    image_path: str,
+    open_image_layer: Image | None = None,
+) -> (
     Literal["failed"]
     | tuple[
         str,
@@ -84,9 +88,14 @@ def open_project(napari_viewer: ViewerModel, image_path: str) -> (
             "The edited (expanded) regions file doesn't exist. Create it in the regions widget"
         )
         return "failed"
-    image_layer: Image | None = validate_image_open(napari_viewer, image_path)
-    if validate_image_open(napari_viewer, image_path) is None:
+    image_layer: Image | None = None
+    if open_image_layer is None:
         image_layer = open_image_as_layer(napari_viewer, image_path)
+        if isinstance(image_layer, list):
+            show_info("Couldn't load the image layer")
+            return "failed"
+    else:
+        image_layer = open_image_layer
     if image_layer is None:
         show_info("Couldn't load the image layer")
         return "failed"

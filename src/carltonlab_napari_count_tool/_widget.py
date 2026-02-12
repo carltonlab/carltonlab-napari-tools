@@ -1,22 +1,21 @@
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
-from qtpy.QtCore import QRect, QSize, Qt
-from qtpy.QtGui import QPainter, QShowEvent
+from napari.layers import Image
 from qtpy.QtWidgets import (
+    QLabel,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
-    QLabel,
 )
 
-from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
 from carltonlab_napari_count_tool._multi_gonad_widget import (
     MakeMultiGonadWidget,
 )
 from carltonlab_napari_count_tool._pick_nuclei_widget import PickNucleiWidget
 from carltonlab_napari_count_tool._regions_widget import RegionWidget
 from carltonlab_napari_count_tool._score_nuclei_widget import ScoreNucleiWidget
+from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
 
 if TYPE_CHECKING:
     import napari
@@ -290,6 +289,9 @@ class CarltonLabCountTool(QWidget):
         self._parent_widget = None
         self._current_orientation = "none"
 
+        self._image_path: str | None = None
+        self._image_layer: Image | None = None
+
         self._initialize_gui()
 
     def _initialize_gui(self) -> None:
@@ -405,3 +407,16 @@ class CarltonLabCountTool(QWidget):
         self._napari_viewer.window.add_dock_widget(
             setting_widget, name="clt Score Nuclei"
         )
+
+    def set_image_path(self, image_path: str, image_layer: Image) -> None:
+        self._image_path = image_path
+        self._image_layer = image_layer
+        print(f"The image path is: {self._image_path}")
+        print(f"The image layer is: {self._image_layer}")
+
+    def get_image_path(self) -> tuple[str, Image] | None:
+        if self._image_path is None or self._image_layer is None:
+            print("Returned none")
+            return None
+        print("returned the image path")
+        return (self._image_path, self._image_layer)

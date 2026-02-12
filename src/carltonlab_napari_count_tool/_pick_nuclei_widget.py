@@ -251,6 +251,7 @@ class PickNucleiWidget(QWidget):
             )
             if not confirmed_result:
                 return
+        found_image_from_main_widget: Image | None = None
         self._reset_gui()
         file_dialog: QFileDialog = QFileDialog(
             self, caption="Select the project image"
@@ -267,18 +268,24 @@ class PickNucleiWidget(QWidget):
                 no_mode=True,
             )
             if confirmed_result:
-                removing_layer_names: list[str] = []
-                layers_list = self._napari_viewer.layers
-                for layer in layers_list:
-                    if not isinstance(layer, Image):
-                        layer_name = layer.name
-                        removing_layer_names.append(layer_name)
-                for removing_layer_name in removing_layer_names:
-                    for napari_layer in self._napari_viewer.layers:
-                        current_layer_name = napari_layer.name
-                        if removing_layer_name == current_layer_name:
-                            self._napari_viewer.layers.remove(napari_layer)
-                            break
+                open_image_path: tuple[str, Image] = (
+                    self._parent_widget.get_image_path()  # type: ignore
+                )
+                if open_image_path is None:
+                    self._napari_viewer.layers.clear()
+                else:
+                    found_image_from_main_widget = open_image_path[1]
+                    removing_layer_names: list[str] = []
+                    layers_list = self._napari_viewer.layers
+                    for layer in layers_list:
+                        if layer is not open_image_path[1]:
+                            removing_layer_names.append(layer.name)
+                    for removing_layer_name in removing_layer_names:
+                        for napari_layer in self._napari_viewer.layers:
+                            current_layer_name = napari_layer.name
+                            if removing_layer_name == current_layer_name:
+                                self._napari_viewer.layers.remove(napari_layer)
+                                break
         open_answer: (
             Literal["failed"]
             | tuple[
@@ -294,7 +301,11 @@ class PickNucleiWidget(QWidget):
                 Shapes,
                 list[tuple[int, bool, bool, bool] | None],
             ]
-        ) = open_project(self._napari_viewer, file_path)
+        ) = open_project(
+            self._napari_viewer,
+            file_path,
+            open_image_layer=found_image_from_main_widget,
+        )
         if open_answer == "failed":
             show_info("Failed to open project")
             return
