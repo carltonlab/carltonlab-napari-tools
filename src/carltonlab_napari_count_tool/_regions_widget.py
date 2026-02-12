@@ -281,6 +281,16 @@ class RegionWidget(QWidget):
             )
             if not confirmed_result:
                 return
+        if len(self._napari_viewer.layers) > 0:
+            confirmed_result: bool = confirm_dialog(
+                self._napari_viewer,
+                "Layers are open, it is required to close all non-image layers now. Confirm close all non-image layers?",
+                no_mode=True,
+            )
+            if confirmed_result:
+                self._napari_viewer.layers.clear()
+            else:
+                return
         self._reset_gui()
         file_dialog: QFileDialog = QFileDialog(
             self, caption="Select the project image"
@@ -306,6 +316,8 @@ class RegionWidget(QWidget):
         self._update_layers_labels()
         self._set_spline_saved_state(False)
         self._spline_container.setVisible(True)
+
+        self._parent_widget.set_image_path(file_path, self._image_layer)  # type: ignore
 
     def _load_project(self, image_path) -> None:
         returning_tuple: (
@@ -338,6 +350,7 @@ class RegionWidget(QWidget):
         else:
             self._set_edited_regions_state(False)
         self._update_layers_labels()
+        self._parent_widget.set_image_path(image_path, self._image_layer)  # type: ignore
 
     def _update_displayed_vertices(self, update_shape_index: int) -> None:
         if self._spline_layer is None:
