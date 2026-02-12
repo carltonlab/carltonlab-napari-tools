@@ -381,6 +381,7 @@ class ScoreNucleiWidget(QWidget):
 
     def _confirm_button_pressed(self) -> None:
         selected_item: QListWidgetItem = self._sbs_list_widget.currentItem()
+        selection_index: int = self._sbs_list_widget.currentRow()
         selected_widget: SBSListItemWidget = cast(
             SBSListItemWidget, self._sbs_list_widget.itemWidget(selected_item)
         )
@@ -397,7 +398,9 @@ class ScoreNucleiWidget(QWidget):
         save_points_layer_from_clsp_object(
             self._adding_points_layer, clsp_object
         )
-        self._list_selection_changed()
+        next_selection: int = selection_index + 1
+        if next_selection < self._sbs_list_widget.count():
+            self._sbs_list_widget.setCurrentRow(next_selection)
 
     def _peek_button_pressed(self) -> None:
         selected_index: int = self._sbs_list_widget.currentRow()

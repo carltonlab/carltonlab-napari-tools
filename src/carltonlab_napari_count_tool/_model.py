@@ -2,10 +2,12 @@ import os
 from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import cast
 
 import tifffile
 from napari.layers import Image, Layer, Points, Shapes
+from napari.utils.notifications import show_info
+from napari.viewer import ViewerModel
 
 from carltonlab_napari_count_tool._shared_variables import (
     DEFAULT_PROJECT_EXTENSION,
@@ -15,9 +17,65 @@ from carltonlab_napari_count_tool._shared_variables import (
     RESULTS_DIR,
     SCORED_NUCLEI_DIR_NAME,
 )
+from carltonlab_napari_count_tool._shared_widgets import (
+    confirm_dialog,
+)
 
-if TYPE_CHECKING:
-    from napari.viewer import ViewerModel
+
+def validate_closed_layers(napari_viewer: ViewerModel) -> bool:
+    number_of_layers: int = len(napari_viewer.layers)
+    if number_of_layers <= 0:
+        return True
+    confirm_answer: bool = confirm_dialog(
+        napari_viewer,
+        "All layers must be closed to open a new project image. Proceed?",
+        no_mode=True,
+    )
+    if not confirm_answer:
+        return False
+    napari_viewer.layers.clear()
+    return True
+
+
+def open_project_image(
+    napari_viewer: ViewerModel, image_path: str
+) -> tuple[str, list[Image], str] | None:
+    image_dir: str = os.path.dirname(image_path)
+    project_files_dir: str = os.path.join(image_dir, DEFAULT_PROJECT_NAME)
+    if not os.path.exists(project_files_dir):
+        confirm_answer: bool = confirm_dialog(
+            napari_viewer,
+            "The image is not part of a project. Create a new project?",
+            no_mode=True,
+        )
+        if confirm_answer:
+            new_image_path: str = create_project_dir_structure(image_path)
+            image_path = new_image_path
+            image_dir = os.path.dirname(image_path)
+            project_files_dir = os.path.join(image_dir, DEFAULT_PROJECT_NAME)
+        else:
+            return None
+    image_list: list[Image] = []
+    image_data = tifffile.imread(image_path)
+    if len(image_data.shape) != 4:
+        showing_string: str = (
+            f"The image shape is: {image_data.shape}, expected 4 dimensions (ZCYX). ERROR"
+        )
+        show_info(showing_string)
+        print(showing_string)
+        return None
+    image_opened: list[Image] | Image = open_image_as_layer(
+        napari_viewer, image_path, split_channel_axis=1
+    )
+    if isinstance(image_opened, Image):
+        showing_string: str = (
+            "Only one image open when trying to open multiple channels. ERROR"
+        )
+        show_info(showing_string)
+        print(showing_string)
+        return None
+    image_list = cast(list[Image], image_opened)
+    return (image_path, image_list, project_files_dir)
 
 
 def open_image_as_layer(
@@ -27,10 +85,16 @@ def open_image_as_layer(
 ) -> "Image | list[Image]":
     image_data = tifffile.imread(image_path)
     open_layers: Image | list[Image]
+    image_path_path_object: Path = Path(image_path)
+    image_file_no_ext: str = image_path_path_object.stem
     if split_channel_axis is not None:
         open_layers = napari_viewer.add_image(
             image_data, channel_axis=split_channel_axis
         )
+        layers_list = cast(list[Image], open_layers)
+        for layer_index, layer in enumerate(layers_list):
+            channel_string: str = f" - c{layer_index + 1}"
+            layer.name = image_file_no_ext + channel_string
     else:
         open_layers = napari_viewer.add_image(image_data)
     return open_layers
