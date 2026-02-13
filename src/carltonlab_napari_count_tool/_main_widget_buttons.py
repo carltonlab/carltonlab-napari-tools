@@ -1,8 +1,13 @@
 from typing import TYPE_CHECKING, Any
 
+from napari.layers import Image
 from qtpy.QtWidgets import QPushButton, QWidget
 
-from carltonlab_napari_count_tool._protocols import CToolButton
+from carltonlab_napari_count_tool._protocols import (
+    CToolButton,
+    MainWidgetCallBacks,
+)
+from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
 
 if TYPE_CHECKING:
     from napari.viewer import ViewerModel
@@ -45,17 +50,20 @@ def _results_buttons(
 class ExtractChannelsButton:
     _button: QPushButton
     _button_text: str
-    _launched_widget: QWidget
+    _launched_widget: QWidget | None
 
     def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
+        self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
     ) -> None:
         self._napari_viewer = napari_viewer
-        self._main_widget = main_widget
+        self._main_widget: MainWidgetCallBacks = main_widget
 
         self._button_text = "1.Extract channels"
 
         self._button = QPushButton(self._button_text)
+        self._button.clicked.connect(self.launch_widget)
+
+        self._launched_widget = None
 
         self._connecting_method_str = "_launch_extract_channels_widget"
 
@@ -70,23 +78,37 @@ class ExtractChannelsButton:
 
     def launch_widget(
         self, context_dict: dict[str, Any] | None = None
-    ) -> QWidget:
-        return QWidget()
+    ) -> QWidget | None:
+        if context_dict is None:
+            return
+        image_path: str = context_dict["image_path"]
+        image_tuple: tuple[Image, ...] = context_dict["image_list"]
+        passing_tuple: tuple[tuple[Image, ...], str] | None = (
+            image_tuple,
+            image_path,
+        )
+        self._launched_widget = SetContrastWidget(
+            self._napari_viewer, self._main_widget, passing_tuple
+        )
+        self._main_widget.set_current_widget(self._launched_widget)
+        return self._launched_widget
 
 
 @_prepare_tools_buttons
 class StitchGonads:
     _button: QPushButton
     _button_text: str
-    _launched_widget: QWidget
+    _launched_widget: QWidget | None
 
     def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
+        self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
     ) -> None:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
 
         self._button_text = "2.Stitch gonads"
+
+        self._launched_widget = None
 
         self._button = QPushButton(self._button_text)
 
@@ -111,10 +133,10 @@ class StitchGonads:
 class SetContrastButton:
     _button: QPushButton
     _button_text: str
-    _launched_widget: QWidget
+    _launched_widget: QWidget | None
 
     def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
+        self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
     ) -> None:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
@@ -144,10 +166,10 @@ class SetContrastButton:
 class RegionsToolButtons:
     _button: QPushButton
     _button_text: str
-    _launched_widget: QWidget
+    _launched_widget: QWidget | None
 
     def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
+        self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
     ) -> None:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
@@ -176,10 +198,10 @@ class RegionsToolButtons:
 class NucleiPickerToolButtons:
     _button: QPushButton
     _button_text: str
-    _launched_widget: QWidget
+    _launched_widget: QWidget | None
 
     def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
+        self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
     ) -> None:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
@@ -209,10 +231,10 @@ class NucleiPickerToolButtons:
 class MakeMultiGonadProjectButton:
     _button: QPushButton
     _button_text: str
-    _launched_widget: QWidget
+    _launched_widget: QWidget | None
 
     def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
+        self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
     ) -> None:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
@@ -242,10 +264,10 @@ class MakeMultiGonadProjectButton:
 class ScoreNucleiButton:
     _button: QPushButton
     _button_text: str
-    _launched_widget: QWidget
+    _launched_widget: QWidget | None
 
     def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
+        self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
     ) -> None:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
@@ -275,10 +297,10 @@ class ScoreNucleiButton:
 class GenerateProjectReports:
     _button: QPushButton
     _button_text: str
-    _launched_widget: QWidget
+    _launched_widget: QWidget | None
 
     def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
+        self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
     ) -> None:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget

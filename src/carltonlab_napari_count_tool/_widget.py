@@ -110,6 +110,9 @@ class GonadControlWidget(QWidget):
             self._open_image_status_label.setText("Image not opened")
             self._open_image_status_label.setStyleSheet("color: red")
 
+    def _close_current_counting_widget(self) -> None:
+        self._main_widget.close_current_widget()  # type: ignore
+
     def update_line_edit(self) -> None:
         if self._image_path is None:
             self._open_image_line_edit.setText("")
@@ -134,6 +137,8 @@ class CarltonLabCountTool(QWidget):
         self._napari_viewer = viewer
         self._already_shown = False
         self._parent_widget = None
+
+        self._current_widget: QWidget | None = None
 
         self._initialize_gui()
 
@@ -264,6 +269,11 @@ class CarltonLabCountTool(QWidget):
     ##################################################################
     #   Button connections
     ##################################################################
+
+    def close_current_widget(self) -> None:
+        if self._current_widget is not None:
+            self._current_widget.deleteLater()
+            self._current_widget = None
 
     def _launch_extract_channels_widget(self) -> None:
         print("launching extract channels widget")

@@ -19,6 +19,7 @@ from qtpy.QtWidgets import (
 from carltonlab_napari_count_tool._model import (
     get_image_contrasts,
 )
+from carltonlab_napari_count_tool._protocols import MainWidgetCallBacks
 from carltonlab_napari_count_tool._set_contrast_widget_model import (
     open_image_contrasts,
     save_contrasts,
@@ -179,15 +180,16 @@ class SetContrastWidget(QWidget):
     def __init__(
         self,
         napari_viewer: "ViewerModel",
-        parent_widget: QWidget,
+        parent_widget: MainWidgetCallBacks,
         image_path_tuple: tuple[tuple[Image, ...], str] | None = None,
     ):
-        super().__init__(parent_widget)
+        parent_q_widget: QWidget = cast(QWidget, parent_widget)
+        super().__init__(parent_q_widget)
 
         self._napari_viewer = napari_viewer
         self._base_layer: Image
         self._scoring_layer: Image
-        self._main_widget: QWidget = parent_widget
+        self._main_widget: MainWidgetCallBacks = parent_widget
         self._image_tuple = None
         self._image_path: str | None = None
 
