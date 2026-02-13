@@ -1,13 +1,17 @@
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from qtpy.QtWidgets import QPushButton, QWidget
 
 if TYPE_CHECKING:
+    from napari.layers import Image
     from napari.viewer import ViewerModel
 
 
 class MainWidgetCallBacks(Protocol):
     def set_current_widget(self, setting_widget: QWidget): ...
+    def get_process_control_images_and_paths(
+        self,
+    ) -> tuple[str, str, list[Image]] | None: ...
 
 
 class CToolButton(Protocol):
@@ -22,6 +26,4 @@ class CToolButton(Protocol):
     def get_button(self) -> QPushButton: ...
     def deactivate_buttons(self) -> None: ...
     def activate_buttons(self) -> None: ...
-    def launch_widget(
-        self, context_dict: dict[str, Any] | None = None
-    ) -> QWidget | None: ...
+    def launch_widget(self) -> QWidget | None: ...

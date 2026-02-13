@@ -1,13 +1,13 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from napari.layers import Image
+from napari.utils.notifications import show_info
 from qtpy.QtWidgets import QPushButton, QWidget
 
 from carltonlab_napari_count_tool._protocols import (
     CToolButton,
     MainWidgetCallBacks,
 )
-from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
 
 if TYPE_CHECKING:
     from napari.viewer import ViewerModel
@@ -76,22 +76,8 @@ class ExtractChannelsButton:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(
-        self, context_dict: dict[str, Any] | None = None
-    ) -> QWidget | None:
-        if context_dict is None:
-            return
-        image_path: str = context_dict["image_path"]
-        image_tuple: tuple[Image, ...] = context_dict["image_list"]
-        passing_tuple: tuple[tuple[Image, ...], str] | None = (
-            image_tuple,
-            image_path,
-        )
-        self._launched_widget = SetContrastWidget(
-            self._napari_viewer, self._main_widget, passing_tuple
-        )
-        self._main_widget.set_current_widget(self._launched_widget)
-        return self._launched_widget
+    def launch_widget(self) -> QWidget | None:
+        return
 
 
 @_prepare_tools_buttons
@@ -123,9 +109,7 @@ class StitchGonads:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(
-        self, context_dict: dict[str, Any] | None = None
-    ) -> QWidget:
+    def launch_widget(self) -> QWidget:
         return QWidget()
 
 
@@ -156,10 +140,23 @@ class SetContrastButton:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(
-        self, context_dict: dict[str, Any] | None = None
-    ) -> QWidget:
-        return QWidget()
+    def launch_widget(self) -> QWidget | None:
+        images_and_paths: tuple[str, str, list[Image]] | None = (
+            self._main_widget.get_process_control_images_and_paths()
+        )
+        if images_and_paths is None:
+            show_info(
+                "Cannot open the contrast widget. No images and paths found at the control widget"
+            )
+            return
+
+        # TODO: continue here:
+
+        # self._launched_widget = SetContrastWidget(
+        #    self._napari_viewer, self._main_widget, passing_tuple
+        # )
+        # self._main_widget.set_current_widget(self._launched_widget)
+        # return self._launched_widget
 
 
 @_tool_button
@@ -188,9 +185,7 @@ class RegionsToolButtons:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(
-        self, context_dict: dict[str, Any] | None = None
-    ) -> QWidget:
+    def launch_widget(self) -> QWidget:
         return QWidget()
 
 
@@ -221,9 +216,7 @@ class NucleiPickerToolButtons:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(
-        self, context_dict: dict[str, Any] | None = None
-    ) -> QWidget:
+    def launch_widget(self) -> QWidget:
         return QWidget()
 
 
@@ -254,9 +247,7 @@ class MakeMultiGonadProjectButton:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(
-        self, context_dict: dict[str, Any] | None = None
-    ) -> QWidget:
+    def launch_widget(self) -> QWidget:
         return QWidget()
 
 
@@ -287,9 +278,7 @@ class ScoreNucleiButton:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(
-        self, context_dict: dict[str, Any] | None = None
-    ) -> QWidget:
+    def launch_widget(self) -> QWidget:
         return QWidget()
 
 
@@ -322,7 +311,5 @@ class GenerateProjectReports:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(
-        self, context_dict: dict[str, Any] | None = None
-    ) -> QWidget:
+    def launch_widget(self) -> QWidget:
         return QWidget()

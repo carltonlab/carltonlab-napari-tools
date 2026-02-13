@@ -102,6 +102,15 @@ class GonadControlWidget(QWidget):
         self.update_line_edit()
         return
 
+    def get_images_and_paths(self) -> tuple[str, str, list[Image]] | None:
+        if (
+            self._image_path is None
+            or self._image_layers is None
+            or self._project_files_dir is None
+        ):
+            return None
+        return (self._image_path, self._project_files_dir, self._image_layers)
+
     def _set_open_image_status(self, status: bool) -> None:
         if status:
             self._open_image_status_label.setText("Image opened")
@@ -191,11 +200,13 @@ class CarltonLabCountTool(QWidget):
         self._process_container_title.setStyleSheet("font-weight: bold")
         self._process_container_layout.addWidget(self._process_container_title)
 
-        self._process_gonads_widget: GonadControlWidget = GonadControlWidget(
-            self._napari_viewer, self
+        self._process_gonads_control_widget: GonadControlWidget = (
+            GonadControlWidget(self._napari_viewer, self)
         )
 
-        self._process_container_layout.addWidget(self._process_gonads_widget)
+        self._process_container_layout.addWidget(
+            self._process_gonads_control_widget
+        )
 
         self._top_container_layout.addWidget(self._process_container)
 
@@ -274,6 +285,18 @@ class CarltonLabCountTool(QWidget):
         if self._current_widget is not None:
             self._current_widget.deleteLater()
             self._current_widget = None
+
+    def set_current_widget(self, setting_widget: QWidget | None) -> None:
+        self.close_current_widget()
+        self._current_widget = setting_widget
+
+    def get_process_control_images_and_paths(
+        self,
+    ) -> tuple[str, str, list[Image]] | None:
+        obtained_images_and_paths: tuple[str, str, list[Image]] | None = (
+            self._process_gonads_control_widget.get_images_and_paths()
+        )
+        return obtained_images_and_paths
 
     def _launch_extract_channels_widget(self) -> None:
         print("launching extract channels widget")
