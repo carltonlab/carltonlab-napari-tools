@@ -286,9 +286,14 @@ class CarltonLabCountTool(QWidget):
             self._current_widget.deleteLater()
             self._current_widget = None
 
-    def set_current_widget(self, setting_widget: QWidget | None) -> None:
+    def set_current_widget(
+        self, setting_widget: QWidget | None, widget_name: str
+    ) -> None:
         self.close_current_widget()
         self._current_widget = setting_widget
+        self._napari_viewer.window.add_dock_widget(
+            setting_widget, name=widget_name
+        )
 
     def get_process_control_images_and_paths(
         self,

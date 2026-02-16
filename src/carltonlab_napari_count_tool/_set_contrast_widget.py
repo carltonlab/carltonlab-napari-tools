@@ -6,7 +6,6 @@ from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import (
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -21,7 +20,6 @@ from carltonlab_napari_count_tool._model import (
 )
 from carltonlab_napari_count_tool._protocols import MainWidgetCallBacks
 from carltonlab_napari_count_tool._set_contrast_widget_model import (
-    open_image_contrasts,
     save_contrasts,
     set_layer_contrast_limits,
 )
@@ -181,7 +179,8 @@ class SetContrastWidget(QWidget):
         self,
         napari_viewer: "ViewerModel",
         parent_widget: MainWidgetCallBacks,
-        image_path_tuple: tuple[tuple[Image, ...], str] | None = None,
+        image_tuple: tuple[Image, ...] | None = None,
+        image_path: str | None = None,
     ):
         parent_q_widget: QWidget = cast(QWidget, parent_widget)
         super().__init__(parent_q_widget)
@@ -190,7 +189,7 @@ class SetContrastWidget(QWidget):
         self._base_layer: Image
         self._scoring_layer: Image
         self._main_widget: MainWidgetCallBacks = parent_widget
-        self._image_tuple = None
+        self._image_tuple: tuple[Image, ...] | None = None
         self._image_path: str | None = None
 
         self._contrast_dict: dict[int, ContrastLimitWidget] = {}
@@ -207,36 +206,13 @@ class SetContrastWidget(QWidget):
         self._layout.addWidget(self._top_scroll_area)
         self._top_scroll_area.setWidget(self._top_container)
 
-        self._open_image_title: QLabel = QLabel("Image")
-        self._open_image_title.setStyleSheet("font-weight: bold")
-        self._top_container_layout.addWidget(self._open_image_title)
-
-        self._open_image_line_edit: QLineEdit = QLineEdit("")
-        self._open_image_line_edit.setDisabled(True)
-        self._top_container_layout.addWidget(self._open_image_line_edit)
-
-        self._open_image_button: QPushButton = QPushButton("Open image")
-        self._open_image_button.clicked.connect(
-            self._open_image_button_pressed
-        )
-        self._top_container_layout.addWidget(self._open_image_button)
-
-        self._open_image_label: QLabel = QLabel("")
-        self._top_container_layout.addWidget(self._open_image_label)
-
-        self._set_open_image_label_state(False)
-
         self._contrast_container: QWidget = QWidget()
         self._contrast_container_layout: QVBoxLayout = QVBoxLayout()
         self._contrast_container.setLayout(self._contrast_container_layout)
         self._top_container_layout.addWidget(self._contrast_container)
 
-        if image_path_tuple is not None:
-            self._image_tuple = image_path_tuple[0]
-            self._image_path = image_path_tuple[1]
-            self._create_contrast_widgets()
-            self._load_contrasts()
-            self._set_open_image_label_state(True)
+        if image_tuple is not None and image_path is not None:
+            self._new_image_open(image_tuple, image_path)
 
         self._save_contrasts_button: QPushButton = QPushButton("Save")
         self._save_contrasts_button.clicked.connect(
@@ -250,6 +226,16 @@ class SetContrastWidget(QWidget):
         self._set_save_image_label_state(False)
 
         self._top_container_layout.addStretch()
+
+    def _new_image_open(
+        self, image_tuple: tuple[Image, ...] | None, image_path: str | None
+    ) -> None:
+        self._image_tuple = image_tuple
+        self._image_path = image_path
+        print("Creating contrast widgets")
+        self._create_contrast_widgets()
+        self._load_contrasts()
+        return
 
     def _create_contrast_widgets(self) -> None:
         image_tuple = self._image_tuple
@@ -284,28 +270,6 @@ class SetContrastWidget(QWidget):
             saving_dict[saving_index] = saving_value.get_contrast_limits()
         save_contrasts(self._napari_viewer, saving_dict, self._image_path)
         self._set_save_image_label_state(True)
-
-    def _set_open_image_label_state(self, state: bool) -> None:
-        if state:
-            self._open_image_label.setText("Image opened")
-            self._open_image_label.setStyleSheet("color: green")
-        else:
-            self._open_image_label.setText("Image not opened")
-            self._open_image_label.setStyleSheet("color: red")
-
-    def _open_image_button_pressed(self) -> None:
-        open_result: tuple[list[Image], str] | None = open_image_contrasts(
-            self._napari_viewer, self
-        )
-        if open_result is None:
-            print("Result was none")
-            return
-        self._image_tuple = tuple(open_result[0])
-        self._image_path = open_result[1]
-        self._create_contrast_widgets()
-        self._load_contrasts()
-        self._set_open_image_label_state(True)
-        self._open_image_line_edit.setText(self._image_path)
 
     def _set_save_image_label_state(self, state: bool) -> None:
         if state:
