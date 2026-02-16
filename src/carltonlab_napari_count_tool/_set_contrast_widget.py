@@ -67,7 +67,7 @@ class ContrastLimitWidget(QWidget):
 
         self._min_label: QLabel = QLabel("Min")
         self._min_container_layout.addWidget(self._min_label)
-        self._min_slider: QSlider = QSlider(Qt.Horizontal)
+        self._min_slider: QSlider = QSlider(Qt.Orientation.Horizontal)
         self._min_slider.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
@@ -93,7 +93,7 @@ class ContrastLimitWidget(QWidget):
 
         self._max_label: QLabel = QLabel("Max")
         self._max_container_layout.addWidget(self._max_label)
-        self._max_slider: QSlider = QSlider(Qt.Horizontal)
+        self._max_slider: QSlider = QSlider(Qt.Orientation.Horizontal)
         self._max_slider.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
