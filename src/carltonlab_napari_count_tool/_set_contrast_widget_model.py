@@ -127,3 +127,28 @@ def save_contrasts(
         )
     with open(saving_contrasts_file_path, "w") as config_file:
         config_parser.write(config_file)
+
+
+def verify_image_contrasts_file(image_path: str | None) -> bool:
+    if image_path is None:
+        return False
+    image_dir: str = os.path.dirname(image_path)
+    saving_contrasts_file_path: str = os.path.join(
+        image_dir, DEFAULT_PROJECT_NAME, IMAGE_CONTRASTS_FILE_NAME
+    )
+    return os.path.exists(saving_contrasts_file_path)
+
+
+def get_image_contrasts_from_file(
+    image_path: str, images: tuple[Image, ...]
+) -> dict[int, tuple[float, float]] | None:
+    image_dir: str = os.path.dirname(image_path)
+    project_file_dir: str = os.path.join(image_dir, DEFAULT_PROJECT_NAME)
+    returning_dict = get_loaded_image_contrasts(project_file_dir)
+    print(f"The returning dict is: {returning_dict}")
+    if returning_dict is None:
+        return returning_dict
+    for layer_index, contrast_tuple in returning_dict.items():
+        image_layer: Image = images[layer_index]
+        image_layer.contrast_limits = contrast_tuple
+    return returning_dict

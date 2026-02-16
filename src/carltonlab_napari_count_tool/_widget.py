@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from napari.layers import Image
 from qtpy.QtWidgets import (
@@ -22,7 +22,6 @@ from carltonlab_napari_count_tool._multi_gonad_widget import (
 from carltonlab_napari_count_tool._pick_nuclei_widget import PickNucleiWidget
 from carltonlab_napari_count_tool._regions_widget import RegionWidget
 from carltonlab_napari_count_tool._score_nuclei_widget import ScoreNucleiWidget
-from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
 from carltonlab_napari_count_tool._shared_widgets import get_file
 
 if TYPE_CHECKING:
@@ -35,7 +34,11 @@ from carltonlab_napari_count_tool._main_widget_buttons import (
     RESULTS_BUTTONS_LIST,
     SCORE_BUTTONS_LIST,
 )
-from carltonlab_napari_count_tool._protocols import CToolButton
+from carltonlab_napari_count_tool._protocols import (
+    CToolButton,
+    MainWidgetCallBacks,
+    ProcessWidgetAPI,
+)
 
 
 class GonadControlWidget(QWidget):
@@ -89,18 +92,43 @@ class GonadControlWidget(QWidget):
         image_path: str | None = get_file(
             self, "Select the project image file"
         )
+        main_widget_callbacks: MainWidgetCallBacks = cast(
+            MainWidgetCallBacks, self._main_widget
+        )
         if image_path is None:
+            self.open_new_image_process_widget(
+                main_widget_callbacks, self._image_layers, self._image_path
+            )
             return
         open_answer: tuple[str, list[Image], str] | None = open_project_image(
             self._napari_viewer, image_path
         )
         if open_answer is None:
+            self.open_new_image_process_widget(
+                main_widget_callbacks, None, None
+            )
             return
         self._image_path = open_answer[0]
         self._image_layers = open_answer[1]
         self._project_files_dir = open_answer[2]
         self.update_line_edit()
+        self.open_new_image_process_widget(
+            main_widget_callbacks, tuple(self._image_layers), self._image_path
+        )
         return
+
+    def open_new_image_process_widget(
+        self,
+        main_widget_callbacks: MainWidgetCallBacks,
+        images: tuple[Image, ...] | None,
+        image_path: str | None,
+    ) -> None:
+        process_widget: ProcessWidgetAPI | None = (
+            main_widget_callbacks.get_process_widget()
+        )
+        if process_widget is None:
+            return
+        process_widget.new_image_open(images, image_path)
 
     def get_images_and_paths(self) -> tuple[str, str, list[Image]] | None:
         if (
@@ -147,7 +175,7 @@ class CarltonLabCountTool(QWidget):
         self._already_shown = False
         self._parent_widget = None
 
-        self._current_widget: QWidget | None = None
+        self._process_widget: ProcessWidgetAPI | None = None
 
         self._initialize_gui()
 
@@ -281,16 +309,19 @@ class CarltonLabCountTool(QWidget):
     #   Button connections
     ##################################################################
 
-    def close_current_widget(self) -> None:
-        if self._current_widget is not None:
-            self._current_widget.deleteLater()
-            self._current_widget = None
+    def get_process_widget(self) -> ProcessWidgetAPI | None:
+        return self._process_widget
 
-    def set_current_widget(
-        self, setting_widget: QWidget | None, widget_name: str
+    def close_process_widget(self) -> None:
+        if self._process_widget is not None:
+            self._process_widget.deleteLater()
+            self._process_widget = None
+
+    def set_process_widget(
+        self, setting_widget: ProcessWidgetAPI | None, widget_name: str
     ) -> None:
-        self.close_current_widget()
-        self._current_widget = setting_widget
+        self.close_process_widget()
+        self._process_widget = setting_widget
         self._napari_viewer.window.add_dock_widget(
             setting_widget, name=widget_name
         )
@@ -308,14 +339,6 @@ class CarltonLabCountTool(QWidget):
 
     def _launch_stitch_gonads_widget(self) -> None:
         print("launching stitch gonads widget")
-
-    def _launch_set_contrast_widget(self) -> None:
-        setting_widget: SetContrastWidget = SetContrastWidget(
-            self._napari_viewer, self
-        )
-        self._napari_viewer.window.add_dock_widget(
-            setting_widget, name="clt Set Contrast"
-        )
 
     def _generate_projects_reports_button_pressed(self) -> None:
         print("generating project reports")

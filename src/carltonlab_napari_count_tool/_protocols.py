@@ -5,13 +5,21 @@ from napari.viewer import ViewerModel
 from qtpy.QtWidgets import QPushButton, QWidget
 
 
+class ProcessWidgetAPI(Protocol):
+    def new_image_open(
+        self, image_tuple: tuple[Image, ...] | None, image_path: str | None
+    ): ...
+    def deleteLater(self): ...
+
+
 class MainWidgetCallBacks(Protocol):
-    def set_current_widget(
-        self, setting_widget: QWidget, widget_name: str
+    def set_process_widget(
+        self, setting_widget: ProcessWidgetAPI, widget_name: str
     ): ...
     def get_process_control_images_and_paths(
         self,
     ) -> tuple[str, str, list[Image]] | None: ...
+    def get_process_widget(self) -> ProcessWidgetAPI | None: ...
 
 
 class CToolButton(Protocol):

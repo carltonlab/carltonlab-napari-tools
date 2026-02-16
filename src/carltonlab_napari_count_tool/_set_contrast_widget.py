@@ -20,8 +20,10 @@ from carltonlab_napari_count_tool._model import (
 )
 from carltonlab_napari_count_tool._protocols import MainWidgetCallBacks
 from carltonlab_napari_count_tool._set_contrast_widget_model import (
+    get_image_contrasts_from_file,
     save_contrasts,
     set_layer_contrast_limits,
+    verify_image_contrasts_file,
 )
 from carltonlab_napari_count_tool._shared_widgets import clear_layout
 
@@ -41,6 +43,7 @@ class ContrastLimitWidget(QWidget):
         self._layer_index = layer_index
 
         self._layout = QVBoxLayout()
+        self._layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(self._layout)
 
         self._title: QLabel = QLabel(
@@ -211,9 +214,6 @@ class SetContrastWidget(QWidget):
         self._contrast_container.setLayout(self._contrast_container_layout)
         self._top_container_layout.addWidget(self._contrast_container)
 
-        if image_tuple is not None and image_path is not None:
-            self._new_image_open(image_tuple, image_path)
-
         self._save_contrasts_button: QPushButton = QPushButton("Save")
         self._save_contrasts_button.clicked.connect(
             self._save_contrasts_button_pressed
@@ -227,12 +227,14 @@ class SetContrastWidget(QWidget):
 
         self._top_container_layout.addStretch()
 
-    def _new_image_open(
+        if image_tuple is not None and image_path is not None:
+            self.new_image_open(image_tuple, image_path)
+
+    def new_image_open(
         self, image_tuple: tuple[Image, ...] | None, image_path: str | None
     ) -> None:
         self._image_tuple = image_tuple
         self._image_path = image_path
-        print("Creating contrast widgets")
         self._create_contrast_widgets()
         self._load_contrasts()
         return
@@ -254,9 +256,26 @@ class SetContrastWidget(QWidget):
         image_tuple = self._image_tuple
         if image_tuple is None:
             return
+        image_path = self._image_path
+        if image_path is None:
+            return
         for image_index, image_layer in enumerate(image_tuple):
             contrasts: list[float | None] = get_image_contrasts(image_layer)
             self._contrast_dict[image_index].set_contrast_limits(contrasts)
+        validated_contrast_file: bool = verify_image_contrasts_file(image_path)
+        if validated_contrast_file:
+            loaded_contrasts: dict[int, tuple[float, float]] | None = (
+                get_image_contrasts_from_file(image_path, image_tuple)
+            )
+            if loaded_contrasts is not None:
+                for image_index, contrast_tuple in loaded_contrasts.items():
+                    contrast_list: list[float | None] = cast(
+                        list[float | None], contrast_tuple
+                    )
+                    self._contrast_dict[image_index].set_contrast_limits(
+                        contrast_list
+                    )
+        self._set_save_image_label_state(validated_contrast_file)
 
     def _save_contrasts_button_pressed(self) -> None:
         if len(self._contrast_dict) == 0:

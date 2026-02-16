@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from napari.layers import Image
 from napari.utils.notifications import show_info
@@ -7,6 +7,7 @@ from qtpy.QtWidgets import QPushButton, QWidget
 from carltonlab_napari_count_tool._protocols import (
     CToolButton,
     MainWidgetCallBacks,
+    ProcessWidgetAPI,
 )
 from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
 
@@ -162,9 +163,10 @@ class SetContrastButton:
         self._launched_widget = SetContrastWidget(
             self._napari_viewer, self._main_widget, images, image_path
         )
-        self._main_widget.set_current_widget(
-            self._launched_widget, self._widget_name
+        process_widget: ProcessWidgetAPI = cast(
+            ProcessWidgetAPI, self._launched_widget
         )
+        self._main_widget.set_process_widget(process_widget, self._widget_name)
         return self._launched_widget
 
 
