@@ -209,19 +209,32 @@ class SetContrastWidget(QWidget):
         self._layout.addWidget(self._top_scroll_area)
         self._top_scroll_area.setWidget(self._top_container)
 
+        self._no_image_open_label: QLabel = QLabel("No image open")
+        self._no_image_open_label.setStyleSheet(
+            "font-weight: bold; color: red;"
+        )
+        self._no_image_open_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._top_container_layout.addWidget(self._no_image_open_label)
+
         self._contrast_container: QWidget = QWidget()
         self._contrast_container_layout: QVBoxLayout = QVBoxLayout()
         self._contrast_container.setLayout(self._contrast_container_layout)
         self._top_container_layout.addWidget(self._contrast_container)
 
+        self._save_container: QWidget = QWidget()
+        self._save_container_layout: QVBoxLayout = QVBoxLayout()
+        self._save_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._save_container.setLayout(self._save_container_layout)
+        self._top_container_layout.addWidget(self._save_container)
+
         self._save_contrasts_button: QPushButton = QPushButton("Save")
         self._save_contrasts_button.clicked.connect(
             self._save_contrasts_button_pressed
         )
-        self._top_container_layout.addWidget(self._save_contrasts_button)
+        self._save_container_layout.addWidget(self._save_contrasts_button)
 
         self._contrast_limit_saved_label: QLabel = QLabel("")
-        self._top_container_layout.addWidget(self._contrast_limit_saved_label)
+        self._save_container_layout.addWidget(self._contrast_limit_saved_label)
 
         self._set_save_image_label_state(False)
 
@@ -241,9 +254,12 @@ class SetContrastWidget(QWidget):
 
     def _create_contrast_widgets(self) -> None:
         image_tuple = self._image_tuple
-        if image_tuple is None:
-            return
         clear_layout(self._contrast_container_layout)
+        if image_tuple is None:
+            self._no_image_open_label.setVisible(True)
+            self._save_container.setVisible(False)
+            self._contrast_container.setVisible(False)
+            return
         self._contrast_dict = {}
         for image_index, image in enumerate(image_tuple):
             adding_widget: ContrastLimitWidget = ContrastLimitWidget(
@@ -251,6 +267,9 @@ class SetContrastWidget(QWidget):
             )
             self._contrast_container_layout.addWidget(adding_widget)
             self._contrast_dict[image_index] = adding_widget
+        self._no_image_open_label.setVisible(False)
+        self._contrast_container.setVisible(True)
+        self._save_container.setVisible(True)
 
     def _load_contrasts(self) -> None:
         image_tuple = self._image_tuple

@@ -145,7 +145,6 @@ def get_image_contrasts_from_file(
     image_dir: str = os.path.dirname(image_path)
     project_file_dir: str = os.path.join(image_dir, DEFAULT_PROJECT_NAME)
     returning_dict = get_loaded_image_contrasts(project_file_dir)
-    print(f"The returning dict is: {returning_dict}")
     if returning_dict is None:
         return returning_dict
     for layer_index, contrast_tuple in returning_dict.items():
