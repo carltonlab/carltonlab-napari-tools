@@ -8,6 +8,7 @@ from qtpy.QtWidgets import QWidget
 
 from carltonlab_napari_count_tool._model import (
     get_file_name_from_path,
+    get_loaded_image_contrasts,
     verify_project_directory_from_image_path,
 )
 from carltonlab_napari_count_tool._shared_variables import (
@@ -31,38 +32,6 @@ def set_layer_contrast_limits(
         max_contrast = max_contrast + 0.01
     image_layer.contrast_limits = (min_contrast, max_contrast)
     image_layer.refresh()
-
-
-def get_loaded_image_contrasts(
-    project_dir: str,
-) -> dict[int, tuple[float, float]] | None:
-    if not os.path.exists(project_dir):
-        print(f"The project directory {project_dir} doesn't exist")
-        return
-    contrasts_file_path: str = os.path.join(
-        project_dir, IMAGE_CONTRASTS_FILE_NAME
-    )
-    if not os.path.exists(contrasts_file_path):
-        print(
-            f"The contrast file with path: {contrasts_file_path} doesn't exist"
-        )
-        return
-    config_parser: ConfigParser = ConfigParser()
-    config_parser.read(contrasts_file_path)
-    number_of_channels: int = int(
-        config_parser["ImageContrasts"]["NumberOfChannels"]
-    )
-    returning_dict: dict[int, tuple[float, float]] = {}
-    for channel_index in range(number_of_channels):
-        channel_name: str = "channel-" + str(channel_index + 1)
-        values_str: str = config_parser["ImageContrasts"][channel_name]
-        values_strings: list[str] = values_str.split(",")
-        values: tuple[float, float] = (
-            float(values_strings[0]),
-            float(values_strings[1]),
-        )
-        returning_dict[channel_index] = values
-    return returning_dict
 
 
 def open_image_contrasts(
@@ -127,16 +96,6 @@ def save_contrasts(
         )
     with open(saving_contrasts_file_path, "w") as config_file:
         config_parser.write(config_file)
-
-
-def verify_image_contrasts_file(image_path: str | None) -> bool:
-    if image_path is None:
-        return False
-    image_dir: str = os.path.dirname(image_path)
-    saving_contrasts_file_path: str = os.path.join(
-        image_dir, DEFAULT_PROJECT_NAME, IMAGE_CONTRASTS_FILE_NAME
-    )
-    return os.path.exists(saving_contrasts_file_path)
 
 
 def get_image_contrasts_from_file(

@@ -17,7 +17,6 @@ from skimage.io import imread
 from carltonlab_napari_count_tool._model import (
     open_csv_as_points_layer,
     open_csv_as_shape_layer,
-    open_image_as_layer,
     save_layer_as_csv,
 )
 from carltonlab_napari_count_tool._regions_widget_model import SPLINE_FILE_NAME
@@ -41,9 +40,7 @@ from carltonlab_napari_count_tool._shared_variables import (
 
 
 def open_project(
-    napari_viewer: ViewerModel,
-    image_path: str,
-    open_image_layer: Image | None = None,
+    napari_viewer: ViewerModel, image_path: str, images: tuple[Image, ...]
 ) -> (
     Literal["failed"]
     | tuple[
@@ -87,17 +84,6 @@ def open_project(
         show_info(
             "The edited (expanded) regions file doesn't exist. Create it in the regions widget"
         )
-        return "failed"
-    image_layer: Image | None = None
-    if open_image_layer is None:
-        image_layer = open_image_as_layer(napari_viewer, image_path)
-        if isinstance(image_layer, list):
-            show_info("Couldn't load the image layer")
-            return "failed"
-    else:
-        image_layer = open_image_layer
-    if image_layer is None:
-        show_info("Couldn't load the image layer")
         return "failed"
     image_layer_dims = image_layer.ndim
     number_of_regions = get_number_of_saved_regions(searching_project_path)

@@ -1,10 +1,9 @@
 import os
 from configparser import ConfigParser
-from pathlib import Path
 from typing import Literal
 
 import numpy as np
-from napari.layers import Image, Shapes
+from napari.layers import Shapes
 from napari.layers.shapes._shapes_models import Shape
 from napari.layers.shapes._shapes_models.shape import remove_path_duplicates
 from napari.utils.notifications import show_info
@@ -13,11 +12,9 @@ from scipy.interpolate import splev, splprep
 
 from carltonlab_napari_count_tool._model import (
     open_csv_as_shape_layer,
-    open_image_as_layer,
     save_layer_as_csv,
 )
 from carltonlab_napari_count_tool._shared_variables import (
-    DEFAULT_PROJECT_EXTENSION,
     EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME,
     EDITED_REGIONS_FILE_NAME,
     REGIONS_DIR_NAME,
@@ -40,7 +37,7 @@ EDITED_REGION_COLOR = "#000000"
 
 def open_project(
     napari_viewer: ViewerModel, image_path: str
-) -> Literal["load", "failed"] | tuple[str, Image, Shapes]:
+) -> Literal["load", "failed"] | tuple[str, Shapes]:
     parent_dir: str = os.path.dirname(image_path)
     searching_project_path: str = os.path.join(
         parent_dir, DEFAULT_PROJECT_NAME
@@ -50,8 +47,8 @@ def open_project(
             f"The image is part of a project with path {searching_project_path} already exists. Loading project"
         )
         return "load"
-    returning_tuple: tuple[str, Image, Shapes] | None = create_new_project(
-        image_path, napari_viewer
+    returning_tuple: tuple[str, Shapes] | None = create_new_project(
+        napari_viewer, image_path
     )
     if returning_tuple is None:
         return "failed"
@@ -59,45 +56,32 @@ def open_project(
 
 
 def create_new_project(
-    file_path: str, napari_viewer: "ViewerModel"
-) -> tuple[str, Image, Shapes] | None:
+    napari_viewer: "ViewerModel",
+    file_path: str,
+) -> tuple[str, Shapes] | None:
     parent_dir = os.path.dirname(file_path)
-    image_file_path_object: Path = Path(file_path)
-    image_file_name_no_ext: str = image_file_path_object.stem
-    image_file_name: str = image_file_path_object.name
-    new_project_path: str = os.path.join(
-        parent_dir, image_file_name_no_ext + DEFAULT_PROJECT_EXTENSION
+    regions_dir_path: str = os.path.join(
+        parent_dir, DEFAULT_PROJECT_NAME, REGIONS_DIR_NAME
     )
-    if not os.path.exists(new_project_path):
-        os.makedirs(new_project_path)
-    new_project_image_path: str = os.path.join(
-        new_project_path, image_file_name
-    )
-    if not os.path.exists(new_project_image_path):
-        os.rename(file_path, new_project_image_path)
-    project_new_dir_path: str = os.path.join(
-        new_project_path, DEFAULT_PROJECT_NAME
-    )
-    if not os.path.exists(project_new_dir_path):
-        os.makedirs(project_new_dir_path)
-    regions_path: str = os.path.join(project_new_dir_path, REGIONS_DIR_NAME)
-    if not os.path.exists(regions_path):
-        os.makedirs(regions_path)
-    image_layer: Image | list[Image] = open_image_as_layer(
-        napari_viewer, new_project_image_path
-    )
+    if not os.path.exists(regions_dir_path):
+        showing_message: str = (
+            f"_regions_widget_model.py: Failed to load project {regions_dir_path}. ERROR"
+        )
+        show_info(showing_message)
+        print(showing_message)
+        return None
     spline_layer: Shapes = napari_viewer.add_shapes(
         name=SPLINE_LAYER_DEFAULT_NAME, ndim=2
     )
-    if isinstance(image_layer, list):
-        return (regions_path, image_layer[0], spline_layer)
-    else:
-        return (regions_path, image_layer, spline_layer)
+    return (regions_dir_path, spline_layer)
 
 
 def load_project_files(
     napari_viewer: ViewerModel, image_path: str
-) -> tuple[str, Image, Shapes, Shapes | None, Shapes | None] | None:
+) -> (
+    tuple[str, Shapes, Shapes | None, tuple[Shapes, tuple[int, ...]] | None]
+    | None
+):
     parent_dir = os.path.dirname(image_path)
     regions_path = os.path.join(
         parent_dir,
@@ -106,23 +90,18 @@ def load_project_files(
     )
     returning_list = []
     returning_list.append(regions_path)
-    image_layer = open_image_as_layer(napari_viewer, image_path)
-    returning_list.append(image_layer)
     spline_layer_path: str = os.path.join(
         parent_dir, DEFAULT_PROJECT_NAME, REGIONS_DIR_NAME, SPLINE_FILE_NAME
     )
     if not os.path.exists(spline_layer_path):
         show_info("No spline layer file found")
-        spline_layer = napari_viewer.add_shapes(name="ctl_spline_layer")
+        spline_layer = napari_viewer.add_shapes(
+            name="ctl_spline_layer", ndim=2
+        )
     else:
         spline_layer = open_csv_as_shape_layer(
             napari_viewer,
-            os.path.join(
-                parent_dir,
-                DEFAULT_PROJECT_NAME,
-                REGIONS_DIR_NAME,
-                SPLINE_FILE_NAME,
-            ),
+            spline_layer_path,
         )
     returning_list.append(spline_layer)
     regions_layer_path = os.path.join(
@@ -142,14 +121,33 @@ def load_project_files(
         REGIONS_DIR_NAME,
         EDITED_REGIONS_FILE_NAME,
     )
-    if os.path.exists(edited_regions_path):
+    edited_region_values_file_path: str = os.path.join(
+        parent_dir,
+        DEFAULT_PROJECT_NAME,
+        REGIONS_DIR_NAME,
+        EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME,
+    )
+    edited_regions_layer: Shapes | None
+    edited_regions_tuple: tuple[Shapes, tuple[int, ...]] | None = None
+    if os.path.exists(edited_regions_path) and os.path.exists(
+        edited_region_values_file_path
+    ):
         edited_regions_layer = open_csv_as_shape_layer(
             napari_viewer,
             edited_regions_path,
         )
-    else:
-        edited_regions_layer = None
-    returning_list.append(edited_regions_layer)
+        appending_layer: Shapes
+        if edited_regions_layer is None:
+            edited_regions_tuple = None
+        else:
+            appending_layer: Shapes = edited_regions_layer
+            expansion_values: tuple[int, ...] = (
+                open_edited_regions_expansion_values(
+                    edited_region_values_file_path
+                )
+            )
+            edited_regions_tuple = (appending_layer, expansion_values)
+    returning_list.append(edited_regions_tuple)
     return tuple(returning_list)
 
 
@@ -730,3 +728,15 @@ def save_expansion_spinbox_values(
     )
     with open(config_file_path, "w") as config_file:
         config_parser.write(config_file)
+
+
+def open_edited_regions_expansion_values(file_path) -> tuple[int, ...]:
+    config_parser = ConfigParser()
+    config_parser.read(file_path)
+    number_of_expanded_regions: int = len(config_parser["ExpandedRegions"])
+    returning_list: list[int] = []
+    for expanded_index in range(number_of_expanded_regions):
+        region_string = "region-" + str(expanded_index + 1)
+        expanded_value = config_parser["ExpandedRegions"][region_string]
+        returning_list.append(int(expanded_value))
+    return tuple(returning_list)

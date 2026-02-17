@@ -16,12 +16,6 @@ from carltonlab_napari_count_tool._model import (
     open_project_image,
     validate_closed_layers,
 )
-from carltonlab_napari_count_tool._multi_gonad_widget import (
-    MakeMultiGonadWidget,
-)
-from carltonlab_napari_count_tool._pick_nuclei_widget import PickNucleiWidget
-from carltonlab_napari_count_tool._regions_widget import RegionWidget
-from carltonlab_napari_count_tool._score_nuclei_widget import ScoreNucleiWidget
 from carltonlab_napari_count_tool._shared_widgets import get_file
 
 if TYPE_CHECKING:
@@ -56,7 +50,7 @@ class GonadControlWidget(QWidget):
 
         self._layout = QVBoxLayout()
         self.setLayout(self._layout)
-        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setContentsMargins(0, 0, 0, 5)
 
         self._image_container: QWidget = QWidget()
         self._image_container_layout: QHBoxLayout = QHBoxLayout()
@@ -99,6 +93,11 @@ class GonadControlWidget(QWidget):
             self.open_new_image_process_widget(
                 main_widget_callbacks, self._image_layers, self._image_path
             )
+            self.validate_process_results_widgets(
+                main_widget_callbacks, self._image_path
+            )
+            self._open_image_line_edit.setText("")
+            self._set_open_image_status(False)
             return
         open_answer: tuple[str, list[Image], str] | None = open_project_image(
             self._napari_viewer, image_path
@@ -107,6 +106,11 @@ class GonadControlWidget(QWidget):
             self.open_new_image_process_widget(
                 main_widget_callbacks, None, None
             )
+            self.validate_process_results_widgets(
+                main_widget_callbacks, self._image_path
+            )
+            self._open_image_line_edit.setText("")
+            self._set_open_image_status(False)
             return
         self._image_path = open_answer[0]
         self._image_layers = open_answer[1]
@@ -114,6 +118,9 @@ class GonadControlWidget(QWidget):
         self.update_line_edit()
         self.open_new_image_process_widget(
             main_widget_callbacks, tuple(self._image_layers), self._image_path
+        )
+        self.validate_process_results_widgets(
+            main_widget_callbacks, self._image_path
         )
         return
 
@@ -164,6 +171,15 @@ class GonadControlWidget(QWidget):
         self._project_files_dir = None
         self._open_image_line_edit.setText("")
         self._set_open_image_status(False)
+
+    def validate_process_results_widgets(
+        self,
+        main_widget_callbacks: MainWidgetCallBacks,
+        image_path: str | None,
+    ):
+        if image_path is None:
+            return
+        main_widget_callbacks.validate_process_results(image_path)
 
 
 class CarltonLabCountTool(QWidget):
@@ -245,9 +261,16 @@ class CarltonLabCountTool(QWidget):
             )
 
         for class_instance in self._buttons_instances_dict.values():
-            self._process_container_layout.addWidget(
-                class_instance.get_button()
-            )
+            button_vbox_container: QWidget = QWidget()
+            button_vbox_container_layout = QVBoxLayout()
+            button_vbox_container_layout.setContentsMargins(0, 0, 0, 5)
+            button_vbox_container.setLayout(button_vbox_container_layout)
+            self._process_container_layout.addWidget(button_vbox_container)
+            button_vbox_container_layout.addWidget(class_instance.get_button())
+            status_label: QLabel | None = class_instance.get_status_label()
+            if status_label is not None:
+                button_vbox_container_layout.addWidget(status_label)
+                class_instance.set_status_label_state(False)
 
         second_section_separator: QFrame = QFrame(self)
         second_section_separator.setFrameShape(QFrame.Shape.HLine)
@@ -273,7 +296,16 @@ class CarltonLabCountTool(QWidget):
             )
 
         for class_instance in self._score_buttons_instances_dict.values():
-            self._score_container_layout.addWidget(class_instance.get_button())
+            button_vbox_container: QWidget = QWidget()
+            button_vbox_container_layout = QVBoxLayout()
+            button_vbox_container_layout.setContentsMargins(0, 0, 0, 5)
+            button_vbox_container.setLayout(button_vbox_container_layout)
+            self._score_container_layout.addWidget(button_vbox_container)
+            button_vbox_container_layout.addWidget(class_instance.get_button())
+            status_label: QLabel | None = class_instance.get_status_label()
+            if status_label is not None:
+                button_vbox_container_layout.addWidget(status_label)
+                class_instance.set_status_label_state(False)
 
         third_section_separator: QFrame = QFrame(self)
         third_section_separator.setFrameShape(QFrame.Shape.HLine)
@@ -314,8 +346,10 @@ class CarltonLabCountTool(QWidget):
 
     def close_process_widget(self) -> None:
         if self._process_widget is not None:
+            parent_dock_widget: QWidget = self._process_widget.parent()
             self._process_widget.deleteLater()
             self._process_widget = None
+            parent_dock_widget.deleteLater()
 
     def set_process_widget(
         self, setting_widget: ProcessWidgetAPI | None, widget_name: str
@@ -334,48 +368,15 @@ class CarltonLabCountTool(QWidget):
         )
         return obtained_images_and_paths
 
-    def _launch_extract_channels_widget(self) -> None:
-        print("launching extract channels widget")
-
-    def _launch_stitch_gonads_widget(self) -> None:
-        print("launching stitch gonads widget")
-
-    def _generate_projects_reports_button_pressed(self) -> None:
-        print("generating project reports")
-
-    def _launch_pick_nuclei_widget(self) -> None:
-        setting_widget = PickNucleiWidget(self, self._napari_viewer)
-        self._napari_viewer.window.add_dock_widget(
-            setting_widget, name="clt Pick Nuclei"
-        )
-
-    def _launch_make_multi_gonad_widget(self) -> None:
-        setting_widget = MakeMultiGonadWidget(self, self._napari_viewer)
-        self._napari_viewer.window.add_dock_widget(
-            setting_widget, name="clt Make Multi Gonad Project"
-        )
-
-    def _launch_regions_widget(self) -> None:
-        setting_widget = RegionWidget(self, self._napari_viewer)
-        self._napari_viewer.window.add_dock_widget(
-            setting_widget, name="clt Regions"
-        )
-
-    def _launch_score_nuclei_widget(self) -> None:
-        setting_widget = ScoreNucleiWidget(self, self._napari_viewer)
-        self._napari_viewer.window.add_dock_widget(
-            setting_widget, name="clt Score Nuclei"
-        )
-
     def set_image_path(self, image_path: str, image_layer: Image) -> None:
         self._image_path = image_path
         self._image_layer = image_layer
-        print(f"The image path is: {self._image_path}")
-        print(f"The image layer is: {self._image_layer}")
 
     def get_image_path(self) -> tuple[str, Image] | None:
         if self._image_path is None or self._image_layer is None:
-            print("Returned none")
             return None
-        print("returned the image path")
         return (self._image_path, self._image_layer)
+
+    def validate_process_results(self, image_path: str) -> None:
+        for class_instance in self._buttons_instances_dict.values():
+            class_instance.validate_property(image_path)

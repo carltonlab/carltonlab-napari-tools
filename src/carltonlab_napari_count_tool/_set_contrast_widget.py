@@ -17,13 +17,16 @@ from qtpy.QtWidgets import (
 
 from carltonlab_napari_count_tool._model import (
     get_image_contrasts,
+    verify_image_contrasts_file,
 )
-from carltonlab_napari_count_tool._protocols import MainWidgetCallBacks
+from carltonlab_napari_count_tool._protocols import (
+    CToolButton,
+    MainWidgetCallBacks,
+)
 from carltonlab_napari_count_tool._set_contrast_widget_model import (
     get_image_contrasts_from_file,
     save_contrasts,
     set_layer_contrast_limits,
-    verify_image_contrasts_file,
 )
 from carltonlab_napari_count_tool._shared_widgets import clear_layout
 
@@ -184,6 +187,7 @@ class SetContrastWidget(QWidget):
         parent_widget: MainWidgetCallBacks,
         image_tuple: tuple[Image, ...] | None = None,
         image_path: str | None = None,
+        ctool_button: CToolButton | None = None,
     ):
         parent_q_widget: QWidget = cast(QWidget, parent_widget)
         super().__init__(parent_q_widget)
@@ -194,6 +198,7 @@ class SetContrastWidget(QWidget):
         self._main_widget: MainWidgetCallBacks = parent_widget
         self._image_tuple: tuple[Image, ...] | None = None
         self._image_path: str | None = None
+        self._ctool_button: CToolButton | None = ctool_button
 
         self._contrast_dict: dict[int, ContrastLimitWidget] = {}
 
@@ -308,6 +313,8 @@ class SetContrastWidget(QWidget):
             saving_dict[saving_index] = saving_value.get_contrast_limits()
         save_contrasts(self._napari_viewer, saving_dict, self._image_path)
         self._set_save_image_label_state(True)
+        if self._ctool_button is not None:
+            self._ctool_button.validate_property(self._image_path)
 
     def _set_save_image_label_state(self, state: bool) -> None:
         if state:

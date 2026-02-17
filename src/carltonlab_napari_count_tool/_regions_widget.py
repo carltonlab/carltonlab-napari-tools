@@ -3,8 +3,8 @@ from typing import TYPE_CHECKING, Literal, cast
 from napari.layers import Image, Shapes
 from napari.layers.shapes._shapes_models import Shape
 from napari.utils.notifications import show_info
+from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
-    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -15,6 +15,10 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from carltonlab_napari_count_tool._protocols import (
+    CToolButton,
+    MainWidgetCallBacks,
+)
 from carltonlab_napari_count_tool._regions_widget_model import (
     EDITED_REGIONS_FILE_NAME,
     REGIONS_FILE_NAME,
@@ -30,7 +34,6 @@ from carltonlab_napari_count_tool._regions_widget_model import (
     save_shapes_layer,
     verify_spline_interpolation,
 )
-from carltonlab_napari_count_tool._shared_widgets import confirm_dialog
 
 if TYPE_CHECKING:
     from napari.components import ViewerModel
@@ -48,10 +51,21 @@ REGIONS_NOT_EDITED_TEXT = "Edited regions not saved"
 
 
 class RegionWidget(QWidget):
-    def __init__(self, parent_widget: QWidget, napari_viewer: "ViewerModel"):
-        super().__init__(parent_widget)
+    def __init__(
+        self,
+        napari_viewer: "ViewerModel",
+        parent_widget: MainWidgetCallBacks,
+        images: tuple[Image, ...] | None = None,
+        image_path: str | None = None,
+        ct_button: CToolButton | None = None,
+    ):
+        parent_q_widget = cast(QWidget, parent_widget)
+        super().__init__(parent_q_widget)
         self._napari_viewer = napari_viewer
         self._parent_widget = parent_widget
+        self._images: tuple[Image, ...] | None = images
+        self._image_path: str | None = image_path
+        self._ct_button: CToolButton | None = ct_button
 
         self._image_layer: Image | None = None
         self._spline_layer: Shapes | None = None
@@ -75,22 +89,24 @@ class RegionWidget(QWidget):
         self._main_layout: QVBoxLayout = QVBoxLayout()
         self._main_container.setLayout(self._main_layout)
 
-        self._image_container: QWidget = QWidget()
-        self._image_container_layout = QVBoxLayout()
-        self._image_container.setLayout(self._image_container_layout)
-        self._main_layout.addWidget(self._image_container)
+        self._no_image_open_container: QWidget = QWidget()
+        self._no_image_open_container_layout = QVBoxLayout()
+        self._no_image_open_container.setLayout(
+            self._no_image_open_container_layout
+        )
+        self._main_layout.addWidget(self._no_image_open_container)
 
-        self._image_title_label: QLabel = QLabel("Project Image")
-        self._image_title_label.setStyleSheet("font-weight: bold")
-        self._image_container_layout.addWidget(self._image_title_label)
+        self._no_image_open_title_label: QLabel = QLabel("No image open")
+        self._no_image_open_title_label.setAlignment(
+            Qt.AlignmentFlag.AlignCenter
+        )
 
-        self._selected_image_line_edit: QLineEdit = QLineEdit("")
-        self._selected_image_line_edit.setDisabled(True)
-        self._image_container_layout.addWidget(self._selected_image_line_edit)
-
-        self.open_image_button: QPushButton = QPushButton("Open")
-        self.open_image_button.clicked.connect(self.open_image_button_pressed)
-        self._image_container_layout.addWidget(self.open_image_button)
+        self._no_image_open_title_label.setStyleSheet(
+            "font-weight: bold; color: red;"
+        )
+        self._no_image_open_container_layout.addWidget(
+            self._no_image_open_title_label
+        )
 
         self._spline_container: QWidget = QWidget()
         self._spline_container_layout = QVBoxLayout()
@@ -244,7 +260,12 @@ class RegionWidget(QWidget):
         self._number_of_regions_container.setVisible(False)
         self._edit_regions_container.setVisible(False)
 
+        if self._image_path is not None and self._images is not None:
+            self.open_image_button_pressed()
+
     def _reset_gui(self) -> None:
+        self._images = None
+        self._image_path = None
         self._image_layer = None
         self._spline_layer = None
         self._regions_layer = None
@@ -253,7 +274,6 @@ class RegionWidget(QWidget):
         self._regions_path = None
         self._individual_regions_widgets_list = []
 
-        self._selected_image_line_edit.setText("")
         self._spline_layer_line_edit.setText("")
         self._regions_line_edit.setText("")
         self._number_regions_spinner.setValue(7)
@@ -266,6 +286,7 @@ class RegionWidget(QWidget):
                 q_widget.deleteLater()
                 continue
 
+        self._no_image_open_container.setVisible(True)
         self._spline_container.setVisible(False)
         self._number_of_regions_container.setVisible(False)
         self._edit_regions_container.setVisible(False)
@@ -274,61 +295,50 @@ class RegionWidget(QWidget):
         self._set_regions_created_state(False)
         self._set_edited_regions_state(False)
 
-    def open_image_button_pressed(self) -> None:
-        if self._image_layer is not None:
-            confirmed_result: bool = confirm_dialog(
-                self._napari_viewer, "Image already open, open new project?"
-            )
-            if not confirmed_result:
-                return
-        if len(self._napari_viewer.layers) > 0:
-            confirmed_result: bool = confirm_dialog(
-                self._napari_viewer,
-                "Layers are open, it is required to close all non-image layers now. Confirm close all non-image layers?",
-                no_mode=True,
-            )
-            if confirmed_result:
-                self._napari_viewer.layers.clear()
-            else:
-                return
+    def new_image_open(
+        self, image_tuple: tuple[Image, ...] | None, image_path: str | None
+    ) -> None:
         self._reset_gui()
-        file_dialog: QFileDialog = QFileDialog(
-            self, caption="Select the project image"
-        )
-        file_path: str = file_dialog.getOpenFileName(
-            filter="Image files (*.jpg *.jpeg *.png *.tif)"
-        )[0]
-        if file_path == "":
+        self._images = image_tuple
+        self._image_path = image_path
+        self.open_image_button_pressed()
+
+    def open_image_button_pressed(self) -> None:
+        if self._image_path is None:
             return
-        open_answer: Literal["load", "failed"] | tuple[str, Image, Shapes] = (
-            open_project(self._napari_viewer, file_path)
+        image_path: str = self._image_path
+        open_answer: Literal["load", "failed"] | tuple[str, Shapes] = (
+            open_project(self._napari_viewer, image_path)
         )
         if open_answer == "failed":
             show_info("Failed to open project")
             return
+        self._no_image_open_container.setVisible(False)
         if open_answer == "load":
-            self._load_project(file_path)
+            self._load_project(image_path)
             return
         self._regions_path = open_answer[0]
-        self._image_layer = open_answer[1]
-        self._spline_layer = open_answer[2]
+        self._spline_layer = open_answer[1]
 
         self._update_layers_labels()
         self._set_spline_saved_state(False)
         self._spline_container.setVisible(True)
 
-        self._parent_widget.set_image_path(file_path, self._image_layer)  # type: ignore
-
     def _load_project(self, image_path) -> None:
         returning_tuple: (
-            tuple[str, Image, Shapes, Shapes | None, Shapes | None] | None
+            tuple[
+                str,
+                Shapes,
+                Shapes | None,
+                tuple[Shapes, tuple[int, ...]] | None,
+            ]
+            | None
         ) = load_project_files(self._napari_viewer, image_path)
         if returning_tuple is None:
             show_info("Couldn't load project. ERROR")
             return
         self._regions_path = returning_tuple[0]
-        self._image_layer = returning_tuple[1]
-        self._spline_layer = returning_tuple[2]
+        self._spline_layer = returning_tuple[1]
         if len(self._spline_layer._data_view.shapes) < 1:
             self._set_spline_saved_state(False)
             self._number_of_regions_container.setVisible(False)
@@ -337,15 +347,17 @@ class RegionWidget(QWidget):
             self._set_spline_saved_state(True)
             self._number_of_regions_container.setVisible(True)
         self._spline_container.setVisible(True)
-        if returning_tuple[3] is not None:
-            self._regions_layer = returning_tuple[3]
+        if returning_tuple[2] is not None:
+            self._regions_layer = returning_tuple[2]
             self._number_of_regions_container.setVisible(True)
             self._set_regions_created_state(True)
         else:
             self._set_regions_created_state(False)
-        if returning_tuple[4] is not None:
-            self._edited_regions_layer = returning_tuple[4]
+        if returning_tuple[3] is not None:
+            self._edited_regions_layer = returning_tuple[3][0]
+            expanded_values: tuple[int, ...] = returning_tuple[3][1]
             self._edit_regions_container.setVisible(True)
+            self._update_edited_regions_widget(expanded_values)
             self._set_edited_regions_state(True)
         else:
             self._set_edited_regions_state(False)
@@ -366,8 +378,6 @@ class RegionWidget(QWidget):
         spline_layer.refresh()
 
     def _update_layers_labels(self) -> None:
-        if self._image_layer is not None:
-            self._selected_image_line_edit.setText(self._image_layer.name)
         if self._spline_layer is not None:
             self._spline_layer_line_edit.setText(self._spline_layer.name)
             self._spline_layer.edge_color = SPLINE_EDGE_COLOR
@@ -458,7 +468,7 @@ class RegionWidget(QWidget):
         if self._regions_layer is not None:
             show_info("Regions already created")
             return
-        if self._spline_layer is None or self._image_layer is None:
+        if self._spline_layer is None or self._images is None:
             show_info("Please set both spline and image layers")
             return
         if self._regions_path is None:
@@ -503,18 +513,24 @@ class RegionWidget(QWidget):
         self._regions_layer.visible = False
         self._edit_regions_container.setVisible(True)
 
-    def _update_edited_regions_widget(self) -> None:
+    def _update_edited_regions_widget(
+        self, expansion_tuple: tuple[int, ...] | None = None
+    ) -> None:
         if self._regions_layer is None:
             return
         if self._edited_regions_layer is None:
             return
         number_of_shapes = len(self._regions_layer._data_view.shapes)
         for shape_index in range(number_of_shapes):
+            expansion_value = 0
+            if expansion_tuple is not None:
+                expansion_value = expansion_tuple[shape_index]
             self._add_individual_widget_to_list(
                 self._napari_viewer,
                 self._regions_layer,
                 self._edited_regions_layer,
                 shape_index,
+                expansion_value,
             )
 
     def _add_individual_widget_to_list(
@@ -523,6 +539,7 @@ class RegionWidget(QWidget):
         spline_layer: Shapes,
         expanded_shapes_layer: Shapes,
         region_index: int,
+        expansion_value: int,
     ) -> None:
         individual_region_widget: IndividualRegionWidget = (
             IndividualRegionWidget(
@@ -530,6 +547,7 @@ class RegionWidget(QWidget):
                 spline_layer,
                 expanded_shapes_layer,
                 region_index,
+                expanded_value=expansion_value,
             )
         )
         self._individual_regions_widgets_list.append(individual_region_widget)
@@ -565,6 +583,8 @@ class RegionWidget(QWidget):
             )
         save_expansion_spinbox_values(expansion_values, self._regions_path)
         self._set_edited_regions_state(True)
+        if self._ct_button is not None and self._image_path is not None:
+            self._ct_button.validate_property(self._image_path)
         return
 
 
@@ -575,6 +595,7 @@ class IndividualRegionWidget(QWidget):
         spline_layer: Shapes,
         expanded_shapes_layer: Shapes,
         region_index: int,
+        expanded_value: int = 0,
     ):
         super().__init__()
         self._napari_viewer = napari_viewer
@@ -595,7 +616,7 @@ class IndividualRegionWidget(QWidget):
 
         self._region_edit_spinbox: QSpinBox = QSpinBox()
         self._region_edit_spinbox.setRange(0, 1000000)
-        self._region_edit_spinbox.setValue(0)
+        self._region_edit_spinbox.setValue(expanded_value)
         self._region_edit_spinbox.valueChanged.connect(
             self._on_spinbox_value_changed
         )

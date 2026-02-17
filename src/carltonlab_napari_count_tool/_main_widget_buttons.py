@@ -2,13 +2,20 @@ from typing import TYPE_CHECKING, cast
 
 from napari.layers import Image
 from napari.utils.notifications import show_info
-from qtpy.QtWidgets import QPushButton, QWidget
+from qtpy.QtWidgets import QLabel, QPushButton, QWidget
 
+from carltonlab_napari_count_tool._model import (
+    close_all_non_set_image_layers,
+    verify_edited_regions_file,
+    verify_image_contrasts_file,
+)
+from carltonlab_napari_count_tool._pick_nuclei_widget import PickNucleiWidget
 from carltonlab_napari_count_tool._protocols import (
     CToolButton,
     MainWidgetCallBacks,
     ProcessWidgetAPI,
 )
+from carltonlab_napari_count_tool._regions_widget import RegionWidget
 from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
 
 if TYPE_CHECKING:
@@ -54,6 +61,7 @@ class ExtractChannelsButton:
     _button_text: str
     _launched_widget: QWidget | None
     _widget_name: str
+    _status_label: QLabel | None
 
     def __init__(
         self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
@@ -61,6 +69,7 @@ class ExtractChannelsButton:
         self._napari_viewer = napari_viewer
         self._main_widget: MainWidgetCallBacks = main_widget
         self._widget_name = "clt Extract Channels"
+        self._status_label = None
 
         self._button_text = "1.Extract channels"
 
@@ -74,6 +83,9 @@ class ExtractChannelsButton:
     def get_button(self) -> QPushButton:
         return self._button
 
+    def get_status_label(self) -> QLabel | None:
+        return self._status_label
+
     def deactivate_buttons(self) -> None:
         self._button.setEnabled(False)
 
@@ -83,6 +95,12 @@ class ExtractChannelsButton:
     def launch_widget(self) -> QWidget | None:
         return
 
+    def set_status_label_state(self, state: bool) -> None:
+        _ = state
+
+    def validate_property(self, image_path: str) -> None:
+        _ = image_path
+
 
 @_prepare_tools_buttons
 class StitchGonads:
@@ -90,6 +108,7 @@ class StitchGonads:
     _button_text: str
     _launched_widget: QWidget | None
     _widget_name: str
+    _status_label: QLabel | None
 
     def __init__(
         self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
@@ -97,6 +116,7 @@ class StitchGonads:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
         self._widget_name = "clt Stitch Gonads"
+        self._status_label = None
 
         self._button_text = "2.Stitch gonads"
 
@@ -109,6 +129,9 @@ class StitchGonads:
     def get_button(self) -> QPushButton:
         return self._button
 
+    def get_status_label(self) -> QLabel | None:
+        return self._status_label
+
     def deactivate_buttons(self) -> None:
         self._button.setEnabled(False)
 
@@ -118,6 +141,12 @@ class StitchGonads:
     def launch_widget(self) -> QWidget:
         return QWidget()
 
+    def set_status_label_state(self, state: bool) -> None:
+        _ = state
+
+    def validate_property(self, image_path: str) -> None:
+        _ = image_path
+
 
 @_tool_button
 class SetContrastButton:
@@ -125,6 +154,7 @@ class SetContrastButton:
     _button_text: str
     _launched_widget: QWidget | None
     _widget_name: str
+    _status_label: QLabel | None
 
     def __init__(
         self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
@@ -132,6 +162,7 @@ class SetContrastButton:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
         self._widget_name = "clt Set Contrast"
+        self._status_label = QLabel("")
 
         self._button_text = "1.Set contrast"
 
@@ -142,6 +173,9 @@ class SetContrastButton:
 
     def get_button(self) -> QPushButton:
         return self._button
+
+    def get_status_label(self) -> QLabel | None:
+        return self._status_label
 
     def deactivate_buttons(self) -> None:
         self._button.setEnabled(False)
@@ -158,16 +192,35 @@ class SetContrastButton:
                 "Cannot open the contrast widget. No images and paths found at the control widget"
             )
             return
+        continue_launch: bool = close_all_non_set_image_layers(
+            self._napari_viewer, tuple(images_and_paths[2])
+        )
+        if not continue_launch:
+            return
         image_path: str = images_and_paths[0]
         images: tuple[Image, ...] = tuple(images_and_paths[2])
         self._launched_widget = SetContrastWidget(
-            self._napari_viewer, self._main_widget, images, image_path
+            self._napari_viewer, self._main_widget, images, image_path, self
         )
         process_widget: ProcessWidgetAPI = cast(
             ProcessWidgetAPI, self._launched_widget
         )
         self._main_widget.set_process_widget(process_widget, self._widget_name)
         return self._launched_widget
+
+    def set_status_label_state(self, state: bool) -> None:
+        if self._status_label is None:
+            return
+        if state:
+            self._status_label.setText("Contrast set")
+            self._status_label.setStyleSheet("color: green")
+        else:
+            self._status_label.setText("Contrast not set")
+            self._status_label.setStyleSheet("color: red")
+
+    def validate_property(self, image_path: str) -> None:
+        verified_contrast_file: bool = verify_image_contrasts_file(image_path)
+        self.set_status_label_state(verified_contrast_file)
 
 
 @_tool_button
@@ -176,6 +229,7 @@ class RegionsToolButtons:
     _button_text: str
     _launched_widget: QWidget | None
     _widget_name: str
+    _status_label: QLabel | None
 
     def __init__(
         self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
@@ -183,14 +237,20 @@ class RegionsToolButtons:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
         self._widget_name = "clt Regions"
+        self._status_label = QLabel("")
 
         self._button_text = "2.Define Regions"
 
         self._button: QPushButton = QPushButton(self._button_text)
+        self._button.clicked.connect(self.launch_widget)
+
         self._connecting_method_str = "_launch_regions_widget"
 
     def get_button(self) -> QPushButton:
         return self._button
+
+    def get_status_label(self) -> QLabel | None:
+        return self._status_label
 
     def deactivate_buttons(self) -> None:
         self._button.setEnabled(False)
@@ -198,8 +258,44 @@ class RegionsToolButtons:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(self) -> QWidget:
-        return QWidget()
+    def launch_widget(self) -> QWidget | None:
+        images_and_paths: tuple[str, str, list[Image]] | None = (
+            self._main_widget.get_process_control_images_and_paths()
+        )
+        if images_and_paths is None:
+            show_info(
+                "Cannot open the regions widget. No images and paths found at the control widget"
+            )
+            return
+        continue_launch: bool = close_all_non_set_image_layers(
+            self._napari_viewer, tuple(images_and_paths[2])
+        )
+        if not continue_launch:
+            return
+        image_path: str = images_and_paths[0]
+        images: tuple[Image, ...] = tuple(images_and_paths[2])
+        self._launched_widget = RegionWidget(
+            self._napari_viewer, self._main_widget, images, image_path, self
+        )
+        process_widget: ProcessWidgetAPI = cast(
+            ProcessWidgetAPI, self._launched_widget
+        )
+        self._main_widget.set_process_widget(process_widget, self._widget_name)
+        return self._launched_widget
+
+    def set_status_label_state(self, state: bool) -> None:
+        if self._status_label is None:
+            return
+        if state:
+            self._status_label.setText("Regions set")
+            self._status_label.setStyleSheet("color: green")
+        else:
+            self._status_label.setText("Regions not set")
+            self._status_label.setStyleSheet("color: red")
+
+    def validate_property(self, image_path: str) -> None:
+        verified_regions_file: bool = verify_edited_regions_file(image_path)
+        self.set_status_label_state(verified_regions_file)
 
 
 @_tool_button
@@ -208,6 +304,7 @@ class NucleiPickerToolButtons:
     _button_text: str
     _launched_widget: QWidget | None
     _widget_name: str
+    _status_label: QLabel | None
 
     def __init__(
         self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
@@ -215,15 +312,18 @@ class NucleiPickerToolButtons:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
         self._widget_name = "clt Pick Nuclei"
+        self._status_label = QLabel("")
 
         self._button_text = "3.Pick Nuclei"
 
         self._button = QPushButton(self._button_text)
-
-        self._connecting_method_str = "_launch_pick_nuclei_widget"
+        self._button.clicked.connect(self.launch_widget)
 
     def get_button(self) -> QPushButton:
         return self._button
+
+    def get_status_label(self) -> QLabel | None:
+        return self._status_label
 
     def deactivate_buttons(self) -> None:
         self._button.setEnabled(False)
@@ -231,8 +331,43 @@ class NucleiPickerToolButtons:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(self) -> QWidget:
-        return QWidget()
+    def launch_widget(self) -> QWidget | None:
+        images_and_paths: tuple[str, str, list[Image]] | None = (
+            self._main_widget.get_process_control_images_and_paths()
+        )
+        if images_and_paths is None:
+            show_info(
+                "Cannot open the regions widget. No images and paths found at the control widget"
+            )
+            return
+        continue_launch: bool = close_all_non_set_image_layers(
+            self._napari_viewer, tuple(images_and_paths[2])
+        )
+        if not continue_launch:
+            return
+        image_path: str = images_and_paths[0]
+        images: tuple[Image, ...] = tuple(images_and_paths[2])
+        self._launched_widget = PickNucleiWidget(
+            self._napari_viewer, self._main_widget, images, image_path, self
+        )
+        process_widget: ProcessWidgetAPI = cast(
+            ProcessWidgetAPI, self._launched_widget
+        )
+        self._main_widget.set_process_widget(process_widget, self._widget_name)
+        return self._launched_widget
+
+    def set_status_label_state(self, state: bool) -> None:
+        if self._status_label is None:
+            return
+        if state:
+            self._status_label.setText("Nuclei set")
+            self._status_label.setStyleSheet("color: green")
+        else:
+            self._status_label.setText("Nuclei not set")
+            self._status_label.setStyleSheet("color: red")
+
+    def validate_property(self, image_path: str) -> None:
+        _ = image_path
 
 
 @_score_buttons
@@ -241,6 +376,7 @@ class MakeMultiGonadProjectButton:
     _button_text: str
     _launched_widget: QWidget | None
     _widget_name: str
+    _status_label: QLabel | None
 
     def __init__(
         self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
@@ -248,6 +384,7 @@ class MakeMultiGonadProjectButton:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
         self._widget_name = "clt Make Multi Gonad Project"
+        self._status_label = None
 
         self._button_text = "1.Make multi gonad project"
 
@@ -258,6 +395,9 @@ class MakeMultiGonadProjectButton:
     def get_button(self) -> QPushButton:
         return self._button
 
+    def get_status_label(self) -> QLabel | None:
+        return self._status_label
+
     def deactivate_buttons(self) -> None:
         self._button.setEnabled(False)
 
@@ -267,6 +407,12 @@ class MakeMultiGonadProjectButton:
     def launch_widget(self) -> QWidget:
         return QWidget()
 
+    def set_status_label_state(self, state: bool) -> None:
+        _ = state
+
+    def validate_property(self, image_path: str) -> None:
+        _ = image_path
+
 
 @_score_buttons
 class ScoreNucleiButton:
@@ -274,6 +420,7 @@ class ScoreNucleiButton:
     _button_text: str
     _launched_widget: QWidget | None
     _widget_name: str
+    _status_label: QLabel | None
 
     def __init__(
         self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
@@ -281,6 +428,7 @@ class ScoreNucleiButton:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
         self._widget_name = "clt Score Nuclei"
+        self._status_label = None
 
         self._button_text = "2.Score Nuclei"
 
@@ -291,6 +439,9 @@ class ScoreNucleiButton:
     def get_button(self) -> QPushButton:
         return self._button
 
+    def get_status_label(self) -> QLabel | None:
+        return self._status_label
+
     def deactivate_buttons(self) -> None:
         self._button.setEnabled(False)
 
@@ -300,6 +451,12 @@ class ScoreNucleiButton:
     def launch_widget(self) -> QWidget:
         return QWidget()
 
+    def set_status_label_state(self, state: bool) -> None:
+        _ = state
+
+    def validate_property(self, image_path: str) -> None:
+        _ = image_path
+
 
 @_results_buttons
 class GenerateProjectReports:
@@ -307,6 +464,7 @@ class GenerateProjectReports:
     _button_text: str
     _launched_widget: QWidget | None
     _widget_name: str
+    _status_label: QLabel | None
 
     def __init__(
         self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
@@ -314,6 +472,7 @@ class GenerateProjectReports:
         self._napari_viewer = napari_viewer
         self._main_widget = main_widget
         self._widget_name = "clt Generate Reports"
+        self._status_label = None
 
         self._button_text = "1.Generate Project Reports"
 
@@ -326,6 +485,9 @@ class GenerateProjectReports:
     def get_button(self) -> QPushButton:
         return self._button
 
+    def get_status_label(self) -> QLabel | None:
+        return self._status_label
+
     def deactivate_buttons(self) -> None:
         self._button.setEnabled(False)
 
@@ -334,3 +496,9 @@ class GenerateProjectReports:
 
     def launch_widget(self) -> QWidget:
         return QWidget()
+
+    def set_status_label_state(self, state: bool) -> None:
+        _ = state
+
+    def validate_property(self, image_path: str) -> None:
+        _ = image_path

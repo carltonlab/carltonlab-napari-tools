@@ -6,10 +6,8 @@ from napari.utils.notifications import show_info
 from qtpy.QtCore import QTimer
 from qtpy.QtWidgets import (
     QCheckBox,
-    QFileDialog,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
@@ -30,6 +28,10 @@ from carltonlab_napari_count_tool._pick_nuclei_widget_model import (
     save_points_or_square_layer,
     save_points_summary_file,
 )
+from carltonlab_napari_count_tool._protocols import (
+    CToolButton,
+    MainWidgetCallBacks,
+)
 from carltonlab_napari_count_tool._shared_widgets import confirm_dialog
 
 if TYPE_CHECKING:
@@ -37,11 +39,23 @@ if TYPE_CHECKING:
 
 
 class PickNucleiWidget(QWidget):
-    def __init__(self, parent_widget: QWidget, napari_viewer: "ViewerModel"):
-        super().__init__(parent_widget)
+    def __init__(
+        self,
+        napari_viewer: "ViewerModel",
+        parent_widget: MainWidgetCallBacks,
+        images: tuple[Image, ...] | None = None,
+        image_path: str | None = None,
+        ct_button: CToolButton | None = None,
+    ):
+        main_q_widget: QWidget = cast(QWidget, parent_widget)
+        super().__init__(main_q_widget)
 
         self._napari_viewer = napari_viewer
         self._parent_widget = parent_widget
+        self._images = images
+        self._ct_button = ct_button
+
+        self._image_path = image_path
         self._image_layer: Image | None = None
         self._points_layers: list[Points] | None = None
         self._squares_shapes_layers: list[Shapes] | None = None
@@ -72,32 +86,6 @@ class PickNucleiWidget(QWidget):
         self._main_scroll_area.setWidget(self._main_container)
         self._main_layout: QVBoxLayout = QVBoxLayout()
         self._main_container.setLayout(self._main_layout)
-
-        self._open_image_container: QWidget = QWidget()
-        self._open_image_container_layout = QVBoxLayout()
-        self._open_image_container.setLayout(self._open_image_container_layout)
-
-        self._main_layout.addWidget(self._open_image_container)
-
-        self._open_image_container.setVisible(True)
-
-        self._open_image_title: QLabel = QLabel("Open image")
-        self._open_image_title.setStyleSheet("font-weight: bold")
-        self._open_image_container_layout.addWidget(self._open_image_title)
-
-        self._open_image_line_edit: QLineEdit = QLineEdit("")
-        self._open_image_line_edit.setDisabled(True)
-        self._open_image_container_layout.addWidget(self._open_image_line_edit)
-
-        self._open_image_button: QPushButton = QPushButton("Open")
-        self._open_image_button.clicked.connect(
-            self._open_image_button_pressed
-        )
-        self._open_image_container_layout.addWidget(self._open_image_button)
-
-        self._image_opened_label: QLabel = QLabel("")
-        self._open_image_container_layout.addWidget(self._image_opened_label)
-        self._set_open_image_label_state(False)
 
         self._regions_container: QWidget = QWidget()
         self._regions_container_layout = QVBoxLayout()
@@ -244,48 +232,21 @@ class PickNucleiWidget(QWidget):
     def _reset_gui(self) -> None:
         return
 
-    def _open_image_button_pressed(self) -> None:
-        if self._image_layer is not None:
-            confirmed_result: bool = confirm_dialog(
-                self._napari_viewer, "Image already open, open new project?"
-            )
-            if not confirmed_result:
-                return
-        found_image_from_main_widget: Image | None = None
+    def new_image_open(
+        self, image_tuple: tuple[Image, ...] | None, image_path: str | None
+    ) -> None:
         self._reset_gui()
-        file_dialog: QFileDialog = QFileDialog(
-            self, caption="Select the project image"
-        )
-        file_path: str = file_dialog.getOpenFileName(
-            filter="Image files (*.jpg *.jpeg *.png *.tif)"
-        )[0]
-        if file_path == "":
+        self._images = image_tuple
+        self._image_path = image_path
+        self._open_image_button_pressed()
+
+    def _open_image_button_pressed(self) -> None:
+        if self._image_path is None:
             return
-        if len(self._napari_viewer.layers) > 0:
-            confirmed_result: bool = confirm_dialog(
-                self._napari_viewer,
-                "Layers are open, it is recommended to close all non-image layers now. Confirm close all non-image layers?",
-                no_mode=True,
-            )
-            if confirmed_result:
-                open_image_path: tuple[str, Image] = (
-                    self._parent_widget.get_image_path()  # type: ignore
-                )
-                if open_image_path is None:
-                    self._napari_viewer.layers.clear()
-                else:
-                    found_image_from_main_widget = open_image_path[1]
-                    removing_layer_names: list[str] = []
-                    layers_list = self._napari_viewer.layers
-                    for layer in layers_list:
-                        if layer is not open_image_path[1]:
-                            removing_layer_names.append(layer.name)
-                    for removing_layer_name in removing_layer_names:
-                        for napari_layer in self._napari_viewer.layers:
-                            current_layer_name = napari_layer.name
-                            if removing_layer_name == current_layer_name:
-                                self._napari_viewer.layers.remove(napari_layer)
-                                break
+        image_path: str = self._image_path
+        if self._images is None:
+            return
+        images: tuple[Image, ...] = self._images
         open_answer: (
             Literal["failed"]
             | tuple[
@@ -301,11 +262,7 @@ class PickNucleiWidget(QWidget):
                 Shapes,
                 list[tuple[int, bool, bool, bool] | None],
             ]
-        ) = open_project(
-            self._napari_viewer,
-            file_path,
-            open_image_layer=found_image_from_main_widget,
-        )
+        ) = open_project(self._napari_viewer, image_path, images)
         if open_answer == "failed":
             show_info("Failed to open project")
             return
@@ -347,12 +304,7 @@ class PickNucleiWidget(QWidget):
         )
 
     def _update_labels(self) -> None:
-        if self._image_layer is None:
-            self._open_image_line_edit.setText("")
-            self._set_open_image_label_state(False)
-        else:
-            self._open_image_line_edit.setText(self._image_layer.name)
-            self._set_open_image_label_state(True)
+        return
 
     def _update_list(self) -> None:
         q_list = self._regions_qlist
@@ -386,14 +338,6 @@ class PickNucleiWidget(QWidget):
             q_list_widget.set_sbs_cut_label_state(saved_sbs_state)
         q_list.repaint()
         self._evaluate_points_saved()
-
-    def _set_open_image_label_state(self, state: bool) -> None:
-        if state:
-            self._image_opened_label.setText("Image opened")
-            self._image_opened_label.setStyleSheet("color: green")
-        else:
-            self._image_opened_label.setText("Image not opened")
-            self._image_opened_label.setStyleSheet("color: red")
 
     def _set_points_saved_label_state(self, state: bool) -> None:
         if state:
