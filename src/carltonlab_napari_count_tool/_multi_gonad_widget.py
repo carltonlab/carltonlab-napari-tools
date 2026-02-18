@@ -63,7 +63,7 @@ class MakeMultiGonadWidget(QWidget):
 
         self._main_scroll_area: QScrollArea = QScrollArea()
         self._main_scroll_area.setWidgetResizable(True)
-        self._layout.addWidget(self._main_scroll_area)
+        self._layout.addWidget(self._main_scroll_area, 1)
 
         self._main_container: QWidget = QWidget()
         self._main_scroll_area.setWidget(self._main_container)
@@ -167,8 +167,6 @@ class MakeMultiGonadWidget(QWidget):
         self._update_project_file_created_state()
         self._validate_root_name_directory()
         self._update_qlist()
-
-        self._layout.addStretch()
 
     def _update_project_file_created_state(self) -> None:
         if self._project_file_created:
