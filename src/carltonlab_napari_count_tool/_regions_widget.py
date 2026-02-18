@@ -5,11 +5,13 @@ from napari.layers.shapes._shapes_models import Shape
 from napari.utils.notifications import show_info
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -67,6 +69,10 @@ class RegionWidget(QWidget):
         self._image_path: str | None = image_path
         self._ct_button: CToolButton | None = ct_button
 
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+
         self._image_layer: Image | None = None
         self._spline_layer: Shapes | None = None
         self._regions_layer: Shapes | None = None
@@ -82,12 +88,20 @@ class RegionWidget(QWidget):
 
         self._main_scroll_area: QScrollArea = QScrollArea()
         self._main_scroll_area.setWidgetResizable(True)
-        self._layout.addWidget(self._main_scroll_area)
+        self._main_scroll_area.setViewportMargins(0, 0, 10, 0)
+        self._layout.addWidget(self._main_scroll_area, 1)
 
         self._main_container: QWidget = QWidget()
         self._main_scroll_area.setWidget(self._main_container)
         self._main_layout: QVBoxLayout = QVBoxLayout()
         self._main_container.setLayout(self._main_layout)
+
+        self._main_title_label = QLabel("CL Set Regions")
+        self._main_title_label.setStyleSheet(
+            "font-weight: bold; font-size: 20px"
+        )
+        self._main_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._main_layout.addWidget(self._main_title_label)
 
         self._no_image_open_container: QWidget = QWidget()
         self._no_image_open_container_layout = QVBoxLayout()
@@ -170,6 +184,14 @@ class RegionWidget(QWidget):
 
         self._regions_title_label: QLabel = QLabel("Regions layer")
         self._regions_title_label.setStyleSheet("font-weight: bold")
+        self._number_of_regions_container_layout.addSpacing(6)
+        separator = QFrame(self._number_of_regions_container)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("background-color: gray;")
+        separator.setFixedHeight(2)
+        self._number_of_regions_container_layout.addWidget(separator)
+        self._number_of_regions_container_layout.addSpacing(6)
         self._number_of_regions_container_layout.addWidget(
             self._regions_title_label
         )
@@ -221,6 +243,14 @@ class RegionWidget(QWidget):
 
         self._edit_regions_title_label: QLabel = QLabel("Edit regions")
         self._edit_regions_title_label.setStyleSheet("font-weight: bold")
+        self._edit_regions_container_layout.addSpacing(6)
+        edit_separator = QFrame(self._edit_regions_container)
+        edit_separator.setFrameShape(QFrame.Shape.HLine)
+        edit_separator.setFrameShadow(QFrame.Shadow.Sunken)
+        edit_separator.setStyleSheet("background-color: gray;")
+        edit_separator.setFixedHeight(2)
+        self._edit_regions_container_layout.addWidget(edit_separator)
+        self._edit_regions_container_layout.addSpacing(6)
         self._edit_regions_container_layout.addWidget(
             self._edit_regions_title_label
         )

@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, cast
 
 from napari.layers import Image
+from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -200,6 +201,7 @@ class CarltonLabCountTool(QWidget):
     def _initialize_gui(self) -> None:
         self._main_layout = QVBoxLayout()
         self.setLayout(self._main_layout)
+        self._main_layout.setContentsMargins(25, 2, 2, 25)
 
         self._top_container: QWidget = QWidget()
         self._top_container_layout: QVBoxLayout = QVBoxLayout()
@@ -209,6 +211,13 @@ class CarltonLabCountTool(QWidget):
         self._top_scroll_area.setWidgetResizable(True)
         self._main_layout.addWidget(self._top_scroll_area)
         self._top_scroll_area.setWidget(self._top_container)
+
+        self._main_title_label = QLabel("CL Count Tool")
+        self._main_title_label.setStyleSheet(
+            "font-weight: bold; font-size: 20px"
+        )
+        self._main_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._top_container_layout.addWidget(self._main_title_label)
 
         self._prepare_container: QWidget = QWidget()
         self._prepare_container_layout: QVBoxLayout = QVBoxLayout()
@@ -367,25 +376,50 @@ class CarltonLabCountTool(QWidget):
     def set_score_widget(
         self, setting_widget: ScoreWidgetAPI | None, widget_name: str
     ) -> None:
-        self.close_other_widgets()
         if setting_widget is None:
             return
+        if not validate_closed_layers(self._napari_viewer):
+            self._safe_delete_later(cast(QWidget, setting_widget))
+            return
+        self.close_other_widgets()
         self._score_widget = setting_widget
         self._napari_viewer.window.add_dock_widget(
             setting_widget, name=widget_name
         )
 
+    def _safe_delete_later(self, widget: object | None) -> None:
+        if widget is None:
+            return
+        if not isinstance(widget, QWidget):
+            return
+        try:
+            widget.deleteLater()
+        except RuntimeError:
+            return
+
     def close_other_widgets(self) -> None:
         if self._process_widget is not None:
-            parent_dock_widget: QWidget = self._process_widget.parent()
-            self._process_widget.deleteLater()
+            try:
+                parent_dock_widget: QWidget | None = (
+                    self._process_widget.parent()
+                )
+            except RuntimeError:
+                parent_dock_widget = None
+            self._safe_delete_later(cast(QWidget, self._process_widget))
             self._process_widget = None
-            parent_dock_widget.deleteLater()
+            if isinstance(parent_dock_widget, QWidget):
+                self._safe_delete_later(parent_dock_widget)
         if self._score_widget is not None:
-            parent_dock_widget: QWidget = self._score_widget.parent()
-            self._score_widget.deleteLater()
+            try:
+                parent_dock_widget: QWidget | None = (
+                    self._score_widget.parent()
+                )
+            except RuntimeError:
+                parent_dock_widget = None
+            self._safe_delete_later(cast(QWidget, self._score_widget))
             self._score_widget = None
-            parent_dock_widget.deleteLater()
+            if isinstance(parent_dock_widget, QWidget):
+                self._safe_delete_later(parent_dock_widget)
 
     def get_process_control_images_and_paths(
         self,

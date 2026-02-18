@@ -3,15 +3,17 @@ from typing import TYPE_CHECKING, Literal, cast
 import numpy as np
 from napari.layers import Image, Layer, Points, Shapes
 from napari.utils.notifications import show_info
-from qtpy.QtCore import QTimer
+from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import (
     QCheckBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -55,6 +57,10 @@ class PickNucleiWidget(QWidget):
         self._images = images
         self._ct_button = ct_button
 
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+
         self._image_path = image_path
         self._image_layer: Image | None = None
         self._points_layers: list[Points] | None = None
@@ -78,14 +84,24 @@ class PickNucleiWidget(QWidget):
         self._layout = QVBoxLayout()
         self.setLayout(self._layout)
 
+        self._layout.setContentsMargins(25, 2, 2, 25)
+
         self._main_scroll_area: QScrollArea = QScrollArea()
         self._main_scroll_area.setWidgetResizable(True)
-        self._layout.addWidget(self._main_scroll_area)
+        self._main_scroll_area.setViewportMargins(0, 0, 10, 0)
+        self._layout.addWidget(self._main_scroll_area, 1)
 
         self._main_container: QWidget = QWidget()
         self._main_scroll_area.setWidget(self._main_container)
         self._main_layout: QVBoxLayout = QVBoxLayout()
         self._main_container.setLayout(self._main_layout)
+
+        self._main_title_label = QLabel("CL Pick Nuclei")
+        self._main_title_label.setStyleSheet(
+            "font-weight: bold; font-size: 20px"
+        )
+        self._main_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._main_layout.addWidget(self._main_title_label)
 
         self._regions_container: QWidget = QWidget()
         self._regions_container_layout = QVBoxLayout()
@@ -124,12 +140,19 @@ class PickNucleiWidget(QWidget):
             self._show_in_all_slices_checkbox
         )
 
-        self._confirm_points_container: QWidget = QWidget()
-        self._confirm_points_container_layout = QVBoxLayout()
-        self._confirm_points_container.setLayout(
-            self._confirm_points_container_layout
-        )
-        self._main_layout.addWidget(self._confirm_points_container)
+        self._main_layout.addSpacing(6)
+        separator = QFrame(self._main_container)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("background-color: gray;")
+        separator.setFixedHeight(2)
+        self._main_layout.addWidget(separator)
+        self._main_layout.addSpacing(6)
+
+        self._points_container: QWidget = QWidget()
+        self._points_container_layout = QVBoxLayout()
+        self._points_container.setLayout(self._points_container_layout)
+        self._main_layout.addWidget(self._points_container)
 
         self._save_points_button: QPushButton = QPushButton(
             "Save points layer"
@@ -137,21 +160,29 @@ class PickNucleiWidget(QWidget):
         self._save_points_button.clicked.connect(
             self._save_points_button_pressed
         )
-        self._confirm_points_container_layout.addWidget(
-            self._save_points_button
-        )
+        self._points_container_layout.addWidget(self._save_points_button)
 
         self._points_saved_label: QLabel = QLabel("")
-        self._confirm_points_container_layout.addWidget(
-            self._points_saved_label
-        )
+        self._points_container_layout.addWidget(self._points_saved_label)
         self._set_points_saved_label_state(False)
+
+        self._main_layout.addSpacing(6)
+        separator = QFrame(self._main_container)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("background-color: gray;")
+        separator.setFixedHeight(2)
+        self._main_layout.addWidget(separator)
+        self._main_layout.addSpacing(6)
+
+        self._square_container: QWidget = QWidget()
+        self._square_container_layout = QVBoxLayout()
+        self._square_container.setLayout(self._square_container_layout)
+        self._main_layout.addWidget(self._square_container)
 
         self._square_size_title_label: QLabel = QLabel("Square size")
         self._square_size_title_label.setStyleSheet("font-weight: bold")
-        self._confirm_points_container_layout.addWidget(
-            self._square_size_title_label
-        )
+        self._square_container_layout.addWidget(self._square_size_title_label)
 
         self._square_size_spinbox: QSpinBox = QSpinBox()
         self._square_size_spinbox.setRange(0, 1000000)
@@ -159,9 +190,7 @@ class PickNucleiWidget(QWidget):
         self._square_size_spinbox.valueChanged.connect(
             self._square_size_spinbox_value_changed
         )
-        self._confirm_points_container_layout.addWidget(
-            self._square_size_spinbox
-        )
+        self._square_container_layout.addWidget(self._square_size_spinbox)
 
         self._create_squares_button: QPushButton = QPushButton(
             "Create squares"
@@ -169,23 +198,31 @@ class PickNucleiWidget(QWidget):
         self._create_squares_button.clicked.connect(
             self._create_squares_button_pressed
         )
-        self._confirm_points_container_layout.addWidget(
-            self._create_squares_button
-        )
+        self._square_container_layout.addWidget(self._create_squares_button)
 
         self._save_squares_button: QPushButton = QPushButton("Save squares")
         self._save_squares_button.clicked.connect(
             self._save_squares_button_pressed
         )
-        self._confirm_points_container_layout.addWidget(
-            self._save_squares_button
-        )
+        self._square_container_layout.addWidget(self._save_squares_button)
 
         self._saved_squares_label: QLabel = QLabel("")
-        self._confirm_points_container_layout.addWidget(
-            self._saved_squares_label
-        )
+        self._square_container_layout.addWidget(self._saved_squares_label)
         self._set_saved_squares_label_state(False)
+
+        self._main_layout.addSpacing(6)
+        separator = QFrame(self._main_container)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("background-color: gray;")
+        separator.setFixedHeight(2)
+        self._main_layout.addWidget(separator)
+        self._main_layout.addSpacing(6)
+
+        self._sbs_container: QWidget = QWidget()
+        self._sbs_container_layout = QVBoxLayout()
+        self._sbs_container.setLayout(self._sbs_container_layout)
+        self._main_layout.addWidget(self._sbs_container)
 
         self._create_sbs_files_button: QPushButton = QPushButton(
             "Create SBS files"
@@ -193,37 +230,31 @@ class PickNucleiWidget(QWidget):
         self._create_sbs_files_button.clicked.connect(
             self._create_sbs_files_button_pressed
         )
-        self._confirm_points_container_layout.addWidget(
-            self._create_sbs_files_button
-        )
+        self._sbs_container_layout.addWidget(self._create_sbs_files_button)
 
         self._create_sbs_files_label: QLabel = QLabel("")
-        self._confirm_points_container_layout.addWidget(
-            self._create_sbs_files_label
-        )
+        self._sbs_container_layout.addWidget(self._create_sbs_files_label)
         self._set_create_sbs_files_label_state(False)
 
         self._create_spline_report_button: QPushButton = QPushButton(
             "Create spline intensity report"
         )
         self._create_spline_report_button.setEnabled(False)
+        self._create_spline_report_button.setVisible(False)
         self._create_spline_report_button.clicked.connect(
             self._create_spline_report_button_pressed
         )
-        self._confirm_points_container_layout.addWidget(
-            self._create_spline_report_button
-        )
+        self._sbs_container_layout.addWidget(self._create_spline_report_button)
 
         self._create_spline_plot_button: QPushButton = QPushButton(
             "Create spline intensity plot"
         )
         self._create_spline_plot_button.setEnabled(False)
+        self._create_spline_plot_button.setVisible(False)
         self._create_spline_plot_button.clicked.connect(
             self._create_spline_plot_button_pressed
         )
-        self._confirm_points_container_layout.addWidget(
-            self._create_spline_plot_button
-        )
+        self._sbs_container_layout.addWidget(self._create_spline_plot_button)
 
         self._main_layout.addStretch(1)
 

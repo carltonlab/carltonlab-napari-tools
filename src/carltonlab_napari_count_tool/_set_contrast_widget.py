@@ -4,6 +4,7 @@ from napari.layers import Image
 from napari.viewer import ViewerModel
 from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -211,8 +212,16 @@ class SetContrastWidget(QWidget):
 
         self._top_scroll_area: QScrollArea = QScrollArea()
         self._top_scroll_area.setWidgetResizable(True)
-        self._layout.addWidget(self._top_scroll_area)
+        self._top_scroll_area.setViewportMargins(0, 0, 10, 0)
+        self._layout.addWidget(self._top_scroll_area, 1)
         self._top_scroll_area.setWidget(self._top_container)
+
+        self._main_title_label = QLabel("CL Set Contrast")
+        self._main_title_label.setStyleSheet(
+            "font-weight: bold; font-size: 20px"
+        )
+        self._main_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._top_container_layout.addWidget(self._main_title_label)
 
         self._no_image_open_label: QLabel = QLabel("No image open")
         self._no_image_open_label.setStyleSheet(
@@ -271,7 +280,25 @@ class SetContrastWidget(QWidget):
                 self._napari_viewer, self, image, image_index
             )
             self._contrast_container_layout.addWidget(adding_widget)
+            if image_index < len(image_tuple) - 1:
+                self._contrast_container_layout.addSpacing(6)
+                separator = QFrame(self._contrast_container)
+                separator.setFrameShape(QFrame.Shape.HLine)
+                separator.setFrameShadow(QFrame.Shadow.Sunken)
+                separator.setStyleSheet("background-color: gray;")
+                separator.setFixedHeight(2)
+                self._contrast_container_layout.addWidget(separator)
+                self._contrast_container_layout.addSpacing(6)
             self._contrast_dict[image_index] = adding_widget
+        if len(image_tuple) > 0:
+            self._contrast_container_layout.addSpacing(6)
+            end_separator = QFrame(self._contrast_container)
+            end_separator.setFrameShape(QFrame.Shape.HLine)
+            end_separator.setFrameShadow(QFrame.Shadow.Sunken)
+            end_separator.setStyleSheet("background-color: gray;")
+            end_separator.setFixedHeight(2)
+            self._contrast_container_layout.addWidget(end_separator)
+            self._contrast_container_layout.addSpacing(6)
         self._no_image_open_label.setVisible(False)
         self._contrast_container.setVisible(True)
         self._save_container.setVisible(True)

@@ -93,6 +93,10 @@ class ScoreNucleiWidget(QWidget):
     def __init__(self, parent_widget: QWidget, napari_viewer: "ViewerModel"):
         super().__init__(parent_widget)
 
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+
         self._napari_viewer = napari_viewer
         self._scoring_layer: Image | None = None
         self._extra_layer: Image | None = None
@@ -106,7 +110,8 @@ class ScoreNucleiWidget(QWidget):
 
         self._main_scroll_area: QScrollArea = QScrollArea()
         self._main_scroll_area.setWidgetResizable(True)
-        self._layout.addWidget(self._main_scroll_area)
+        self._main_scroll_area.setViewportMargins(0, 0, 10, 0)
+        self._layout.addWidget(self._main_scroll_area, 1)
 
         self._main_container: QWidget = QWidget()
         self._main_scroll_area.setWidget(self._main_container)
@@ -237,6 +242,8 @@ class ScoreNucleiWidget(QWidget):
         )
         self._create_plot_button.clicked.connect(self._create_plot_pressed)
         self._main_layout.addWidget(self._create_plot_button)
+
+        self._main_layout.addStretch(1)
 
     def _update_list(self) -> None:
         if len(self._scoring_sbs_list) == 0:
