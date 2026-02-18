@@ -227,9 +227,31 @@ class PickNucleiWidget(QWidget):
 
         self._main_layout.addStretch(1)
 
-        self._reset_gui()
+        if images is not None and image_path is not None:
+            self.new_image_open(images, image_path)
 
     def _reset_gui(self) -> None:
+        self._regions_qlist.clear()
+
+        self._images = None
+        self._image_path = None
+        self._image_layer: Image | None = None
+        self._points_layers: list[Points] | None = None
+        self._squares_shapes_layers: list[Shapes] | None = None
+        self._edited_regions_layer: Shapes | None = None
+        self._current_region_layer: Shapes | None = None
+        self._extra_regions_layer: Shapes | None = None
+        self._all_points_layer: Points | None = None
+        self._all_points_2d_layer: Points | None = None
+        self._current_points_2d_layer: Points | None = None
+        self._all_squares_layer: Shapes | None = None
+        self._pick_nuclei_directory: str | None = None
+        self._number_of_regions: int
+
+        self._set_points_saved_label_state(False)
+        self._set_saved_squares_label_state(False)
+        self._set_create_sbs_files_label_state(False)
+
         return
 
     def new_image_open(
@@ -359,9 +381,13 @@ class PickNucleiWidget(QWidget):
         if state:
             self._create_sbs_files_label.setText("SBS files created")
             self._create_sbs_files_label.setStyleSheet("color: green")
+            if self._ct_button is not None:
+                self._ct_button.set_status_label_state(True)
         else:
             self._create_sbs_files_label.setText("SBS files not created")
             self._create_sbs_files_label.setStyleSheet("color: red")
+            if self._ct_button is not None:
+                self._ct_button.set_status_label_state(False)
 
     def _set_layers_color_and_opacity(
         self, setting_layer: Layer, opacity: float, color: str

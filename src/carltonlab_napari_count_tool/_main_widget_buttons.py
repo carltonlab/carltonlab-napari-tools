@@ -6,6 +6,7 @@ from qtpy.QtWidgets import QLabel, QPushButton, QWidget
 
 from carltonlab_napari_count_tool._model import (
     close_all_non_set_image_layers,
+    verify_all_sbs_created,
     verify_edited_regions_file,
     verify_image_contrasts_file,
 )
@@ -337,7 +338,7 @@ class NucleiPickerToolButtons:
         )
         if images_and_paths is None:
             show_info(
-                "Cannot open the regions widget. No images and paths found at the control widget"
+                "Cannot open the pick nuclei widget. No images and paths found at the control widget"
             )
             return
         continue_launch: bool = close_all_non_set_image_layers(
@@ -367,7 +368,8 @@ class NucleiPickerToolButtons:
             self._status_label.setStyleSheet("color: red")
 
     def validate_property(self, image_path: str) -> None:
-        _ = image_path
+        print(f"validating pick nuclei for image: {image_path}")
+        self.set_status_label_state(verify_all_sbs_created(image_path))
 
 
 @_score_buttons

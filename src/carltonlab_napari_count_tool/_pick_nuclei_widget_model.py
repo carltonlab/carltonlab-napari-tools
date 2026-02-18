@@ -15,6 +15,9 @@ from numpy.typing import NDArray
 from skimage.io import imread
 
 from carltonlab_napari_count_tool._model import (
+    get_number_of_saved_regions,
+    get_points_saved_list,
+    load_points_summary_file,
     open_csv_as_points_layer,
     open_csv_as_shape_layer,
     save_layer_as_csv,
@@ -85,6 +88,7 @@ def open_project(
             "The edited (expanded) regions file doesn't exist. Create it in the regions widget"
         )
         return "failed"
+    image_layer: Image = images[0]
     image_layer_dims = image_layer.ndim
     number_of_regions = get_number_of_saved_regions(searching_project_path)
     points_squares_tuple: (
@@ -199,93 +203,6 @@ def open_points_and_squares_layers(
     return (returning_points, returning_squares)
 
 
-def str_to_bool(value: str) -> bool:
-    return value.lower() in {"true", "1"}
-
-
-def get_points_saved_list(
-    pick_nuclei_directory, number_of_regions: int
-) -> list[tuple[int, bool, bool, bool] | None]:
-    points_saved_list: list[None | tuple[int, bool, bool, bool]] = []
-    project_directory: str = os.path.dirname(pick_nuclei_directory)
-    number_of_saved_regions: int = get_number_of_saved_regions(
-        project_directory
-    )
-    for _ in range(number_of_saved_regions):
-        points_saved_list.append(None)
-    points_summary_file_path: str = os.path.join(
-        pick_nuclei_directory, POINTS_SUMMARY_FILE_NAME
-    )
-    summary_parser = load_points_summary_file(points_summary_file_path)
-    if summary_parser is None:
-        summary_parser = create_summary_file(
-            pick_nuclei_directory, number_of_regions
-        )
-    if len(summary_parser["NucleiCount"]) <= 0:
-        print("Returning without loading?")
-        return points_saved_list
-    for region_index in range(len(summary_parser["NucleiCount"])):
-        region_str: str = "region-" + str(region_index + 1)
-        number_of_points: int = int(summary_parser["NucleiCount"][region_str])
-        saved_points_state: bool = str_to_bool(
-            summary_parser["SavedPointsState"][region_str]
-        )
-        saved_squares_state: bool = str_to_bool(
-            summary_parser["SavedSquaresState"][region_str]
-        )
-        saved_sbs_state: bool = str_to_bool(
-            summary_parser["SavedSbsState"][region_str]
-        )
-        setting_tuple: tuple[int, bool, bool, bool] = (
-            number_of_points,
-            saved_points_state,
-            saved_squares_state,
-            saved_sbs_state,
-        )
-        points_saved_list[region_index] = setting_tuple
-    return points_saved_list
-
-
-def get_number_of_saved_regions(project_directory: str) -> int:
-    editable_regions_config_path: str = os.path.join(
-        project_directory,
-        REGIONS_DIR_NAME,
-        EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME,
-    )
-    if not os.path.exists(editable_regions_config_path):
-        return 0
-    edited_regions_parser: ConfigParser = ConfigParser()
-    try:
-        edited_regions_parser.read(editable_regions_config_path)
-    except ConfigParserError:
-        show_info("Couldn't load the edited regions config file")
-        return 0
-    number_of_regions: int = len(edited_regions_parser["ExpandedRegions"])
-    return number_of_regions
-
-
-def create_summary_file(
-    pick_nuclei_directory: str, number_of_regions
-) -> ConfigParser:
-    config_file_path: str = os.path.join(
-        pick_nuclei_directory, POINTS_SUMMARY_FILE_NAME
-    )
-    summary_file_parser: ConfigParser = ConfigParser()
-    summary_file_parser.add_section("NucleiCount")
-    summary_file_parser.add_section("SavedPointsState")
-    summary_file_parser.add_section("SavedSquaresState")
-    summary_file_parser.add_section("SavedSbsState")
-    for region_index in range(number_of_regions):
-        retion_string: str = "region-" + str(region_index + 1)
-        summary_file_parser["NucleiCount"][retion_string] = "0"
-        summary_file_parser["SavedPointsState"][retion_string] = "False"
-        summary_file_parser["SavedSquaresState"][retion_string] = "False"
-        summary_file_parser["SavedSbsState"][retion_string] = "False"
-    with open(config_file_path, "w") as config_file:
-        summary_file_parser.write(config_file)
-    return summary_file_parser
-
-
 def save_points_summary_file(
     points_saved_list: list[tuple[int, bool, bool, bool]],
     pick_nuclei_directory: str,
@@ -318,19 +235,6 @@ def save_points_summary_file(
     except ConfigParserError:
         show_info("Error saving the points summary file...")
     return
-
-
-def load_points_summary_file(summary_file_path) -> ConfigParser | None:
-    loaded_parser: ConfigParser | None = ConfigParser()
-    try:
-        read_file = loaded_parser.read(summary_file_path)
-        if not read_file:
-            loaded_parser = None
-    except ConfigParserError:
-        show_info("Couldn't load the points summary file")
-        loaded_parser = None
-        return loaded_parser
-    return loaded_parser
 
 
 def validate_image_open(
