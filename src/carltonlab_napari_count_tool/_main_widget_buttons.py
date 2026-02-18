@@ -10,11 +10,15 @@ from carltonlab_napari_count_tool._model import (
     verify_edited_regions_file,
     verify_image_contrasts_file,
 )
+from carltonlab_napari_count_tool._multi_gonad_widget import (
+    MakeMultiGonadWidget,
+)
 from carltonlab_napari_count_tool._pick_nuclei_widget import PickNucleiWidget
 from carltonlab_napari_count_tool._protocols import (
     CToolButton,
     MainWidgetCallBacks,
     ProcessWidgetAPI,
+    ScoreWidgetAPI,
 )
 from carltonlab_napari_count_tool._regions_widget import RegionWidget
 from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
@@ -391,8 +395,7 @@ class MakeMultiGonadProjectButton:
         self._button_text = "1.Make multi gonad project"
 
         self._button = QPushButton(self._button_text)
-
-        self._connecting_method_str = "_launch_make_multi_gonad_widget"
+        self._button.clicked.connect(self.launch_widget)
 
     def get_button(self) -> QPushButton:
         return self._button
@@ -406,8 +409,17 @@ class MakeMultiGonadProjectButton:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(self) -> QWidget:
-        return QWidget()
+    def launch_widget(self) -> QWidget | None:
+        self._launched_widget = MakeMultiGonadWidget(
+            self._napari_viewer, self._main_widget
+        )
+        score_widget: ScoreWidgetAPI = cast(
+            ScoreWidgetAPI, self._launched_widget
+        )
+        self._main_widget.set_score_widget(
+            score_widget, "clt Make Multi Gonad Project"
+        )
+        return self._launched_widget
 
     def set_status_label_state(self, state: bool) -> None:
         _ = state

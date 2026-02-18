@@ -32,6 +32,7 @@ from carltonlab_napari_count_tool._protocols import (
     CToolButton,
     MainWidgetCallBacks,
     ProcessWidgetAPI,
+    ScoreWidgetAPI,
 )
 
 
@@ -192,6 +193,7 @@ class CarltonLabCountTool(QWidget):
         self._parent_widget = None
 
         self._process_widget: ProcessWidgetAPI | None = None
+        self._score_widget: ScoreWidgetAPI | None = None
 
         self._initialize_gui()
 
@@ -218,10 +220,14 @@ class CarltonLabCountTool(QWidget):
 
         self._top_container_layout.addWidget(self._prepare_container)
 
+        main_widget_casted: MainWidgetCallBacks = cast(
+            MainWidgetCallBacks, self
+        )
+
         self._prepare_buttons_instances_dict: dict[str, CToolButton] = {}
         for class_name, class_ref in PREPARE_BUTTONS_LIST.items():
             self._prepare_buttons_instances_dict[class_name] = class_ref(
-                self._napari_viewer, self
+                self._napari_viewer, main_widget_casted
             )
 
         for class_instance in self._prepare_buttons_instances_dict.values():
@@ -257,7 +263,7 @@ class CarltonLabCountTool(QWidget):
         self._buttons_instances_dict: dict[str, CToolButton] = {}
         for class_name, class_ref in BUTTONS_LIST.items():
             self._buttons_instances_dict[class_name] = class_ref(
-                self._napari_viewer, self
+                self._napari_viewer, main_widget_casted
             )
 
         for class_instance in self._buttons_instances_dict.values():
@@ -292,7 +298,7 @@ class CarltonLabCountTool(QWidget):
         self._score_buttons_instances_dict: dict[str, CToolButton] = {}
         for class_name, class_ref in SCORE_BUTTONS_LIST.items():
             self._score_buttons_instances_dict[class_name] = class_ref(
-                self._napari_viewer, self
+                self._napari_viewer, main_widget_casted
             )
 
         for class_instance in self._score_buttons_instances_dict.values():
@@ -327,7 +333,7 @@ class CarltonLabCountTool(QWidget):
         self._results_buttons_instances_dict: dict[str, CToolButton] = {}
         for class_name, class_ref in RESULTS_BUTTONS_LIST.items():
             self._results_buttons_instances_dict[class_name] = class_ref(
-                self._napari_viewer, self
+                self._napari_viewer, main_widget_casted
             )
 
         for class_instance in self._results_buttons_instances_dict.values():
@@ -344,21 +350,42 @@ class CarltonLabCountTool(QWidget):
     def get_process_widget(self) -> ProcessWidgetAPI | None:
         return self._process_widget
 
-    def close_process_widget(self) -> None:
+    def set_process_widget(
+        self, setting_widget: ProcessWidgetAPI | None, widget_name: str
+    ) -> None:
+        self.close_other_widgets()
+        if setting_widget is None:
+            return
+        self._process_widget = setting_widget
+        self._napari_viewer.window.add_dock_widget(
+            setting_widget, name=widget_name
+        )
+
+    def get_score_widget(self) -> ScoreWidgetAPI | None:
+        return self._score_widget
+
+    def set_score_widget(
+        self, setting_widget: ScoreWidgetAPI | None, widget_name: str
+    ) -> None:
+        self.close_other_widgets()
+        if setting_widget is None:
+            return
+        self._score_widget = setting_widget
+        self._napari_viewer.window.add_dock_widget(
+            setting_widget, name=widget_name
+        )
+
+    def close_other_widgets(self) -> None:
         if self._process_widget is not None:
             parent_dock_widget: QWidget = self._process_widget.parent()
             self._process_widget.deleteLater()
             self._process_widget = None
             parent_dock_widget.deleteLater()
-
-    def set_process_widget(
-        self, setting_widget: ProcessWidgetAPI | None, widget_name: str
-    ) -> None:
-        self.close_process_widget()
-        self._process_widget = setting_widget
-        self._napari_viewer.window.add_dock_widget(
-            setting_widget, name=widget_name
-        )
+        if self._score_widget is not None:
+            parent_dock_widget: QWidget = self._score_widget.parent()
+            self._score_widget.deleteLater()
+            self._score_widget = None
+            parent_dock_widget.deleteLater()
 
     def get_process_control_images_and_paths(
         self,

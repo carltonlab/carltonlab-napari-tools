@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from napari.utils.notifications import show_info
 from qtpy.QtCore import Qt
@@ -22,6 +22,7 @@ from carltonlab_napari_count_tool._multi_gonad_widget_model import (
     file_available,
     make_directories_dict,
 )
+from carltonlab_napari_count_tool._protocols import MainWidgetCallBacks
 from carltonlab_napari_count_tool._shared_variables import (
     MULTI_GONAD_FILE_EXTENSION,
     MULTI_GONAD_FILE_SUFFIX,
@@ -38,18 +39,36 @@ BUTTONS_WIDTH = 30
 
 
 class MakeMultiGonadWidget(QWidget):
-    def __init__(self, parent_widget: QWidget, napari_viewer: "ViewerModel"):
-        super().__init__(parent_widget)
+    def __init__(
+        self,
+        napari_viewer: "ViewerModel",
+        parent_widget: MainWidgetCallBacks,
+    ):
+        parent_q_widget: QWidget = cast(QWidget, parent_widget)
+        super().__init__(parent_q_widget)
 
         self._napari_viewer = napari_viewer
-        self._parent_widget: QWidget = parent_widget
+        self._parent_widget: MainWidgetCallBacks = parent_widget
         self._gonads_directories_dict: dict[str, str] = {}
         self._project_file_created: bool = False
         self._project_file_directory: str = ""
         self._project_file_name: str = ""
 
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+
         self._layout = QVBoxLayout()
         self.setLayout(self._layout)
+
+        self._main_scroll_area: QScrollArea = QScrollArea()
+        self._main_scroll_area.setWidgetResizable(True)
+        self._layout.addWidget(self._main_scroll_area)
+
+        self._main_container: QWidget = QWidget()
+        self._main_scroll_area.setWidget(self._main_container)
+        self._main_layout: QVBoxLayout = QVBoxLayout()
+        self._main_container.setLayout(self._main_layout)
 
         self._add_remove_container: QWidget = QWidget()
         self._add_remove_container_layout: QHBoxLayout = QHBoxLayout()
@@ -76,7 +95,7 @@ class MakeMultiGonadWidget(QWidget):
         )
         self._add_remove_container_layout.addWidget(self._remove_gonads_button)
 
-        self._layout.addWidget(self._add_remove_container)
+        self._main_layout.addWidget(self._add_remove_container)
 
         self._gonad_directories_q_list: QListWidget = QListWidget()
         self._gonad_directories_q_list.setSelectionMode(
@@ -93,17 +112,17 @@ class MakeMultiGonadWidget(QWidget):
         list_container_layout.addWidget(self._gonad_directories_q_list)
 
         self._list_scroll_area.setWidget(list_container)
-        self._layout.addWidget(self._list_scroll_area)
+        self._main_layout.addWidget(self._list_scroll_area)
 
         self._project_file_directory_title: QLabel = QLabel(
             "Project file directory"
         )
         self._project_file_directory_title.setStyleSheet("font-weight: bold")
-        self._layout.addWidget(self._project_file_directory_title)
+        self._main_layout.addWidget(self._project_file_directory_title)
 
         self._project_file_line_edit: QLineEdit = QLineEdit("")
         self._project_file_line_edit.setDisabled(True)
-        self._layout.addWidget(self._project_file_line_edit)
+        self._main_layout.addWidget(self._project_file_line_edit)
 
         self._select_project_directory_button: QPushButton = QPushButton(
             "Select saving directory"
@@ -111,28 +130,28 @@ class MakeMultiGonadWidget(QWidget):
         self._select_project_directory_button.clicked.connect(
             self._select_project_directory_button_pressed
         )
-        self._layout.addWidget(self._select_project_directory_button)
+        self._main_layout.addWidget(self._select_project_directory_button)
 
         self._project_file_root_title: QLabel = QLabel("Project root name")
         self._project_file_root_title.setStyleSheet("font-weight: bold")
-        self._layout.addWidget(self._project_file_root_title)
+        self._main_layout.addWidget(self._project_file_root_title)
 
         self._project_root_name_line_edit: QLineEdit = QLineEdit("")
         self._project_root_name_line_edit.editingFinished.connect(
             self._validate_root_name_directory
         )
-        self._layout.addWidget(self._project_root_name_line_edit)
+        self._main_layout.addWidget(self._project_root_name_line_edit)
 
         self._project_file_name_title: QLabel = QLabel("Project file name")
         self._project_file_name_title.setStyleSheet("font-weight: bold")
-        self._layout.addWidget(self._project_file_name_title)
+        self._main_layout.addWidget(self._project_file_name_title)
 
         self._project_file_name_line_edit: QLineEdit = QLineEdit("")
         self._project_file_name_line_edit.setDisabled(True)
-        self._layout.addWidget(self._project_file_name_line_edit)
+        self._main_layout.addWidget(self._project_file_name_line_edit)
 
         self._project_file_valid_status_label: QLabel = QLabel("")
-        self._layout.addWidget(self._project_file_valid_status_label)
+        self._main_layout.addWidget(self._project_file_valid_status_label)
 
         self._create_project_button: QPushButton = QPushButton(
             "Create project"
@@ -140,10 +159,10 @@ class MakeMultiGonadWidget(QWidget):
         self._create_project_button.clicked.connect(
             self._create_project_button_pressed
         )
-        self._layout.addWidget(self._create_project_button)
+        self._main_layout.addWidget(self._create_project_button)
 
         self._project_file_created_label: QLabel = QLabel("")
-        self._layout.addWidget(self._project_file_created_label)
+        self._main_layout.addWidget(self._project_file_created_label)
 
         self._update_project_file_created_state()
         self._validate_root_name_directory()
