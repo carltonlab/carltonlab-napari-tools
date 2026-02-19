@@ -6,6 +6,7 @@ from napari.utils.notifications import show_info
 from napari.viewer import ViewerModel
 from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -114,6 +115,8 @@ class ScoreNucleiWidget(QWidget):
         self._scoring_sbs_list: list[CLSPSbsObject] = []
         self._showing_sbs_indexes: list[int] = []
         self._ct_button: ScoreWidgetButtonAPI = score_widget_api
+        self._blind_state: bool = True
+        self._shuffle_state: bool = True
 
         self._layout: QVBoxLayout = QVBoxLayout()
         self.setLayout(self._layout)
@@ -128,31 +131,57 @@ class ScoreNucleiWidget(QWidget):
         self._main_layout: QVBoxLayout = QVBoxLayout()
         self._main_container.setLayout(self._main_layout)
 
+        self._main_title_label = QLabel("CL Score Nuclei")
+        self._main_title_label.setStyleSheet(
+            "font-weight: bold; font-size: 20px"
+        )
+        self._main_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._main_layout.addWidget(self._main_title_label)
+
+        self._scoring_file_container: QWidget = QWidget()
+        self._scoring_file_container_layout: QVBoxLayout = QVBoxLayout()
+        self._scoring_file_container_layout.setContentsMargins(12, 0, 12, 0)
+        self._scoring_file_container.setLayout(
+            self._scoring_file_container_layout
+        )
+        self._main_layout.addWidget(self._scoring_file_container)
+
         self._open_file_title: QLabel = QLabel("Scoring file")
         self._open_file_title.setStyleSheet("font-weight: bold")
-        self._main_layout.addWidget(self._open_file_title)
+        self._scoring_file_container_layout.addWidget(self._open_file_title)
 
         self._open_file_line_edit: QLineEdit = QLineEdit("")
         self._open_file_line_edit.setReadOnly(True)
-        self._main_layout.addWidget(self._open_file_line_edit)
+        self._scoring_file_container_layout.addWidget(
+            self._open_file_line_edit
+        )
 
         self._open_file_button: QPushButton = QPushButton("Open file")
         self._open_file_button.clicked.connect(self._open_file_button_pressed)
-        self._main_layout.addWidget(self._open_file_button)
+        self._scoring_file_container_layout.addWidget(self._open_file_button)
 
-        self._list_container: QWidget = QWidget()
-        self._list_container_layout: QVBoxLayout = QVBoxLayout()
-        self._list_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._list_container.setLayout(self._list_container_layout)
-        self._main_layout.addWidget(self._list_container)
+        self._main_layout.addSpacing(6)
+        separator = QFrame(self._main_container)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("background-color: gray;")
+        separator.setFixedHeight(2)
+        self._main_layout.addWidget(separator)
+        self._main_layout.addSpacing(6)
+
+        self._sbs_list_container: QWidget = QWidget()
+        self._sbs_list_container_layout: QVBoxLayout = QVBoxLayout()
+        self._sbs_list_container_layout.setContentsMargins(12, 0, 12, 0)
+        self._sbs_list_container.setLayout(self._sbs_list_container_layout)
+        self._main_layout.addWidget(self._sbs_list_container)
 
         self._sbs_list_title: QLabel = QLabel("SBS list")
         self._sbs_list_title.setStyleSheet("font-weight: bold")
-        self._list_container_layout.addWidget(self._sbs_list_title)
+        self._sbs_list_container_layout.addWidget(self._sbs_list_title)
 
         self._sbs_list_scroll_area: QScrollArea = QScrollArea()
         self._sbs_list_scroll_area.setWidgetResizable(True)
-        self._list_container_layout.addWidget(self._sbs_list_scroll_area)
+        self._sbs_list_container_layout.addWidget(self._sbs_list_scroll_area)
 
         self._sbs_list_widget: QListWidget = QListWidget()
         self._sbs_list_widget.itemSelectionChanged.connect(
@@ -216,38 +245,29 @@ class ScoreNucleiWidget(QWidget):
             self._next_non_scored_button
         )
 
-        self._main_layout.addWidget(self._navigate_confirm_buttons_container)
+        self._sbs_list_container_layout.addWidget(
+            self._navigate_confirm_buttons_container
+        )
 
         self._progress_label: QLabel = QLabel("")
         self._main_layout.addWidget(self._progress_label)
 
         self._peek_button: QPushButton = QPushButton("Peek")
         self._peek_button.clicked.connect(self._peek_button_pressed)
-        self._main_layout.addWidget(self._peek_button)
-
-        self._create_summary_button: QPushButton = QPushButton(
-            "Create spline summary"
-        )
-        self._create_summary_button.clicked.connect(
-            self._create_summary_pressed
-        )
-        self._main_layout.addWidget(self._create_summary_button)
-
-        self._create_plot_button: QPushButton = QPushButton(
-            "Create spline plot"
-        )
-        self._create_plot_button.clicked.connect(self._create_plot_pressed)
-        self._main_layout.addWidget(self._create_plot_button)
+        self._sbs_list_container_layout.addWidget(self._peek_button)
 
         self._main_layout.addStretch(1)
+
+    def _reset_gui(self) -> None:
+        return
 
     def _update_list(self) -> None:
         if len(self._scoring_sbs_list) == 0:
             self._sbs_list_widget.clear()
             return
         scoring_list: QListWidget = self._sbs_list_widget
-        blind_selection: bool = self._blind_score_checkbox.isChecked()
-        shuffle_selection: bool = self._shuffle_sbs_indexes.isChecked()
+        blind_selection: bool = self._blind_state
+        shuffle_selection: bool = self._shuffle_state
         if shuffle_selection and not len(self._showing_sbs_indexes) > 0:
             self._make_shuffled_indexes()
         if not shuffle_selection and not len(self._showing_sbs_indexes) > 0:
@@ -433,7 +453,7 @@ class ScoreNucleiWidget(QWidget):
             self._napari_viewer.layers.remove(self._adding_points_layer)
         if self._extra_layer is not None:
             self._napari_viewer.layers.remove(self._extra_layer)
-        blind_state: bool = self._blind_score_checkbox.isChecked()
+        blind_state: bool = self._blind_state
         selected_item: QListWidgetItem = self._sbs_list_widget.currentItem()
         selected_widget: SBSListItemWidget = cast(
             SBSListItemWidget, self._sbs_list_widget.itemWidget(selected_item)
@@ -493,6 +513,12 @@ class ScoreNucleiWidget(QWidget):
         layer.out_of_slice_display = out_of_slice_display
         layer.refresh_colors()
         layer.refresh()
+
+    def set_blind_state(self, state: bool) -> None:
+        self._blind_state = state
+
+    def set_shuffle_state(self, state: bool) -> None:
+        self._shuffle_state = state
 
     def _create_summary_pressed(self) -> None:
         gonad_dirs = self._get_gonad_dirs()

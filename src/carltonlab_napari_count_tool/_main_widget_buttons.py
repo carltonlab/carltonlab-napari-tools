@@ -459,7 +459,9 @@ class ScoreNucleiButton:
         self._button.clicked.connect(self.launch_widget)
 
         self._blind_checkbox: QCheckBox = QCheckBox("Blind file names")
+        self._blind_checkbox.setChecked(True)
         self._shuffle_checkbox: QCheckBox = QCheckBox("Shuffle file list")
+        self._shuffle_checkbox.setChecked(True)
 
         self._widgets_container: QWidget = QWidget()
         self._widgets_container_layout: QVBoxLayout = QVBoxLayout()
@@ -494,11 +496,11 @@ class ScoreNucleiButton:
         self._button.setEnabled(True)
 
     def launch_widget(self) -> QWidget:
-        self._reference_as_API: ScoreWidgetButtonAPI = cast(
+        reference_as_API: ScoreWidgetButtonAPI = cast(
             ScoreWidgetButtonAPI, self
         )
         self._launched_widget = ScoreNucleiWidget(
-            self._napari_viewer, self._main_widget, self
+            self._napari_viewer, self._main_widget, reference_as_API
         )
         score_widget: ScoreWidgetAPI = cast(
             ScoreWidgetAPI, self._launched_widget

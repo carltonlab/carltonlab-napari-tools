@@ -633,7 +633,8 @@ class PickNucleiWidget(QWidget):
         if points_saved_list is None:
             return
         all_points_saved_list: list[bool] = [
-            save_tuple[1] for save_tuple in points_saved_list
+            save_tuple[1] if save_tuple is not None else False
+            for save_tuple in points_saved_list
         ]
         if not all(all_points_saved_list):
             self._set_points_saved_label_state(False)
@@ -705,7 +706,8 @@ class PickNucleiWidget(QWidget):
         if points_saved_list is None:
             return
         all_squares_saved_list: list[bool] = [
-            save_tuple[2] for save_tuple in points_saved_list
+            save_tuple[2] if save_tuple is not None else False
+            for save_tuple in points_saved_list
         ]
         if not all(all_squares_saved_list):
             self._set_saved_squares_label_state(False)
@@ -720,9 +722,12 @@ class PickNucleiWidget(QWidget):
             list[Shapes], self._squares_shapes_layers
         )
         cutting_square_layer: Shapes = squares_list[selected_region_index]
-        image_layer: Image = cast(Image, self._image_layer)
+        if self._images is None:
+            show_info("No image layers available for SBS cutting")
+            return
+        image_layers: tuple[Image, ...] = self._images
         if cut_sbs_files_from_squares_and_image_layers(
-            image_layer,
+            image_layers,
             cutting_square_layer,
             self._pick_nuclei_directory,
             selected_region_index,
@@ -777,7 +782,8 @@ class PickNucleiWidget(QWidget):
         if points_saved_list is None:
             return
         all_sbs_saved_list: list[bool] = [
-            save_tuple[3] for save_tuple in points_saved_list
+            save_tuple[3] if save_tuple is not None else False
+            for save_tuple in points_saved_list
         ]
         if not all(all_sbs_saved_list):
             self._set_create_sbs_files_label_state(False)

@@ -371,14 +371,35 @@ def create_squares_layers_from_points_layer(
 
 
 def cut_sbs_files_from_squares_and_image_layers(
-    image_layer: Image,
+    image_layers: tuple[Image, ...],
     squares_layer: Shapes,
     pick_nuclei_directory: str,
     region_index: int,
 ) -> bool:
     region_str: str = "region-" + str(region_index + 1)
     squares_array = squares_layer.data
-    image_data: NDArray[np.generic] = np.asarray(image_layer.data)
+    if not image_layers:
+        show_info("No image layers available for SBS cutting")
+        return False
+    normalized_data_list: list[NDArray[np.generic]] = []
+    for image_data in (np.asarray(layer.data) for layer in image_layers):
+        if image_data.ndim == 2:
+            image_data = image_data[np.newaxis, ...]
+        elif image_data.ndim not in {3, 4}:
+            show_info("Image layers must be ZYX or TZYX for SBS cutting")
+            return False
+        normalized_data_list.append(image_data)
+    base_shape = normalized_data_list[0].shape
+    if any(
+        image_data.shape != base_shape for image_data in normalized_data_list
+    ):
+        show_info("Image layers have mismatched shapes; cannot cut SBS")
+        return False
+    if len(normalized_data_list) == 1:
+        image_data: NDArray[np.generic] = normalized_data_list[0]
+    else:
+        image_data = np.stack(normalized_data_list, axis=1)
+    print(f"Cutting SBS with stacked image shape: {image_data.shape}")
     cut_sbs_dir: str = os.path.join(pick_nuclei_directory, CUT_SBS_DIR_NAME)
     os.makedirs(cut_sbs_dir, exist_ok=True)
     img_y, img_x = image_data.shape[-2:]

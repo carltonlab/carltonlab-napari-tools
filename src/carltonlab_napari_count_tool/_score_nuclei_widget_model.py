@@ -151,10 +151,12 @@ def open_image_layer_from_clsp_object(
         _load_layers_contrasts(project_dir)
     )
     print(f"The layers contrasts are: {layers_contrasts}")
+    print(f"The image path is: {image_path}")
     image_data = tifffile.imread(image_path)
     images_layers: Image | list[Image] = napari_viewer.add_image(
-        np.asarray(image_data.data), channel_axis=1
+        image_data, channel_axis=1
     )
+    print(f"The image data is : {image_data.shape}")
     if isinstance(images_layers, Image):
         raise ValueError(
             f"Expected 2 channels along axis=1, but add_image returned a single layer"

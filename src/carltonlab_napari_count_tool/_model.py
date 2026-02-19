@@ -369,21 +369,39 @@ def get_points_saved_list(
     number_of_saved_regions: int = get_number_of_saved_regions(
         project_directory
     )
+    print(
+        "get_points_saved_list:",
+        f"pick_nuclei_directory={pick_nuclei_directory}",
+        f"number_of_regions={number_of_regions}",
+        f"number_of_saved_regions={number_of_saved_regions}",
+    )
     for _ in range(number_of_saved_regions):
         points_saved_list.append(None)
     points_summary_file_path: str = os.path.join(
         pick_nuclei_directory, POINTS_SUMMARY_FILE_NAME
     )
+    print(
+        f"get_points_saved_list: summary_file_path={points_summary_file_path}"
+    )
     summary_parser = load_points_summary_file(points_summary_file_path)
     if summary_parser is None:
+        print("get_points_saved_list: summary file missing or unreadable")
         summary_parser = create_summary_file(
             pick_nuclei_directory, number_of_regions
         )
     if len(summary_parser["NucleiCount"]) <= 0:
-        print("Returning without loading?")
+        print("get_points_saved_list: empty NucleiCount section")
         return points_saved_list
     for region_index in range(len(summary_parser["NucleiCount"])):
         region_str: str = "region-" + str(region_index + 1)
+        if region_index >= len(points_saved_list):
+            print(
+                "get_points_saved_list: region index out of range",
+                region_str,
+                f"index={region_index}",
+                f"list_len={len(points_saved_list)}",
+            )
+            continue
         number_of_points: int = int(summary_parser["NucleiCount"][region_str])
         saved_points_state: bool = str_to_bool(
             summary_parser["SavedPointsState"][region_str]
