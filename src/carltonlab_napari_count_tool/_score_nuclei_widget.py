@@ -6,7 +6,6 @@ from napari.utils.notifications import show_info
 from napari.viewer import ViewerModel
 from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import (
-    QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -19,6 +18,10 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from carltonlab_napari_count_tool._protocols import (
+    MainWidgetCallBacks,
+    ScoreWidgetButtonAPI,
+)
 from carltonlab_napari_count_tool._score_nuclei_widget_model import (
     CLSPSbsObject,
     generate_scored_points_spline_plot,
@@ -90,8 +93,14 @@ OpenFileReturns = Literal["failed"] | None | tuple[list[CLSPSbsObject], str]
 
 
 class ScoreNucleiWidget(QWidget):
-    def __init__(self, parent_widget: QWidget, napari_viewer: "ViewerModel"):
-        super().__init__(parent_widget)
+    def __init__(
+        self,
+        napari_viewer: "ViewerModel",
+        parent_widget: MainWidgetCallBacks,
+        score_widget_api: ScoreWidgetButtonAPI,
+    ):
+        parent_q_widget: QWidget = cast(QWidget, parent_widget)
+        super().__init__(parent_q_widget)
 
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
@@ -104,6 +113,7 @@ class ScoreNucleiWidget(QWidget):
         self._adding_points_layer: Points | None = None
         self._scoring_sbs_list: list[CLSPSbsObject] = []
         self._showing_sbs_indexes: list[int] = []
+        self._ct_button: ScoreWidgetButtonAPI = score_widget_api
 
         self._layout: QVBoxLayout = QVBoxLayout()
         self.setLayout(self._layout)
@@ -125,20 +135,6 @@ class ScoreNucleiWidget(QWidget):
         self._open_file_line_edit: QLineEdit = QLineEdit("")
         self._open_file_line_edit.setReadOnly(True)
         self._main_layout.addWidget(self._open_file_line_edit)
-
-        self._blind_score_checkbox: QCheckBox = QCheckBox("Blind scoring")
-        self._blind_score_checkbox.setChecked(True)
-        self._blind_score_checkbox.stateChanged.connect(
-            self._blind_score_checkbox_state_changed
-        )
-        self._main_layout.addWidget(self._blind_score_checkbox)
-
-        self._shuffle_sbs_indexes: QCheckBox = QCheckBox("Shuffle SBS order")
-        self._shuffle_sbs_indexes.setChecked(True)
-        self._shuffle_sbs_indexes.stateChanged.connect(
-            self._shuffle_sbs_indexes_state_changed
-        )
-        self._main_layout.addWidget(self._shuffle_sbs_indexes)
 
         self._open_file_button: QPushButton = QPushButton("Open file")
         self._open_file_button.clicked.connect(self._open_file_button_pressed)

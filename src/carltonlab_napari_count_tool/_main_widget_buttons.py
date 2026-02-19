@@ -2,7 +2,14 @@ from typing import TYPE_CHECKING, cast
 
 from napari.layers import Image
 from napari.utils.notifications import show_info
-from qtpy.QtWidgets import QLabel, QPushButton, QWidget
+from qtpy.QtWidgets import (
+    QCheckBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from carltonlab_napari_count_tool._model import (
     close_all_non_set_image_layers,
@@ -19,8 +26,10 @@ from carltonlab_napari_count_tool._protocols import (
     MainWidgetCallBacks,
     ProcessWidgetAPI,
     ScoreWidgetAPI,
+    ScoreWidgetButtonAPI,
 )
 from carltonlab_napari_count_tool._regions_widget import RegionWidget
+from carltonlab_napari_count_tool._score_nuclei_widget import ScoreNucleiWidget
 from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
 
 if TYPE_CHECKING:
@@ -447,11 +456,33 @@ class ScoreNucleiButton:
         self._button_text = "2.Score Nuclei"
 
         self._button = QPushButton(self._button_text)
+        self._button.clicked.connect(self.launch_widget)
 
-        self._connecting_method_str = "_launch_score_nuclei_widget"
+        self._blind_checkbox: QCheckBox = QCheckBox("Blind file names")
+        self._shuffle_checkbox: QCheckBox = QCheckBox("Shuffle file list")
 
-    def get_button(self) -> QPushButton:
-        return self._button
+        self._widgets_container: QWidget = QWidget()
+        self._widgets_container_layout: QVBoxLayout = QVBoxLayout()
+        self._widgets_container.setLayout(self._widgets_container_layout)
+        self._widgets_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._widgets_container_layout.addWidget(self._button)
+        self._checkboxes_container: QWidget = QWidget()
+        self._checkboxes_container_layout: QHBoxLayout = QHBoxLayout()
+        self._widgets_container_layout.addWidget(self._checkboxes_container)
+        self._checkboxes_container.setLayout(self._checkboxes_container_layout)
+        self._checkboxes_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._checkboxes_container_layout.addWidget(self._blind_checkbox)
+        self._checkboxes_container_layout.addWidget(self._shuffle_checkbox)
+        self._checkboxes_container_layout.addStretch()
+
+    def get_button(self) -> QWidget:
+        return self._widgets_container
+
+    def get_blind_checkbox_state(self) -> bool:
+        return self._blind_checkbox.isChecked()
+
+    def get_shuffle_checkbox_state(self) -> bool:
+        return self._shuffle_checkbox.isChecked()
 
     def get_status_label(self) -> QLabel | None:
         return self._status_label
@@ -463,7 +494,17 @@ class ScoreNucleiButton:
         self._button.setEnabled(True)
 
     def launch_widget(self) -> QWidget:
-        return QWidget()
+        self._reference_as_API: ScoreWidgetButtonAPI = cast(
+            ScoreWidgetButtonAPI, self
+        )
+        self._launched_widget = ScoreNucleiWidget(
+            self._napari_viewer, self._main_widget, self
+        )
+        score_widget: ScoreWidgetAPI = cast(
+            ScoreWidgetAPI, self._launched_widget
+        )
+        self._main_widget.set_score_widget(score_widget, "clt Score Nuclei")
+        return self._launched_widget
 
     def set_status_label_state(self, state: bool) -> None:
         _ = state
