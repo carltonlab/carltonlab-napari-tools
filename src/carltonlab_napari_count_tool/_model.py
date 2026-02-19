@@ -6,6 +6,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import cast
 
+import numpy as np
 import tifffile
 from napari.layers import Image, Layer, Points, Shapes
 from napari.utils.notifications import show_info
@@ -111,8 +112,38 @@ def open_project_image(
             for image_index in range(len(image_list)):
                 image_layer: Image = image_list[image_index]
                 setting_contrast: tuple[float, float] = contrasts[image_index]
-                image_layer.contrast_limits = setting_contrast
+                image_layer.contrast_limits = _coerce_contrast_limits(
+                    image_layer, setting_contrast
+                )
     return (image_path, image_list, project_files_dir)
+
+
+def _coerce_contrast_limits(
+    image_layer: Image, contrast_tuple: tuple[float, float]
+) -> tuple[float, float]:
+    min_contrast, max_contrast = contrast_tuple
+    if min_contrast > max_contrast:
+        min_contrast, max_contrast = max_contrast, min_contrast
+    dtype = np.asarray(image_layer.data).dtype
+    if np.issubdtype(dtype, np.integer):
+        dtype_info = np.iinfo(dtype)
+        dtype_min = float(dtype_info.min)
+        dtype_max = float(dtype_info.max)
+    else:
+        dtype_info = np.finfo(dtype)
+        dtype_min = float(dtype_info.min)
+        dtype_max = float(dtype_info.max)
+    min_contrast = max(dtype_min, min_contrast)
+    max_contrast = min(dtype_max, max_contrast)
+    min_gap = 1.0
+    if max_contrast - min_contrast < min_gap:
+        if min_contrast <= dtype_min:
+            max_contrast = min_contrast + min_gap
+        elif max_contrast >= dtype_max:
+            min_contrast = max_contrast - min_gap
+        else:
+            max_contrast = min_contrast + min_gap
+    return (min_contrast, max_contrast)
 
 
 def open_image_as_layer(
@@ -351,11 +382,17 @@ def create_summary_file(
     summary_file_parser.add_section("SavedSquaresState")
     summary_file_parser.add_section("SavedSbsState")
     for region_index in range(number_of_regions):
-        retion_string: str = "region-" + str(region_index + 1)
-        summary_file_parser["NucleiCount"][retion_string] = "0"
-        summary_file_parser["SavedPointsState"][retion_string] = "False"
-        summary_file_parser["SavedSquaresState"][retion_string] = "False"
-        summary_file_parser["SavedSbsState"][retion_string] = "False"
+        region_string: str = "region-" + str(region_index + 1)
+        summary_file_parser["NucleiCount"][region_string] = "0"
+        print(
+            f"Set the nuclei count of {region_string} to {summary_file_parser['NucleiCount'][region_string]}"
+        )
+        summary_file_parser["SavedPointsState"][region_string] = "False"
+        print(f"Set the points state of {region_string} to False")
+        summary_file_parser["SavedSquaresState"][region_string] = "False"
+        print(f"Set the squares state of {region_string} to False")
+        summary_file_parser["SavedSbsState"][region_string] = "False"
+        print(f"Set the sbs state of {region_string} to False")
     with open(config_file_path, "w") as config_file:
         summary_file_parser.write(config_file)
     return summary_file_parser
@@ -369,39 +406,20 @@ def get_points_saved_list(
     number_of_saved_regions: int = get_number_of_saved_regions(
         project_directory
     )
-    print(
-        "get_points_saved_list:",
-        f"pick_nuclei_directory={pick_nuclei_directory}",
-        f"number_of_regions={number_of_regions}",
-        f"number_of_saved_regions={number_of_saved_regions}",
-    )
     for _ in range(number_of_saved_regions):
         points_saved_list.append(None)
     points_summary_file_path: str = os.path.join(
         pick_nuclei_directory, POINTS_SUMMARY_FILE_NAME
     )
-    print(
-        f"get_points_saved_list: summary_file_path={points_summary_file_path}"
-    )
     summary_parser = load_points_summary_file(points_summary_file_path)
     if summary_parser is None:
-        print("get_points_saved_list: summary file missing or unreadable")
         summary_parser = create_summary_file(
             pick_nuclei_directory, number_of_regions
         )
     if len(summary_parser["NucleiCount"]) <= 0:
-        print("get_points_saved_list: empty NucleiCount section")
         return points_saved_list
     for region_index in range(len(summary_parser["NucleiCount"])):
         region_str: str = "region-" + str(region_index + 1)
-        if region_index >= len(points_saved_list):
-            print(
-                "get_points_saved_list: region index out of range",
-                region_str,
-                f"index={region_index}",
-                f"list_len={len(points_saved_list)}",
-            )
-            continue
         number_of_points: int = int(summary_parser["NucleiCount"][region_str])
         saved_points_state: bool = str_to_bool(
             summary_parser["SavedPointsState"][region_str]
@@ -427,9 +445,13 @@ def verify_all_sbs_created(image_path: str | None) -> bool:
         return False
     project_files_dir: str = get_project_files_dir_from_image_path(image_path)
     number_of_regions: int = get_number_of_saved_regions(project_files_dir)
+    if number_of_regions <= 0:
+        return False
     pick_nuclei_directory: str = os.path.join(
         project_files_dir, PICK_NUCLEI_DIR_NAME
     )
+    if not os.path.exists(pick_nuclei_directory):
+        create_summary_file(pick_nuclei_directory, number_of_regions)
     points_saved_list = get_points_saved_list(
         pick_nuclei_directory, number_of_regions
     )
@@ -437,6 +459,12 @@ def verify_all_sbs_created(image_path: str | None) -> bool:
         return False
     if len(points_saved_list) <= 0:
         return False
+    for sbs_element in points_saved_list:
+        if sbs_element is None:
+            print("")
+            print("This if false false")
+            print(f"The points saved list is: {points_saved_list}")
+            return False
     if any(sbs_element is None for sbs_element in points_saved_list):
         return False
     saved_sbs_list: list[bool] = [

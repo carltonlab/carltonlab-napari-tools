@@ -1,7 +1,6 @@
 import os
 from configparser import ConfigParser
 
-import numpy as np
 import tifffile
 from napari.layers import Image
 from napari.viewer import ViewerModel
@@ -9,7 +8,6 @@ from qtpy.QtWidgets import QWidget
 
 from carltonlab_napari_count_tool._model import (
     get_file_name_from_path,
-    get_loaded_image_contrasts,
     verify_project_directory_from_image_path,
 )
 from carltonlab_napari_count_tool._shared_variables import (
@@ -25,29 +23,46 @@ from carltonlab_napari_count_tool._shared_widgets import (
 def set_layer_contrast_limits(
     image_layer: Image, min_contrast: float, max_contrast: float
 ):
-    min_gap = 1.0
-    dtype = np.asarray(image_layer.data).dtype
-    if np.issubdtype(dtype, np.integer):
-        dtype_info = np.iinfo(dtype)
-        dtype_min = float(dtype_info.min)
-        dtype_max = float(dtype_info.max)
-    else:
-        dtype_info = np.finfo(dtype)
-        dtype_min = float(dtype_info.min)
-        dtype_max = float(dtype_info.max)
-    if min_contrast > max_contrast:
-        min_contrast, max_contrast = max_contrast, min_contrast
-    min_contrast = max(dtype_min, min_contrast)
-    max_contrast = min(dtype_max, max_contrast)
-    if max_contrast - min_contrast < min_gap:
-        if min_contrast <= 0:
-            max_contrast = min_contrast + min_gap
-        elif max_contrast >= dtype_max:
-            min_contrast = max_contrast - min_gap
-        else:
-            max_contrast = min_contrast + min_gap
+    if min_contrast == 0 and min_contrast >= max_contrast:
+        max_contrast = min_contrast + 0.01
+    if max_contrast >= 65535 and min_contrast >= 65535:
+        min_contrast = max_contrast - 0.01
+    if min_contrast == max_contrast:
+        max_contrast = max_contrast + 0.01
     image_layer.contrast_limits = (min_contrast, max_contrast)
     image_layer.refresh()
+
+
+def get_loaded_image_contrasts(
+    project_dir: str,
+) -> dict[int, tuple[float, float]] | None:
+    if not os.path.exists(project_dir):
+        print(f"The project directory {project_dir} doesn't exist")
+        return
+    contrasts_file_path: str = os.path.join(
+        project_dir, IMAGE_CONTRASTS_FILE_NAME
+    )
+    if not os.path.exists(contrasts_file_path):
+        print(
+            f"The contrast file with path: {contrasts_file_path} doesn't exist"
+        )
+        return
+    config_parser: ConfigParser = ConfigParser()
+    config_parser.read(contrasts_file_path)
+    number_of_channels: int = int(
+        config_parser["ImageContrasts"]["NumberOfChannels"]
+    )
+    returning_dict: dict[int, tuple[float, float]] = {}
+    for channel_index in range(number_of_channels):
+        channel_name: str = "channel-" + str(channel_index + 1)
+        values_str: str = config_parser["ImageContrasts"][channel_name]
+        values_strings: list[str] = values_str.split(",")
+        values: tuple[float, float] = (
+            float(values_strings[0]),
+            float(values_strings[1]),
+        )
+        returning_dict[channel_index] = values
+    return returning_dict
 
 
 def open_image_contrasts(
@@ -112,19 +127,3 @@ def save_contrasts(
         )
     with open(saving_contrasts_file_path, "w") as config_file:
         config_parser.write(config_file)
-
-
-def get_image_contrasts_from_file(
-    image_path: str, images: tuple[Image, ...]
-) -> dict[int, tuple[float, float]] | None:
-    image_dir: str = os.path.dirname(image_path)
-    project_file_dir: str = os.path.join(image_dir, DEFAULT_PROJECT_NAME)
-    returning_dict = get_loaded_image_contrasts(project_file_dir)
-    if returning_dict is None:
-        return returning_dict
-    for layer_index, contrast_tuple in returning_dict.items():
-        image_layer: Image = images[layer_index]
-        set_layer_contrast_limits(
-            image_layer, contrast_tuple[0], contrast_tuple[1]
-        )
-    return returning_dict

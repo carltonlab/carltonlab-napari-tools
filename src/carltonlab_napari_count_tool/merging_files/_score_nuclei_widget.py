@@ -6,6 +6,7 @@ from napari.utils.notifications import show_info
 from napari.viewer import ViewerModel
 from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import (
+    QCheckBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -15,16 +16,15 @@ from qtpy.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from carltonlab_napari_count_tool._protocols import (
-    MainWidgetCallBacks,
-    ScoreWidgetButtonAPI,
-)
 from carltonlab_napari_count_tool._score_nuclei_widget_model import (
     CLSPSbsObject,
+    generate_scored_nuclei_foci_summary,
     generate_scored_points_spline_plot,
     generate_scored_points_spline_summary,
     open_image_layer_from_clsp_object,
@@ -94,94 +94,154 @@ OpenFileReturns = Literal["failed"] | None | tuple[list[CLSPSbsObject], str]
 
 
 class ScoreNucleiWidget(QWidget):
-    def __init__(
-        self,
-        napari_viewer: "ViewerModel",
-        parent_widget: MainWidgetCallBacks,
-        score_widget_api: ScoreWidgetButtonAPI,
-    ):
-        parent_q_widget: QWidget = cast(QWidget, parent_widget)
-        super().__init__(parent_q_widget)
-
-        self.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
+    def __init__(self, parent_widget: QWidget, napari_viewer: "ViewerModel"):
+        super().__init__(parent_widget)
 
         self._napari_viewer = napari_viewer
+        self._parent_widget = parent_widget
         self._scoring_layer: Image | None = None
         self._extra_layer: Image | None = None
         self._showing_points_layer: Points | None = None
         self._adding_points_layer: Points | None = None
         self._scoring_sbs_list: list[CLSPSbsObject] = []
         self._showing_sbs_indexes: list[int] = []
-        self._ct_button: ScoreWidgetButtonAPI = score_widget_api
-        self._blind_state: bool = True
-        self._shuffle_state: bool = True
 
         self._layout: QVBoxLayout = QVBoxLayout()
         self.setLayout(self._layout)
 
         self._main_scroll_area: QScrollArea = QScrollArea()
         self._main_scroll_area.setWidgetResizable(True)
-        self._main_scroll_area.setViewportMargins(0, 0, 10, 0)
-        self._layout.addWidget(self._main_scroll_area, 1)
+        self._layout.addWidget(self._main_scroll_area)
 
         self._main_container: QWidget = QWidget()
         self._main_scroll_area.setWidget(self._main_container)
         self._main_layout: QVBoxLayout = QVBoxLayout()
         self._main_container.setLayout(self._main_layout)
 
-        self._main_title_label = QLabel("CL Score Nuclei")
-        self._main_title_label.setStyleSheet(
-            "font-weight: bold; font-size: 20px"
-        )
-        self._main_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._main_layout.addWidget(self._main_title_label)
-
-        self._scoring_file_container: QWidget = QWidget()
-        self._scoring_file_container_layout: QVBoxLayout = QVBoxLayout()
-        self._scoring_file_container_layout.setContentsMargins(12, 0, 12, 0)
-        self._scoring_file_container.setLayout(
-            self._scoring_file_container_layout
-        )
-        self._main_layout.addWidget(self._scoring_file_container)
-
         self._open_file_title: QLabel = QLabel("Scoring file")
         self._open_file_title.setStyleSheet("font-weight: bold")
-        self._scoring_file_container_layout.addWidget(self._open_file_title)
+        self._main_layout.addWidget(self._open_file_title)
 
         self._open_file_line_edit: QLineEdit = QLineEdit("")
         self._open_file_line_edit.setReadOnly(True)
-        self._scoring_file_container_layout.addWidget(
-            self._open_file_line_edit
+        self._main_layout.addWidget(self._open_file_line_edit)
+
+        self._scoring_options_container: QWidget = QWidget()
+        self._scoring_options_container_layout: QHBoxLayout = QHBoxLayout()
+        self._scoring_options_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._scoring_options_container.setLayout(
+            self._scoring_options_container_layout
+        )
+        self._main_layout.addWidget(self._scoring_options_container)
+
+        self._blind_score_checkbox: QCheckBox = QCheckBox("Blind scoring")
+        self._blind_score_checkbox.setChecked(True)
+        self._blind_score_checkbox.stateChanged.connect(
+            self._blind_score_checkbox_state_changed
+        )
+        self._scoring_options_container_layout.addWidget(
+            self._blind_score_checkbox
+        )
+
+        self._shuffle_sbs_indexes: QCheckBox = QCheckBox("Shuffle SBS order")
+        self._shuffle_sbs_indexes.setChecked(True)
+        self._shuffle_sbs_indexes.stateChanged.connect(
+            self._shuffle_sbs_indexes_state_changed
+        )
+        self._scoring_options_container_layout.addWidget(
+            self._shuffle_sbs_indexes
         )
 
         self._open_file_button: QPushButton = QPushButton("Open file")
         self._open_file_button.clicked.connect(self._open_file_button_pressed)
-        self._scoring_file_container_layout.addWidget(self._open_file_button)
-
-        self._main_layout.addSpacing(6)
-        separator = QFrame(self._main_container)
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setFrameShadow(QFrame.Shadow.Sunken)
-        separator.setStyleSheet("background-color: gray;")
-        separator.setFixedHeight(2)
-        self._main_layout.addWidget(separator)
+        self._main_layout.addWidget(self._open_file_button)
         self._main_layout.addSpacing(6)
 
-        self._sbs_list_container: QWidget = QWidget()
-        self._sbs_list_container_layout: QVBoxLayout = QVBoxLayout()
-        self._sbs_list_container_layout.setContentsMargins(12, 0, 12, 0)
-        self._sbs_list_container.setLayout(self._sbs_list_container_layout)
-        self._main_layout.addWidget(self._sbs_list_container)
+        self._points_size_separator_top: QFrame = QFrame()
+        self._points_size_separator_top.setFrameShape(QFrame.Shape.HLine)
+        self._points_size_separator_top.setFrameShadow(QFrame.Shadow.Plain)
+        self._points_size_separator_top.setFixedHeight(2)
+        self._points_size_separator_top.setStyleSheet(
+            "background-color: #808080;"
+        )
+        self._main_layout.addWidget(self._points_size_separator_top)
+        self._main_layout.addSpacing(6)
+
+        self._points_size_container: QWidget = QWidget()
+        self._points_size_container_layout: QHBoxLayout = QHBoxLayout()
+        self._points_size_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._points_size_container.setLayout(
+            self._points_size_container_layout
+        )
+        self._main_layout.addWidget(self._points_size_container)
+
+        self._points_size_label: QLabel = QLabel("Points size")
+        self._points_size_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
+        )
+        self._points_size_container_layout.addWidget(self._points_size_label)
+
+        self._points_size_spinbox: QSpinBox = QSpinBox()
+        self._points_size_spinbox.setRange(1, 100)
+        self._points_size_spinbox.setValue(5)
+        self._points_size_container_layout.addWidget(self._points_size_spinbox)
+        self._main_layout.addSpacing(6)
+
+        self._speed_separator_top: QFrame = QFrame()
+        self._speed_separator_top.setFrameShape(QFrame.Shape.HLine)
+        self._speed_separator_top.setFrameShadow(QFrame.Shadow.Plain)
+        self._speed_separator_top.setFixedHeight(2)
+        self._speed_separator_top.setStyleSheet("background-color: #808080;")
+        self._main_layout.addWidget(self._speed_separator_top)
+        self._main_layout.addSpacing(6)
+
+        self._scroll_speed_container: QWidget = QWidget()
+        self._scroll_speed_container_layout: QHBoxLayout = QHBoxLayout()
+        self._scroll_speed_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._scroll_speed_container.setLayout(
+            self._scroll_speed_container_layout
+        )
+        self._main_layout.addWidget(self._scroll_speed_container)
+
+        self._scroll_speed_label: QLabel = QLabel("Scroll speed")
+        self._scroll_speed_container_layout.addWidget(self._scroll_speed_label)
+
+        self._scroll_speed_slider: QSlider = QSlider(Qt.Orientation.Horizontal)
+        self._scroll_speed_slider.setRange(5, 200)
+        self._scroll_speed_slider.setValue(self._interval_to_slider_value(80))
+        self._scroll_speed_slider.setSingleStep(10)
+        self._scroll_speed_slider.setPageStep(10)
+        self._scroll_speed_slider.valueChanged.connect(
+            self._scroll_speed_slider_changed
+        )
+        self._scroll_speed_container_layout.addWidget(
+            self._scroll_speed_slider
+        )
+        self._main_layout.addSpacing(6)
+
+        self._speed_separator_bottom: QFrame = QFrame()
+        self._speed_separator_bottom.setFrameShape(QFrame.Shape.HLine)
+        self._speed_separator_bottom.setFrameShadow(QFrame.Shadow.Plain)
+        self._speed_separator_bottom.setFixedHeight(2)
+        self._speed_separator_bottom.setStyleSheet(
+            "background-color: #808080;"
+        )
+        self._main_layout.addWidget(self._speed_separator_bottom)
+        self._main_layout.addSpacing(6)
+
+        self._list_container: QWidget = QWidget()
+        self._list_container_layout: QVBoxLayout = QVBoxLayout()
+        self._list_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._list_container.setLayout(self._list_container_layout)
+        self._main_layout.addWidget(self._list_container)
 
         self._sbs_list_title: QLabel = QLabel("SBS list")
         self._sbs_list_title.setStyleSheet("font-weight: bold")
-        self._sbs_list_container_layout.addWidget(self._sbs_list_title)
+        self._list_container_layout.addWidget(self._sbs_list_title)
 
         self._sbs_list_scroll_area: QScrollArea = QScrollArea()
         self._sbs_list_scroll_area.setWidgetResizable(True)
-        self._sbs_list_container_layout.addWidget(self._sbs_list_scroll_area)
+        self._list_container_layout.addWidget(self._sbs_list_scroll_area)
 
         self._sbs_list_widget: QListWidget = QListWidget()
         self._sbs_list_widget.itemSelectionChanged.connect(
@@ -245,29 +305,59 @@ class ScoreNucleiWidget(QWidget):
             self._next_non_scored_button
         )
 
-        self._sbs_list_container_layout.addWidget(
-            self._navigate_confirm_buttons_container
-        )
+        self._main_layout.addWidget(self._navigate_confirm_buttons_container)
 
         self._progress_label: QLabel = QLabel("")
         self._main_layout.addWidget(self._progress_label)
 
         self._peek_button: QPushButton = QPushButton("Peek")
         self._peek_button.clicked.connect(self._peek_button_pressed)
-        self._sbs_list_container_layout.addWidget(self._peek_button)
+        self._main_layout.addWidget(self._peek_button)
 
-        self._main_layout.addStretch(1)
+        self._create_summary_button: QPushButton = QPushButton(
+            "Create spline summary"
+        )
+        self._create_summary_button.clicked.connect(
+            self._create_summary_pressed
+        )
+        self._main_layout.addWidget(self._create_summary_button)
 
-    def _reset_gui(self) -> None:
-        return
+        self._create_plot_button: QPushButton = QPushButton(
+            "Create spline plot"
+        )
+        self._create_plot_button.clicked.connect(self._create_plot_pressed)
+        self._main_layout.addWidget(self._create_plot_button)
+
+    def _scroll_speed_slider_changed(self, value: int) -> None:
+        if hasattr(self._parent_widget, "set_scroll_interval_ms"):
+            self._parent_widget.set_scroll_interval_ms(
+                self._slider_value_to_interval(value)
+            )
+
+    def set_scroll_speed_slider_value(self, value: int) -> None:
+        self._scroll_speed_slider.blockSignals(True)
+        self._scroll_speed_slider.setValue(
+            self._interval_to_slider_value(value)
+        )
+        self._scroll_speed_slider.blockSignals(False)
+
+    def _slider_value_to_interval(self, value: int) -> int:
+        min_value = self._scroll_speed_slider.minimum()
+        max_value = self._scroll_speed_slider.maximum()
+        return max_value - (value - min_value)
+
+    def _interval_to_slider_value(self, interval: int) -> int:
+        min_value = self._scroll_speed_slider.minimum()
+        max_value = self._scroll_speed_slider.maximum()
+        return max_value - (interval - min_value)
 
     def _update_list(self) -> None:
         if len(self._scoring_sbs_list) == 0:
             self._sbs_list_widget.clear()
             return
         scoring_list: QListWidget = self._sbs_list_widget
-        blind_selection: bool = self._blind_state
-        shuffle_selection: bool = self._shuffle_state
+        blind_selection: bool = self._blind_score_checkbox.isChecked()
+        shuffle_selection: bool = self._shuffle_sbs_indexes.isChecked()
         if shuffle_selection and not len(self._showing_sbs_indexes) > 0:
             self._make_shuffled_indexes()
         if not shuffle_selection and not len(self._showing_sbs_indexes) > 0:
@@ -402,11 +492,9 @@ class ScoreNucleiWidget(QWidget):
         min_larger: int = min(larger_ints)
         self._sbs_list_widget.setCurrentRow(min_larger)
 
-    print("")
-
     def _confirm_button_pressed(self) -> None:
         selected_item: QListWidgetItem = self._sbs_list_widget.currentItem()
-        selection_index: int = self._sbs_list_widget.currentRow()
+        selected_index: int = self._sbs_list_widget.currentRow()
         selected_widget: SBSListItemWidget = cast(
             SBSListItemWidget, self._sbs_list_widget.itemWidget(selected_item)
         )
@@ -423,9 +511,9 @@ class ScoreNucleiWidget(QWidget):
         save_points_layer_from_clsp_object(
             self._adding_points_layer, clsp_object
         )
-        blind_state: bool = self._blind_state
+        blind_state: bool = self._blind_score_checkbox.isChecked()
         selected_widget.set_data(blind_state)
-        next_index: int = selection_index + 1
+        next_index: int = selected_index + 1
         if next_index < self._sbs_list_widget.count():
             self._next_non_scored_button_pressed()
             return
@@ -459,7 +547,7 @@ class ScoreNucleiWidget(QWidget):
             self._napari_viewer.layers.remove(self._adding_points_layer)
         if self._extra_layer is not None:
             self._napari_viewer.layers.remove(self._extra_layer)
-        blind_state: bool = self._blind_state
+        blind_state: bool = self._blind_score_checkbox.isChecked()
         selected_item: QListWidgetItem = self._sbs_list_widget.currentItem()
         selected_widget: SBSListItemWidget = cast(
             SBSListItemWidget, self._sbs_list_widget.itemWidget(selected_item)
@@ -477,6 +565,7 @@ class ScoreNucleiWidget(QWidget):
         opening_points_layer: Points = open_points_layer_from_clsp_object(
             self._napari_viewer,
             selected_widget.get_clsp_object(),
+            points_size=self._points_size_spinbox.value(),
         )
         self._showing_points_layer = opening_points_layer
         QTimer.singleShot(
@@ -498,6 +587,11 @@ class ScoreNucleiWidget(QWidget):
             self._adding_points_layer = self._napari_viewer.add_points(
                 name="adding_points"
             )
+        self._adding_points_layer.size = self._points_size_spinbox.value()
+        self._adding_points_layer.current_size = (
+            self._points_size_spinbox.value()
+        )
+        self._adding_points_layer.refresh()
         QTimer.singleShot(
             0,
             lambda setting_layer=self._adding_points_layer: self._set_layer_opacity_and_color(
@@ -520,26 +614,29 @@ class ScoreNucleiWidget(QWidget):
         layer.refresh_colors()
         layer.refresh()
 
-    def set_blind_state(self, state: bool) -> None:
-        self._blind_state = state
-
-    def set_shuffle_state(self, state: bool) -> None:
-        self._shuffle_state = state
-
     def _create_summary_pressed(self) -> None:
         gonad_dirs = self._get_gonad_dirs()
         if not gonad_dirs:
             show_info("No scoring file loaded")
             return
         created_paths: list[str] = []
+        created_foci_paths: list[str] = []
         for gonad_dir in gonad_dirs:
             created_path = generate_scored_points_spline_summary(gonad_dir)
             if created_path is not None:
                 created_paths.append(created_path)
+            foci_path = generate_scored_nuclei_foci_summary(gonad_dir)
+            if foci_path is not None:
+                created_foci_paths.append(foci_path)
         if not created_paths:
             show_info("Failed to create scored points spline summary")
             return
-        if len(created_paths) == 1:
+        if len(created_paths) == 1 and len(created_foci_paths) == 1:
+            show_info(
+                "Summaries saved: "
+                f"{created_paths[0]}, {created_foci_paths[0]}"
+            )
+        elif len(created_paths) == 1:
             show_info(f"Summary saved: {created_paths[0]}")
         else:
             show_info(f"Summaries saved: {len(created_paths)}")
