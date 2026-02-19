@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING, cast
 
 from napari.layers import Image
-from qtpy.QtCore import Qt
+from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -195,8 +195,15 @@ class CarltonLabCountTool(QWidget):
 
         self._process_widget: ProcessWidgetAPI | None = None
         self._score_widget: ScoreWidgetAPI | None = None
+        self._score_nuclei_widget: QWidget | None = None
+        self._scroll_timer: QTimer | None = None
+        self._scroll_direction: int = 0
+        self._scroll_interval_ms = 80
+        self._scroll_interval_min_ms = 5
+        self._scroll_interval_max_ms = 200
 
         self._initialize_gui()
+        self._install_keybindings()
 
     def _initialize_gui(self) -> None:
         self._main_layout = QVBoxLayout()
@@ -383,6 +390,7 @@ class CarltonLabCountTool(QWidget):
             return
         self.close_other_widgets()
         self._score_widget = setting_widget
+        self._score_nuclei_widget = cast(QWidget, setting_widget)
         self._napari_viewer.window.add_dock_widget(
             setting_widget, name=widget_name
         )
@@ -418,6 +426,7 @@ class CarltonLabCountTool(QWidget):
                 parent_dock_widget = None
             self._safe_delete_later(cast(QWidget, self._score_widget))
             self._score_widget = None
+            self._score_nuclei_widget = None
             if isinstance(parent_dock_widget, QWidget):
                 self._safe_delete_later(parent_dock_widget)
 
@@ -441,3 +450,131 @@ class CarltonLabCountTool(QWidget):
     def validate_process_results(self, image_path: str) -> None:
         for class_instance in self._buttons_instances_dict.values():
             class_instance.validate_property(image_path)
+
+    def _install_keybindings(self) -> None:
+        self._napari_viewer.bind_key(
+            "j", self._scroll_z_down_hold, overwrite=True
+        )
+        self._napari_viewer.bind_key(
+            "l", self._scroll_z_up_hold, overwrite=True
+        )
+        self._napari_viewer.bind_key(
+            "u", self._confirm_score_nuclei, overwrite=True
+        )
+        self._napari_viewer.bind_key(
+            "i", self._increase_scroll_speed, overwrite=True
+        )
+        self._napari_viewer.bind_key(
+            "k", self._decrease_scroll_speed, overwrite=True
+        )
+        if self._scroll_timer is None:
+            self._scroll_timer = QTimer(self)
+            self._scroll_timer.setInterval(self._scroll_interval_ms)
+            self._scroll_timer.timeout.connect(self._scroll_timer_tick)
+
+    def _get_scroll_axis(self) -> int | None:
+        dims = self._napari_viewer.dims
+        if dims.ndim <= dims.ndisplay:
+            return None
+        non_displayed = [
+            axis for axis in range(dims.ndim) if axis not in dims.displayed
+        ]
+        if not non_displayed:
+            return None
+        axis_labels = [label.lower() for label in dims.axis_labels]
+        for axis in non_displayed:
+            if axis < len(axis_labels) and axis_labels[axis] in (
+                "z",
+                "depth",
+                "slice",
+            ):
+                return axis
+        return non_displayed[0]
+
+    def _scroll_z(self, delta: int) -> None:
+        axis = self._get_scroll_axis()
+        if axis is None:
+            return
+        dims = self._napari_viewer.dims
+        nsteps = dims.nsteps[axis]
+        if nsteps is None or nsteps < 1:
+            return
+        current_step = int(dims.current_step[axis])
+        new_step = max(0, min(current_step + delta, nsteps - 1))
+        if new_step == current_step:
+            return
+        dims.set_current_step(axis, new_step)
+
+    def _start_scroll(self, delta: int) -> None:
+        self._scroll_direction = delta
+        self._scroll_z(delta)
+        if (
+            self._scroll_timer is not None
+            and not self._scroll_timer.isActive()
+        ):
+            self._scroll_timer.start()
+
+    def _stop_scroll(self, delta: int) -> None:
+        if self._scroll_direction != delta:
+            return
+        self._scroll_direction = 0
+        if self._scroll_timer is not None:
+            self._scroll_timer.stop()
+
+    def _scroll_timer_tick(self) -> None:
+        if self._scroll_direction == 0:
+            return
+        self._scroll_z(self._scroll_direction)
+
+    def _adjust_scroll_speed(self, delta_ms: int) -> None:
+        new_interval = self._scroll_interval_ms + delta_ms
+        new_interval = max(
+            self._scroll_interval_min_ms,
+            min(new_interval, self._scroll_interval_max_ms),
+        )
+        if new_interval == self._scroll_interval_ms:
+            return
+        self._scroll_interval_ms = new_interval
+        if self._scroll_timer is not None:
+            self._scroll_timer.setInterval(self._scroll_interval_ms)
+        if self._score_nuclei_widget is not None and hasattr(
+            self._score_nuclei_widget, "set_scroll_speed_slider_value"
+        ):
+            self._score_nuclei_widget.set_scroll_speed_slider_value(
+                self._scroll_interval_ms
+            )
+
+    def set_scroll_interval_ms(self, interval_ms: int) -> None:
+        new_interval = max(
+            self._scroll_interval_min_ms,
+            min(interval_ms, self._scroll_interval_max_ms),
+        )
+        if new_interval == self._scroll_interval_ms:
+            return
+        self._scroll_interval_ms = new_interval
+        if self._scroll_timer is not None:
+            self._scroll_timer.setInterval(self._scroll_interval_ms)
+
+    def _increase_scroll_speed(self, event=None) -> None:
+        self._adjust_scroll_speed(-10)
+
+    def _decrease_scroll_speed(self, event=None) -> None:
+        self._adjust_scroll_speed(10)
+
+    def _scroll_z_down_hold(self, event=None):
+        self._start_scroll(-1)
+        yield
+        self._stop_scroll(-1)
+
+    def _scroll_z_up_hold(self, event=None):
+        self._start_scroll(1)
+        yield
+        self._stop_scroll(1)
+
+    def _confirm_score_nuclei(self, event=None) -> None:
+        if self._score_nuclei_widget is None:
+            return
+        if not self._score_nuclei_widget.isVisible():
+            return
+        if hasattr(self._score_nuclei_widget, "_confirm_button_pressed"):
+            self._score_nuclei_widget._confirm_button_pressed()

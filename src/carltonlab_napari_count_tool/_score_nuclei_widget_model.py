@@ -197,14 +197,23 @@ def _load_layers_contrasts(
 
 
 def open_points_layer_from_clsp_object(
-    napari_viewer: ViewerModel, clsp_object: CLSPSbsObject
+    napari_viewer: ViewerModel,
+    clsp_object: CLSPSbsObject,
+    points_size: int = 5,
 ):
     points_file_name: str | None = clsp_object.get_points_file_path()
     if points_file_name is None:
-        return napari_viewer.add_points(name="old_points")
+        returning_points = napari_viewer.add_points(name="old_points")
+        returning_points.size = points_size
+        returning_points.current_size = points_size
+        returning_points.refresh()
+        return returning_points
     points_layers: list[Layer] = napari_viewer.open(points_file_name)
     first_point_layer: Points = cast(Points, points_layers[0])
     first_point_layer.name = "old_points"
+    first_point_layer.size = points_size
+    first_point_layer.current_size = points_size
+    first_point_layer.refresh()
     return first_point_layer
 
 
