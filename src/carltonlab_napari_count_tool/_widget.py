@@ -32,8 +32,10 @@ from carltonlab_napari_count_tool._main_widget_buttons import (
 from carltonlab_napari_count_tool._protocols import (
     CToolButton,
     MainWidgetCallBacks,
+    PrepareWidgetAPI,
     ProcessWidgetAPI,
     ScoreWidgetAPI,
+    SummaryWidgetAPI,
 )
 
 
@@ -193,8 +195,10 @@ class CarltonLabCountTool(QWidget):
         self._already_shown = False
         self._parent_widget = None
 
+        self._prepare_widget: PrepareWidgetAPI | None = None
         self._process_widget: ProcessWidgetAPI | None = None
         self._score_widget: ScoreWidgetAPI | None = None
+        self._summary_widget: SummaryWidgetAPI | None = None
         self._score_nuclei_widget: QWidget | None = None
         self._scroll_timer: QTimer | None = None
         self._scroll_direction: int = 0
@@ -363,6 +367,18 @@ class CarltonLabCountTool(QWidget):
     #   Button connections
     ##################################################################
 
+    def set_prepare_widget(
+        self, setting_widget: PrepareWidgetAPI | None, widget_name: str
+    ) -> None:
+        self.close_other_widgets()
+        if setting_widget is None:
+            return
+        self._prepare_widget = setting_widget
+        self._napari_viewer.window.add_dock_widget(
+            setting_widget, name=widget_name
+        )
+        return
+
     def get_process_widget(self) -> ProcessWidgetAPI | None:
         return self._process_widget
 
@@ -406,6 +422,17 @@ class CarltonLabCountTool(QWidget):
             return
 
     def close_other_widgets(self) -> None:
+        if self._prepare_widget is not None:
+            try:
+                parent_dock_widget: QWidget | None = (
+                    self._prepare_widget.parent()
+                )
+            except RuntimeError:
+                parent_dock_widget = None
+            self._safe_delete_later(cast(QWidget, self._prepare_widget))
+            self._prepare_widget = None
+            if isinstance(parent_dock_widget, QWidget):
+                self._safe_delete_later(parent_dock_widget)
         if self._process_widget is not None:
             try:
                 parent_dock_widget: QWidget | None = (
@@ -427,6 +454,17 @@ class CarltonLabCountTool(QWidget):
             self._safe_delete_later(cast(QWidget, self._score_widget))
             self._score_widget = None
             self._score_nuclei_widget = None
+            if isinstance(parent_dock_widget, QWidget):
+                self._safe_delete_later(parent_dock_widget)
+        if self._summary_widget is not None:
+            try:
+                parent_dock_widget: QWidget | None = (
+                    self._summary_widget.parent()
+                )
+            except RuntimeError:
+                parent_dock_widget = None
+            self._safe_delete_later(cast(QWidget, self._summary_widget))
+            self._summary_widget = None
             if isinstance(parent_dock_widget, QWidget):
                 self._safe_delete_later(parent_dock_widget)
 

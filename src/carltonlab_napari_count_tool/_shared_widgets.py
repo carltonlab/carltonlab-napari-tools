@@ -1,11 +1,22 @@
 from typing import TYPE_CHECKING, Literal
 
+from qtpy.QtCore import QDir
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
+    QFrame,
+    QHBoxLayout,
     QLayout,
+    QListView,
     QMessageBox,
+    QTreeView,
+    QVBoxLayout,
     QWidget,
+)
+
+from carltonlab_napari_count_tool._shared_variables import (
+    DEFAULT_SEPARATOR_SPACING,
+    DEFAULT_SEPARATOR_THICKNESS,
 )
 
 if TYPE_CHECKING:
@@ -54,6 +65,44 @@ def get_file(
         "TIFF images (*.tif *.tiff);;Config files (*.config)",
     )
     return file_path or None
+
+
+def get_files(
+    parent: QWidget | None = None,
+    caption: str = "Select files",
+    filters: str = "TIFF images (*.tif *.tiff);;Config files (*.config);;All files (*)",
+) -> list[str] | None:
+    file_paths, _ = QFileDialog.getOpenFileNames(parent, caption, "", filters)
+    return file_paths or None
+
+
+def get_directories(
+    parent: QWidget | None = None,
+    caption: str = "Select directories",
+) -> list[str] | None:
+    dialog = QFileDialog(parent, caption)
+    dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+
+    # Directory picking mode
+    dialog.setFileMode(QFileDialog.FileMode.Directory)
+    dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
+
+    # Allow multi-selection in the internal views
+    views = dialog.findChildren(QListView) + dialog.findChildren(QTreeView)
+    for view in views:
+        view.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+
+    # (Optional) start at home; remove if you want Qt's default
+    dialog.setDirectory(QDir.homePath())
+
+    if not dialog.exec():
+        return None
+
+    # selectedFiles() will contain directories in Directory mode
+    dirs = dialog.selectedFiles()
+    return dirs or None
 
 
 ClspPickResult = list[str] | None | Literal["non-clsp"]
@@ -107,3 +156,37 @@ def clear_layout(layout: QLayout) -> None:
             widget.deleteLater()
         else:
             clear_layout(item.layout())
+
+
+def add_separator_to_container(
+    container: QWidget,
+    orientation: Literal["vertical", "horizontal"],
+    spacing_width: tuple[int, int] = (
+        DEFAULT_SEPARATOR_SPACING,
+        DEFAULT_SEPARATOR_SPACING,
+    ),
+    separator_thickness: int = DEFAULT_SEPARATOR_THICKNESS,
+) -> QFrame | None:
+    assert orientation in ["vertical", "horizontal"]
+    layout = container.layout()
+    if not isinstance(layout, QHBoxLayout) and not isinstance(
+        layout, QVBoxLayout
+    ):
+        print(
+            f"The layout must be a QHBoxLayout or QVBoxLayout, not {type(layout)}"
+        )
+        return
+    layout.addSpacing(spacing_width[0])
+    separator_orientation: QFrame.Shape = QFrame.Shape.HLine
+    if orientation == "vertical":
+        separator_orientation = QFrame.Shape.VLine
+    if orientation == "horizontal":
+        separator_orientation = QFrame.Shape.HLine
+    separator = QFrame(container)
+    separator.setFrameShape(separator_orientation)
+    separator.setFrameShadow(QFrame.Shadow.Sunken)
+    separator.setStyleSheet("background-color: gray;")
+    separator.setFixedHeight(separator_thickness)
+    layout.addWidget(separator)
+    layout.addSpacing(spacing_width[1])
+    return separator

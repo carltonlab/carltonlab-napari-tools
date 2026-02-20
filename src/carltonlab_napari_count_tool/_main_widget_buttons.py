@@ -11,6 +11,9 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from carltonlab_napari_count_tool._extract_channel_widget import (
+    ExctractChannelsWidget,
+)
 from carltonlab_napari_count_tool._model import (
     close_all_non_set_image_layers,
     verify_all_sbs_created,
@@ -92,8 +95,6 @@ class ExtractChannelsButton:
 
         self._launched_widget = None
 
-        self._connecting_method_str = "_launch_extract_channels_widget"
-
     def get_button(self) -> QPushButton:
         return self._button
 
@@ -107,6 +108,13 @@ class ExtractChannelsButton:
         self._button.setEnabled(True)
 
     def launch_widget(self) -> QWidget | None:
+        self._launched_widget = ExctractChannelsWidget(
+            self._napari_viewer, self._main_widget, self
+        )
+        self._main_widget.set_prepare_widget(
+            self._launched_widget, "clt Extract Channels"
+        )
+
         return
 
     def set_status_label_state(self, state: bool) -> None:
