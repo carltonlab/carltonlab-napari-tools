@@ -1,7 +1,9 @@
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from qtpy.QtCore import Qt
+from qtpy.QtGui import QColor
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -17,6 +19,9 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from carltonlab_napari_count_tool._extract_channel_widget_model import (
+    extract_channels,
+)
 from carltonlab_napari_count_tool._protocols import (
     CToolButton,
     MainWidgetCallBacks,
@@ -24,6 +29,7 @@ from carltonlab_napari_count_tool._protocols import (
 from carltonlab_napari_count_tool._shared_widgets import (
     add_separator_to_container,
     get_directories,
+    get_directory,
     get_files,
 )
 
@@ -88,11 +94,6 @@ class ExctractChannelsWidget(QWidget):
         )
         self._add_remove_container_layout.addWidget(self._q_list_title)
 
-        self._add_remove_container_dir_label: QLabel = QLabel("Dirs")
-        self._add_remove_container_layout.addWidget(
-            self._add_remove_container_dir_label
-        )
-
         self._add_directory_button: QPushButton = QPushButton("+")
         self._add_directory_button.setFixedWidth(BUTTONS_WIDTH)
         self._add_directory_button.clicked.connect(
@@ -100,18 +101,9 @@ class ExctractChannelsWidget(QWidget):
         )
         self._add_remove_container_layout.addWidget(self._add_directory_button)
 
-        self._remove_directory_button: QPushButton = QPushButton("-")
-        self._remove_directory_button.setFixedWidth(BUTTONS_WIDTH)
-        self._remove_directory_button.clicked.connect(
-            self._remove_directory_button_pressed
-        )
+        self._add_remove_container_dir_label: QLabel = QLabel("Dirs")
         self._add_remove_container_layout.addWidget(
-            self._remove_directory_button
-        )
-
-        self._add_remove_container_file_label: QLabel = QLabel("Files")
-        self._add_remove_container_layout.addWidget(
-            self._add_remove_container_file_label
+            self._add_remove_container_dir_label
         )
 
         self._add_file_button: QPushButton = QPushButton("+")
@@ -119,12 +111,22 @@ class ExctractChannelsWidget(QWidget):
         self._add_file_button.clicked.connect(self._add_file_button_pressed)
         self._add_remove_container_layout.addWidget(self._add_file_button)
 
-        self._remove_file_button: QPushButton = QPushButton("-")
-        self._remove_file_button.setFixedWidth(BUTTONS_WIDTH)
-        self._remove_file_button.clicked.connect(
-            self._remove_file_button_pressed
+        self._add_remove_container_file_label: QLabel = QLabel("Files")
+        self._add_remove_container_layout.addWidget(
+            self._add_remove_container_file_label
         )
-        self._add_remove_container_layout.addWidget(self._remove_file_button)
+
+        self._remove_selected_button: QPushButton = QPushButton("-")
+        self._remove_selected_button.setFixedWidth(BUTTONS_WIDTH)
+        self._remove_selected_button.clicked.connect(
+            self._remove_selected_button_pressed
+        )
+        self._add_remove_container_layout.addWidget(
+            self._remove_selected_button
+        )
+
+        self._remove_label: QLabel = QLabel("Rem")
+        self._add_remove_container_layout.addWidget(self._remove_label)
 
         self._main_layout.addWidget(self._add_remove_container)
 
@@ -132,19 +134,10 @@ class ExctractChannelsWidget(QWidget):
         self._file_directory_q_list.setSelectionMode(
             QAbstractItemView.SelectionMode.MultiSelection
         )
-
-        self._list_scroll_area: QScrollArea = QScrollArea()
-        self._list_scroll_area.setWidgetResizable(True)
-        self._list_scroll_area.setFixedHeight(300)
-
-        list_container: QWidget = QWidget()
-        list_container_layout = QVBoxLayout()
-        list_container_layout.setContentsMargins(0, 0, 0, 0)
-        list_container.setLayout(list_container_layout)
-        list_container_layout.addWidget(self._file_directory_q_list)
-
-        self._list_scroll_area.setWidget(list_container)
-        self._main_layout.addWidget(self._list_scroll_area)
+        self._file_directory_q_list.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self._main_layout.addWidget(self._file_directory_q_list)
 
         add_separator_to_container(self._main_container, "horizontal")
 
@@ -232,7 +225,7 @@ class ExctractChannelsWidget(QWidget):
             self._keeping_channels_line_edited
         )
 
-        self._example_label: QLabel = QLabel("(e.g. 1-2,4")
+        self._example_label: QLabel = QLabel("(e.g. 1-2,4)")
         self._keeping_channels_line_edit_horizontal_container_layout.addWidget(
             self._example_label
         )
@@ -295,25 +288,72 @@ class ExctractChannelsWidget(QWidget):
                 self._image_files_list.append(file_path)
         self._update_qlist()
 
-    def _remove_file_button_pressed(self) -> None:
-        return
-
-    def _remove_directory_button_pressed(self) -> None:
-        return
+    def _remove_selected_button_pressed(self) -> None:
+        selected_items = self._file_directory_q_list.selectedItems()
+        if not selected_items:
+            return
+        for item in selected_items:
+            item_text = item.text()
+            item_path = item.data(Qt.ItemDataRole.UserRole)
+            if (
+                item_text.endswith(" --- dir")
+                and item_path in self._image_directories_list
+            ):
+                self._image_directories_list.remove(item_path)
+            elif (
+                item_text.endswith(" --- file")
+                and item_path in self._image_files_list
+            ):
+                self._image_files_list.remove(item_path)
+        self._update_qlist()
 
     def _save_all_to_directory_checkbox_state_changed(self) -> None:
         if self._save_all_to_directory_checkbox.isChecked():
-            self._saving_directory_container.setDisabled(True)
-        else:
             self._saving_directory_container.setDisabled(False)
+        else:
+            self._saving_directory_container.setDisabled(True)
 
     def _select_saving_directory_button_pressed(self) -> None:
-        return
+        directory_path: str | None = get_directory(
+            self, caption="Select saving directory"
+        )
+        if directory_path is None:
+            self._save_all_directory = None
+            self._saving_line_edit.setText("")
+            return
+        self._save_all_directory = directory_path
+        self._saving_line_edit.setText(directory_path)
 
     def _keeping_channels_line_edited(self) -> None:
-        return
+        user_text = self._keeping_channels_line_edit.text()
+        if user_text == "":
+            return
+        if not all(character in "0123456789-," for character in user_text):
+            self._keeping_channels_line_edit.setText("")
+            return
 
     def _extract_channels_button_pressed(self) -> None:
+        channels_text = self._keeping_channels_line_edit.text().strip()
+        if channels_text == "":
+            return
+        if (
+            self._save_all_to_directory_checkbox.isChecked()
+            and self._saving_line_edit.text().strip() == ""
+        ):
+            return
+        save_directory: str | None = None
+        if self._save_all_to_directory_checkbox.isChecked():
+            if self._save_all_directory is None or not os.path.isdir(
+                self._save_all_directory
+            ):
+                return
+            save_directory = self._save_all_directory
+        extract_channels(
+            self._image_files_list,
+            self._image_directories_list,
+            channels_text,
+            save_directory,
+        )
         return
 
     def _set_files_created_label_state(self, state: bool) -> None:
@@ -327,30 +367,17 @@ class ExctractChannelsWidget(QWidget):
     def _add_q_list_item(
         self, path: str, file_type: Literal["dir", "file"]
     ) -> None:
-        adding_widget = QWidget()
-        adding_widget_layout = QHBoxLayout()
-        adding_widget_layout.setContentsMargins(3, 4, 3, 4)
-        adding_widget.setLayout(adding_widget_layout)
         path_object: Path = Path(path)
         file_name: str = path_object.name
-        adding_q_label: QLabel = QLabel(file_name)
-        adding_q_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        q_list_item: QListWidgetItem = QListWidgetItem(
+            f"{file_name} --- {file_type}"
         )
-        adding_widget_layout.addWidget(adding_q_label)
-        adding_type_label: QLabel = QLabel(file_type)
         if file_type == "dir":
-            adding_type_label.setStyleSheet(
-                "font-weight: italic; color: #27ADF5"
-            )
+            q_list_item.setForeground(QColor("#27ADF5"))
         if file_type == "file":
-            adding_type_label.setStyleSheet("font-weight: italic; color: red")
-        adding_widget_layout.addWidget(adding_type_label)
-        q_list_item: QListWidgetItem = QListWidgetItem()
+            q_list_item.setForeground(QColor("#F7A02F"))
         q_list_item.setData(Qt.ItemDataRole.UserRole, path)
-        q_list_item.setSizeHint(adding_widget.sizeHint())
         self._file_directory_q_list.addItem(q_list_item)
-        self._file_directory_q_list.setItemWidget(q_list_item, adding_widget)
 
     def _update_qlist(self) -> None:
         self._file_directory_q_list.clear()
