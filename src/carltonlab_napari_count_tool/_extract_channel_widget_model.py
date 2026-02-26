@@ -179,9 +179,22 @@ def _extract_from_dv(
         header = dvf.hdr
         data = np.array(dvf.data, copy=True)
 
-    data = _prepare_data_for_channels(data, override_shape, file_path)
-    if data is None:
-        return False
+    if override_shape is None:
+        if data.ndim == 5:
+            if data.shape[1] == 1:
+                data = np.squeeze(data, axis=1)
+            else:
+                show_error(
+                    f"{file_path} has time axis size {data.shape[1]}, expected 1."
+                )
+                return False
+        if data.ndim != 4:
+            show_error(f"{file_path} is not 4D after squeeze: {data.shape}")
+            return False
+    else:
+        data = _prepare_data_for_channels(data, override_shape, file_path)
+        if data is None:
+            return False
 
     selected = _filter_channels(channels, data.shape[0])
     if not selected:
@@ -281,6 +294,24 @@ def _write_stage_ini(
     ]
     with open(ini_path, "w", encoding="utf-8") as handle:
         handle.write("\n".join(lines))
+
+
+def print_ome_zarr_summary(file_path: str) -> None:
+    sim = ngff_utils.read_sim_from_ome_zarr(file_path)
+    print(file_path)
+    print(f"dims: {sim.dims}")
+    print(f"sizes: { {d: sim.sizes[d] for d in sim.dims} }")
+    print(
+        "origin: "
+        f"{ {d: float(sim.coords[d][0]) for d in sim.dims if d in ['z','y','x']} }"
+    )
+    print(
+        "spacing: "
+        f"{ {d: (float(sim.coords[d][1]-sim.coords[d][0]) if sim.sizes[d] > 1 else None) for d in sim.dims if d in ['z','y','x']} }"
+    )
+    c_coords = list(sim.coords["c"].values) if "c" in sim.coords else None
+    print(f"channel coords: {c_coords}")
+    print("")
 
 
 def _prepare_data_for_channels(
