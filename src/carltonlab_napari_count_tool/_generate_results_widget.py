@@ -87,9 +87,7 @@ class GenerateResultsWidget(QWidget):
 
         self._add_directory_button: QPushButton = QPushButton("")
         self._add_directory_button.setIcon(QIcon(str(ADD_DIR_ICON)))
-        self._add_directory_button.setFixedSize(
-            BUTTONS_WIDTH, BUTTONS_WIDTH
-        )
+        self._add_directory_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
         self._add_directory_button.setIconSize(
             QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
         )
@@ -100,9 +98,7 @@ class GenerateResultsWidget(QWidget):
 
         self._remove_selected_button: QPushButton = QPushButton("")
         self._remove_selected_button.setIcon(QIcon(str(REMOVE_ICON)))
-        self._remove_selected_button.setFixedSize(
-            BUTTONS_WIDTH, BUTTONS_WIDTH
-        )
+        self._remove_selected_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
         self._remove_selected_button.setIconSize(
             QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
         )
@@ -143,9 +139,7 @@ class GenerateResultsWidget(QWidget):
         self._main_layout.addSpacing(6)
 
         self._summaries_button: QPushButton = QPushButton("Generate summaries")
-        self._summaries_button.clicked.connect(
-            self._summaries_button_pressed
-        )
+        self._summaries_button.clicked.connect(self._summaries_button_pressed)
         self._main_layout.addWidget(self._summaries_button)
 
         self._summaries_status_label: QLabel = QLabel("")

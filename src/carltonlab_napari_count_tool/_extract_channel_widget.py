@@ -103,9 +103,7 @@ class ExctractChannelsWidget(QWidget):
 
         self._add_directory_button: QPushButton = QPushButton("")
         self._add_directory_button.setIcon(QIcon(str(ADD_DIR_ICON)))
-        self._add_directory_button.setFixedSize(
-            BUTTONS_WIDTH, BUTTONS_WIDTH
-        )
+        self._add_directory_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
         self._add_directory_button.setIconSize(
             QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
         )
@@ -125,9 +123,7 @@ class ExctractChannelsWidget(QWidget):
 
         self._remove_selected_button: QPushButton = QPushButton("")
         self._remove_selected_button.setIcon(QIcon(str(REMOVE_ICON)))
-        self._remove_selected_button.setFixedSize(
-            BUTTONS_WIDTH, BUTTONS_WIDTH
-        )
+        self._remove_selected_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
         self._remove_selected_button.setIconSize(
             QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
         )
@@ -415,7 +411,9 @@ class ExctractChannelsWidget(QWidget):
             if "_extracted_channels" in Path(file_path).name:
                 continue
             path_obj = Path(file_path)
-            if path_obj.suffix == ".zarr" and path_obj.name.endswith(".ome.zarr"):
+            if path_obj.suffix == ".zarr" and path_obj.name.endswith(
+                ".ome.zarr"
+            ):
                 file_name_no_ext = path_obj.name[: -len(".ome.zarr")]
             else:
                 file_name_no_ext = path_obj.stem

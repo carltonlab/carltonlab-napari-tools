@@ -14,6 +14,9 @@ from qtpy.QtWidgets import (
 from carltonlab_napari_count_tool._extract_channel_widget import (
     ExctractChannelsWidget,
 )
+from carltonlab_napari_count_tool._generate_results_widget import (
+    GenerateResultsWidget,
+)
 from carltonlab_napari_count_tool._model import (
     close_all_non_set_image_layers,
     verify_all_sbs_created,
@@ -35,9 +38,6 @@ from carltonlab_napari_count_tool._regions_widget import RegionWidget
 from carltonlab_napari_count_tool._score_nuclei_widget import ScoreNucleiWidget
 from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
 from carltonlab_napari_count_tool._stitch_widget import StitchOmeZarrWidget
-from carltonlab_napari_count_tool._generate_results_widget import (
-    GenerateResultsWidget,
-)
 
 if TYPE_CHECKING:
     from napari.viewer import ViewerModel
@@ -521,9 +521,7 @@ class ScoreNucleiButton:
         self._launched_widget = ScoreNucleiWidget(
             self._napari_viewer, self._main_widget, reference_as_API
         )
-        self._launched_widget.set_blind_state(
-            self.get_blind_checkbox_state()
-        )
+        self._launched_widget.set_blind_state(self.get_blind_checkbox_state())
         self._launched_widget.set_shuffle_state(
             self.get_shuffle_checkbox_state()
         )

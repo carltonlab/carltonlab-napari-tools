@@ -470,9 +470,7 @@ def _open_scoring_path(
 ) -> OpenFileReturns:
     print(f"_open_scoring_path: start with path={file_path}")
     if len(napari_viewer.layers) > 0:
-        print(
-            f"_open_scoring_path: layers open={len(napari_viewer.layers)}"
-        )
+        print(f"_open_scoring_path: layers open={len(napari_viewer.layers)}")
         confirmed_result: bool = confirm_dialog(
             napari_viewer,
             "Layers are open, it is required to close all layers before scoring. Confirm?",
@@ -549,9 +547,7 @@ def _open_scoring_path(
                     gonad_file_name,
                 )
                 clsp_sbs_object_list.append(current_sbs_object)
-    print(
-        f"_open_scoring_path: built {len(clsp_sbs_object_list)} sbs objects"
-    )
+    print(f"_open_scoring_path: built {len(clsp_sbs_object_list)} sbs objects")
     return (clsp_sbs_object_list, file_path)
 
 

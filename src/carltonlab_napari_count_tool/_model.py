@@ -270,7 +270,9 @@ def create_project_dir_structure(image_path: str) -> str:
     image_file_path_object: Path = Path(image_path)
     image_file_name_no_ext: str = image_file_path_object.stem
     if "".join(image_file_path_object.suffixes).endswith(".ome.zarr"):
-        image_file_name_no_ext = image_file_path_object.name[: -len(".ome.zarr")]
+        image_file_name_no_ext = image_file_path_object.name[
+            : -len(".ome.zarr")
+        ]
     image_file_name: str = image_file_path_object.name
     new_project_path: str = os.path.join(
         parent_dir_path, image_file_name_no_ext + DEFAULT_PROJECT_EXTENSION

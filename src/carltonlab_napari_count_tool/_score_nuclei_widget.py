@@ -119,7 +119,9 @@ class ScoreNucleiWidget(QWidget):
         self._showing_sbs_indexes: list[int] = []
         self._ct_button: ScoreWidgetButtonAPI = score_widget_api
         self._blind_state: bool = self._ct_button.get_blind_checkbox_state()
-        self._shuffle_state: bool = self._ct_button.get_shuffle_checkbox_state()
+        self._shuffle_state: bool = (
+            self._ct_button.get_shuffle_checkbox_state()
+        )
 
         self._layout: QVBoxLayout = QVBoxLayout()
         self.setLayout(self._layout)
@@ -164,9 +166,7 @@ class ScoreNucleiWidget(QWidget):
         self._scoring_file_container_layout.addWidget(self._open_file_button)
 
         self._open_zarr_button: QPushButton = QPushButton("Open zarr image")
-        self._open_zarr_button.clicked.connect(
-            self._open_zarr_button_pressed
-        )
+        self._open_zarr_button.clicked.connect(self._open_zarr_button_pressed)
         self._scoring_file_container_layout.addWidget(self._open_zarr_button)
 
         self._main_layout.addSpacing(6)
@@ -544,9 +544,7 @@ class ScoreNucleiWidget(QWidget):
             self._adding_points_layer = self._napari_viewer.add_points(
                 name="adding_points", ndim=layer_dims
             )
-        self._napari_viewer.layers.selection.active = (
-            self._adding_points_layer
-        )
+        self._napari_viewer.layers.selection.active = self._adding_points_layer
         self._adding_points_layer.mode = "add"
         self._adding_points_layer.size = self._points_size_spinbox.value()
         self._adding_points_layer.current_size = (

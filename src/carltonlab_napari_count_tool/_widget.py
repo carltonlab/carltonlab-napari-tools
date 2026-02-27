@@ -82,9 +82,7 @@ class GonadControlWidget(QWidget):
         self._open_zarr_button: QPushButton = QPushButton(
             "Open OME.zarr image"
         )
-        self._open_zarr_button.clicked.connect(
-            self._open_zarr_button_pressed
-        )
+        self._open_zarr_button.clicked.connect(self._open_zarr_button_pressed)
         self._layout.addWidget(self._open_zarr_button)
 
         self._open_image_status_label: QLabel = QLabel("")
@@ -599,7 +597,9 @@ class CarltonLabCountTool(QWidget):
         non_displayed = [
             axis for axis in range(dims.ndim) if axis not in dims.displayed
         ]
-        candidate_axes = non_displayed if non_displayed else list(range(dims.ndim))
+        candidate_axes = (
+            non_displayed if non_displayed else list(range(dims.ndim))
+        )
         axis_labels = [label.lower() for label in dims.axis_labels]
         for axis in candidate_axes:
             nsteps = dims.nsteps[axis]

@@ -93,9 +93,7 @@ class StitchOmeZarrWidget(QWidget):
 
         self._add_directory_button: QPushButton = QPushButton("")
         self._add_directory_button.setIcon(QIcon(str(ADD_DIR_ICON)))
-        self._add_directory_button.setFixedSize(
-            BUTTONS_WIDTH, BUTTONS_WIDTH
-        )
+        self._add_directory_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
         self._add_directory_button.setIconSize(
             QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
         )
@@ -106,9 +104,7 @@ class StitchOmeZarrWidget(QWidget):
 
         self._remove_selected_button: QPushButton = QPushButton("")
         self._remove_selected_button.setIcon(QIcon(str(REMOVE_ICON)))
-        self._remove_selected_button.setFixedSize(
-            BUTTONS_WIDTH, BUTTONS_WIDTH
-        )
+        self._remove_selected_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
         self._remove_selected_button.setIconSize(
             QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
         )
@@ -149,9 +145,7 @@ class StitchOmeZarrWidget(QWidget):
         self._main_layout.addSpacing(6)
 
         self._stitch_button: QPushButton = QPushButton("Stitch gonads")
-        self._stitch_button.clicked.connect(
-            self._stitch_button_pressed
-        )
+        self._stitch_button.clicked.connect(self._stitch_button_pressed)
         self._main_layout.addWidget(self._stitch_button)
 
         self._files_created_status_label: QLabel = QLabel("")
