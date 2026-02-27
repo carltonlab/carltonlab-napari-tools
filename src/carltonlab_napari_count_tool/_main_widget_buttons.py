@@ -11,6 +11,12 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from carltonlab_napari_count_tool._extract_channel_widget import (
+    ExctractChannelsWidget,
+)
+from carltonlab_napari_count_tool._generate_results_widget import (
+    GenerateResultsWidget,
+)
 from carltonlab_napari_count_tool._model import (
     close_all_non_set_image_layers,
     verify_all_sbs_created,
@@ -31,6 +37,7 @@ from carltonlab_napari_count_tool._protocols import (
 from carltonlab_napari_count_tool._regions_widget import RegionWidget
 from carltonlab_napari_count_tool._score_nuclei_widget import ScoreNucleiWidget
 from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
+from carltonlab_napari_count_tool._stitch_widget import StitchOmeZarrWidget
 
 if TYPE_CHECKING:
     from napari.viewer import ViewerModel
@@ -92,8 +99,6 @@ class ExtractChannelsButton:
 
         self._launched_widget = None
 
-        self._connecting_method_str = "_launch_extract_channels_widget"
-
     def get_button(self) -> QPushButton:
         return self._button
 
@@ -107,6 +112,13 @@ class ExtractChannelsButton:
         self._button.setEnabled(True)
 
     def launch_widget(self) -> QWidget | None:
+        self._launched_widget = ExctractChannelsWidget(
+            self._napari_viewer, self._main_widget, self
+        )
+        self._main_widget.set_prepare_widget(
+            self._launched_widget, "clt Extract Channels"
+        )
+
         return
 
     def set_status_label_state(self, state: bool) -> None:
@@ -137,6 +149,7 @@ class StitchGonads:
         self._launched_widget = None
 
         self._button = QPushButton(self._button_text)
+        self._button.clicked.connect(self.launch_widget)
 
         self._connecting_method_str = "_launch_stitch_gonads_widget"
 
@@ -152,8 +165,14 @@ class StitchGonads:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(self) -> QWidget:
-        return QWidget()
+    def launch_widget(self) -> QWidget | None:
+        self._launched_widget = StitchOmeZarrWidget(
+            self._napari_viewer, self._main_widget, self
+        )
+        self._main_widget.set_prepare_widget(
+            self._launched_widget, "clt Stitch OME.zarr"
+        )
+        return
 
     def set_status_label_state(self, state: bool) -> None:
         _ = state
@@ -502,6 +521,16 @@ class ScoreNucleiButton:
         self._launched_widget = ScoreNucleiWidget(
             self._napari_viewer, self._main_widget, reference_as_API
         )
+        self._launched_widget.set_blind_state(self.get_blind_checkbox_state())
+        self._launched_widget.set_shuffle_state(
+            self.get_shuffle_checkbox_state()
+        )
+        self._blind_checkbox.stateChanged.connect(
+            lambda state: self._launched_widget.set_blind_state(bool(state))
+        )
+        self._shuffle_checkbox.stateChanged.connect(
+            lambda state: self._launched_widget.set_shuffle_state(bool(state))
+        )
         score_widget: ScoreWidgetAPI = cast(
             ScoreWidgetAPI, self._launched_widget
         )
@@ -534,6 +563,7 @@ class GenerateProjectReports:
         self._button_text = "1.Generate Project Reports"
 
         self._button = QPushButton(self._button_text)
+        self._button.clicked.connect(self.launch_widget)
 
         self._connecting_method_str = (
             "_generate_projects_reports_button_pressed"
@@ -552,7 +582,13 @@ class GenerateProjectReports:
         self._button.setEnabled(True)
 
     def launch_widget(self) -> QWidget:
-        return QWidget()
+        self._launched_widget = GenerateResultsWidget(
+            self._napari_viewer, self._main_widget
+        )
+        self._main_widget.set_prepare_widget(
+            self._launched_widget, "clt Generate Project Reports"
+        )
+        return self._launched_widget
 
     def set_status_label_state(self, state: bool) -> None:
         _ = state

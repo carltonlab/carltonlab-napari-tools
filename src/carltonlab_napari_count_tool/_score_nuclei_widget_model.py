@@ -33,6 +33,7 @@ from carltonlab_napari_count_tool._shared_variables import (
 )
 from carltonlab_napari_count_tool._shared_widgets import (
     confirm_dialog,
+    get_directory,
     get_file,
 )
 
@@ -200,10 +201,14 @@ def open_points_layer_from_clsp_object(
     napari_viewer: ViewerModel,
     clsp_object: CLSPSbsObject,
     points_size: int = 5,
+    layer_dims: int | None = None,
 ):
     points_file_name: str | None = clsp_object.get_points_file_path()
     if points_file_name is None:
-        returning_points = napari_viewer.add_points(name="old_points")
+        ndim = layer_dims if layer_dims is not None else 2
+        returning_points = napari_viewer.add_points(
+            name="old_points", ndim=ndim
+        )
         returning_points.size = points_size
         returning_points.current_size = points_size
         returning_points.refresh()
@@ -435,31 +440,67 @@ def generate_scored_points_spline_plot(
 def open_scoring_file(
     napari_viewer: "ViewerModel", parent_widget: QWidget
 ) -> OpenFileReturns:
+    return _open_scoring_path(
+        napari_viewer,
+        parent_widget,
+        get_file(
+            parent_widget,
+            f"Select scoring image (.tif) or multi gonad file (*{MULTI_GONAD_FILE_EXTENSION})",
+        ),
+    )
+
+
+def open_scoring_zarr_directory(
+    napari_viewer: "ViewerModel", parent_widget: QWidget
+) -> OpenFileReturns:
+    file_path = get_directory(
+        parent_widget, "Select scoring OME.zarr directory"
+    )
+    print(f"open_scoring_zarr_directory: selected path={file_path}")
+    if file_path is not None and not file_path.endswith(".zarr"):
+        show_info("Please select a directory ending in .zarr")
+        return None
+    return _open_scoring_path(napari_viewer, parent_widget, file_path)
+
+
+def _open_scoring_path(
+    napari_viewer: "ViewerModel",
+    parent_widget: QWidget,
+    file_path: str | None,
+) -> OpenFileReturns:
+    print(f"_open_scoring_path: start with path={file_path}")
     if len(napari_viewer.layers) > 0:
+        print(f"_open_scoring_path: layers open={len(napari_viewer.layers)}")
         confirmed_result: bool = confirm_dialog(
             napari_viewer,
             "Layers are open, it is required to close all layers before scoring. Confirm?",
         )
         if not confirmed_result:
+            print("_open_scoring_path: user cancelled close layers")
             return None
     napari_viewer.layers.clear()
-    file_path = get_file(
-        parent_widget,
-        f"Select scoring image (.tif) or multi gonad file (*{MULTI_GONAD_FILE_EXTENSION})",
-    )
     if file_path is None:
+        print("_open_scoring_path: no path provided")
         return None
     validated_parsers_dict: dict[str, ConfigParser] | Literal["invalid"]
-    if file_path.endswith(".tif"):
+    if file_path.endswith(".tif") or file_path.endswith(".zarr"):
+        print("_open_scoring_path: validating image path")
         validated_parsers_dict = validate_image_file_path(file_path)
     elif file_path.endswith(MULTI_GONAD_FILE_EXTENSION):
+        print("_open_scoring_path: validating multigonad file")
         validated_parsers_dict = validate_multigonad_file_path(file_path)
     else:
+        print("_open_scoring_path: invalid file extension")
         validated_parsers_dict = "invalid"
     if validated_parsers_dict == "invalid":
+        print("_open_scoring_path: validation failed")
         return "failed"
+    print(
+        f"_open_scoring_path: validation ok, entries={len(validated_parsers_dict)}"
+    )
     clsp_sbs_object_list: list[CLSPSbsObject] = []
     for gonad_file_path, gonad_parser in validated_parsers_dict.items():
+        print(f"_open_scoring_path: processing gonad path={gonad_file_path}")
         gonad_file_name: str = os.path.basename(gonad_file_path)
         sbs_directory: str = os.path.join(
             gonad_file_path,
@@ -479,6 +520,9 @@ def open_scoring_file(
             region_string = "region-" + str(region_index + 1)
             number_of_sbs: int = int(
                 gonad_parser["NucleiCount"][region_string]
+            )
+            print(
+                f"_open_scoring_path: region={region_string} sbs_count={number_of_sbs}"
             )
             for sbs_index in range(number_of_sbs):
                 sbs_string: str = "sbs" + str(sbs_index + 1)
@@ -503,6 +547,7 @@ def open_scoring_file(
                     gonad_file_name,
                 )
                 clsp_sbs_object_list.append(current_sbs_object)
+    print(f"_open_scoring_path: built {len(clsp_sbs_object_list)} sbs objects")
     return (clsp_sbs_object_list, file_path)
 
 
@@ -542,13 +587,19 @@ def get_valid_points_summary_parser_from_image_dir(
 def validate_image_file_path(
     file_path: str,
 ) -> dict[str, ConfigParser] | Literal["invalid"]:
-    parent_dir = os.path.dirname(file_path)
+    if os.path.isdir(file_path) and file_path.endswith(".zarr"):
+        image_dir = os.path.dirname(file_path)
+    else:
+        image_dir = os.path.dirname(file_path)
+    print(f"validate_image_file_path: image_dir={image_dir}")
     image_summary_points_parser: ConfigParser | None = (
-        get_valid_points_summary_parser_from_image_dir(parent_dir)
+        get_valid_points_summary_parser_from_image_dir(image_dir)
     )
     if image_summary_points_parser is None:
+        print("validate_image_file_path: summary parser invalid")
         return "invalid"
-    return {parent_dir: image_summary_points_parser}
+    print("validate_image_file_path: summary parser ok")
+    return {image_dir: image_summary_points_parser}
 
 
 def validate_multigonad_file_path(

@@ -35,3 +35,6 @@ SCORED_NUCLEI_SUMMARY_FILE_NAME = "scored_points_spline_summary.csv"
 SCORED_NUCLEI_PLOT_FILE_NAME = "scored_points_spline_cumulative_plot.pdf"
 
 RESULTS_DIR = "summaries_and_plots"
+
+DEFAULT_SEPARATOR_THICKNESS = 2
+DEFAULT_SEPARATOR_SPACING = 6
