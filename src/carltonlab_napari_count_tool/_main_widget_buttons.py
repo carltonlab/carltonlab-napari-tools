@@ -34,6 +34,7 @@ from carltonlab_napari_count_tool._protocols import (
 from carltonlab_napari_count_tool._regions_widget import RegionWidget
 from carltonlab_napari_count_tool._score_nuclei_widget import ScoreNucleiWidget
 from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
+from carltonlab_napari_count_tool._stitch_widget import StitchOmeZarrWidget
 
 if TYPE_CHECKING:
     from napari.viewer import ViewerModel
@@ -145,6 +146,7 @@ class StitchGonads:
         self._launched_widget = None
 
         self._button = QPushButton(self._button_text)
+        self._button.clicked.connect(self.launch_widget)
 
         self._connecting_method_str = "_launch_stitch_gonads_widget"
 
@@ -160,8 +162,14 @@ class StitchGonads:
     def activate_buttons(self) -> None:
         self._button.setEnabled(True)
 
-    def launch_widget(self) -> QWidget:
-        return QWidget()
+    def launch_widget(self) -> QWidget | None:
+        self._launched_widget = StitchOmeZarrWidget(
+            self._napari_viewer, self._main_widget, self
+        )
+        self._main_widget.set_prepare_widget(
+            self._launched_widget, "clt Stitch OME.zarr"
+        )
+        return
 
     def set_status_label_state(self, state: bool) -> None:
         _ = state
