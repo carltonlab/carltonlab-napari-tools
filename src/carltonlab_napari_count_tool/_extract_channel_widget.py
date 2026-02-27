@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
-from qtpy.QtCore import Qt
-from qtpy.QtGui import QColor
+from qtpy.QtCore import QSize, Qt
+from qtpy.QtGui import QColor, QIcon
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -21,6 +21,8 @@ from qtpy.QtWidgets import (
 
 from carltonlab_napari_count_tool._extract_channel_widget_model import (
     extract_channels,
+    get_file_type,
+    parse_string_for_channels,
 )
 from carltonlab_napari_count_tool._protocols import (
     CToolButton,
@@ -37,6 +39,10 @@ if TYPE_CHECKING:
     from napari.viewer import ViewerModel
 
 BUTTONS_WIDTH = 30
+ICONS_DIR = Path(__file__).resolve().parent / "assets" / "icons"
+ADD_DIR_ICON = ICONS_DIR / "add_dir.svg"
+ADD_FILE_ICON = ICONS_DIR / "add_file.svg"
+REMOVE_ICON = ICONS_DIR / "remove.svg"
 
 
 class ExctractChannelsWidget(QWidget):
@@ -84,6 +90,7 @@ class ExctractChannelsWidget(QWidget):
 
         self._add_remove_container: QWidget = QWidget()
         self._add_remove_container_layout: QHBoxLayout = QHBoxLayout()
+        self._add_remove_container_layout.setSpacing(6)
         self._add_remove_container_layout.setContentsMargins(0, 0, 0, 0)
         self._add_remove_container.setLayout(self._add_remove_container_layout)
 
@@ -94,39 +101,42 @@ class ExctractChannelsWidget(QWidget):
         )
         self._add_remove_container_layout.addWidget(self._q_list_title)
 
-        self._add_directory_button: QPushButton = QPushButton("+")
-        self._add_directory_button.setFixedWidth(BUTTONS_WIDTH)
+        self._add_directory_button: QPushButton = QPushButton("")
+        self._add_directory_button.setIcon(QIcon(str(ADD_DIR_ICON)))
+        self._add_directory_button.setFixedSize(
+            BUTTONS_WIDTH, BUTTONS_WIDTH
+        )
+        self._add_directory_button.setIconSize(
+            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
+        )
         self._add_directory_button.clicked.connect(
             self._add_directory_button_pressed
         )
         self._add_remove_container_layout.addWidget(self._add_directory_button)
 
-        self._add_remove_container_dir_label: QLabel = QLabel("Dirs")
-        self._add_remove_container_layout.addWidget(
-            self._add_remove_container_dir_label
+        self._add_file_button: QPushButton = QPushButton("")
+        self._add_file_button.setIcon(QIcon(str(ADD_FILE_ICON)))
+        self._add_file_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
+        self._add_file_button.setIconSize(
+            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
         )
-
-        self._add_file_button: QPushButton = QPushButton("+")
-        self._add_file_button.setFixedWidth(BUTTONS_WIDTH)
         self._add_file_button.clicked.connect(self._add_file_button_pressed)
         self._add_remove_container_layout.addWidget(self._add_file_button)
 
-        self._add_remove_container_file_label: QLabel = QLabel("Files")
-        self._add_remove_container_layout.addWidget(
-            self._add_remove_container_file_label
+        self._remove_selected_button: QPushButton = QPushButton("")
+        self._remove_selected_button.setIcon(QIcon(str(REMOVE_ICON)))
+        self._remove_selected_button.setFixedSize(
+            BUTTONS_WIDTH, BUTTONS_WIDTH
         )
-
-        self._remove_selected_button: QPushButton = QPushButton("-")
-        self._remove_selected_button.setFixedWidth(BUTTONS_WIDTH)
+        self._remove_selected_button.setIconSize(
+            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
+        )
         self._remove_selected_button.clicked.connect(
             self._remove_selected_button_pressed
         )
         self._add_remove_container_layout.addWidget(
             self._remove_selected_button
         )
-
-        self._remove_label: QLabel = QLabel("Rem")
-        self._add_remove_container_layout.addWidget(self._remove_label)
 
         self._main_layout.addWidget(self._add_remove_container)
 
@@ -264,6 +274,7 @@ class ExctractChannelsWidget(QWidget):
         self._file_directory_q_list.clear()
         self._keeping_channels_line_edit.setText("")
         self._saving_line_edit.setText("")
+        self._set_files_created_label_state(False)
         return
 
     def _add_directory_button_pressed(self) -> None:
@@ -352,9 +363,69 @@ class ExctractChannelsWidget(QWidget):
             self._image_files_list,
             self._image_directories_list,
             channels_text,
-            save_directory,
+            save_directory=save_directory,
         )
+        expected_paths = self._get_expected_output_paths(
+            channels_text, save_directory
+        )
+        print(f"expected output count: {len(expected_paths)}")
+        for path in expected_paths:
+            print(f"expected output: {path} exists={os.path.exists(path)}")
+        all_created = len(expected_paths) > 0 and all(
+            os.path.exists(path) for path in expected_paths
+        )
+        self._set_files_created_label_state(all_created)
         return
+
+    def _get_expected_output_paths(
+        self, channels_text: str, save_directory: str | None
+    ) -> list[str]:
+        channels_raw = parse_string_for_channels(channels_text)
+        if len(channels_raw) == 0:
+            return []
+        input_paths: list[str] = []
+        input_paths.extend(self._image_files_list)
+        patterns = [
+            "*.dv",
+            "*.DV",
+            "*.dv_add_decon",
+            "*.zs",
+            "*.deconzs",
+            "*.tif",
+            "*.tiff",
+            "*.zarr",
+        ]
+        for directory in self._image_directories_list:
+            path = Path(directory)
+            if not path.is_dir():
+                continue
+            for pattern in patterns:
+                for found_path in path.rglob(pattern):
+                    if (
+                        found_path.suffix == ".zarr"
+                        and not found_path.is_dir()
+                    ):
+                        continue
+                    input_paths.append(str(found_path))
+        expected_paths: list[str] = []
+        for file_path in input_paths:
+            file_type = get_file_type(file_path)
+            if file_type == "dir" or file_type == "fail":
+                continue
+            if "_extracted_channels" in Path(file_path).name:
+                continue
+            path_obj = Path(file_path)
+            if path_obj.suffix == ".zarr" and path_obj.name.endswith(".ome.zarr"):
+                file_name_no_ext = path_obj.name[: -len(".ome.zarr")]
+            else:
+                file_name_no_ext = path_obj.stem
+            channels_string = "_extracted_channels"
+            for channel in channels_raw:
+                channels_string += f"_{channel}"
+            saving_file_name = f"{file_name_no_ext}{channels_string}.ome.zarr"
+            saving_dir = save_directory or os.path.dirname(file_path)
+            expected_paths.append(os.path.join(saving_dir, saving_file_name))
+        return expected_paths
 
     def _set_files_created_label_state(self, state: bool) -> None:
         if state:

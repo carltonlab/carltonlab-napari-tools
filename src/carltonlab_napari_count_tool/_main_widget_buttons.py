@@ -35,6 +35,9 @@ from carltonlab_napari_count_tool._regions_widget import RegionWidget
 from carltonlab_napari_count_tool._score_nuclei_widget import ScoreNucleiWidget
 from carltonlab_napari_count_tool._set_contrast_widget import SetContrastWidget
 from carltonlab_napari_count_tool._stitch_widget import StitchOmeZarrWidget
+from carltonlab_napari_count_tool._generate_results_widget import (
+    GenerateResultsWidget,
+)
 
 if TYPE_CHECKING:
     from napari.viewer import ViewerModel
@@ -518,6 +521,18 @@ class ScoreNucleiButton:
         self._launched_widget = ScoreNucleiWidget(
             self._napari_viewer, self._main_widget, reference_as_API
         )
+        self._launched_widget.set_blind_state(
+            self.get_blind_checkbox_state()
+        )
+        self._launched_widget.set_shuffle_state(
+            self.get_shuffle_checkbox_state()
+        )
+        self._blind_checkbox.stateChanged.connect(
+            lambda state: self._launched_widget.set_blind_state(bool(state))
+        )
+        self._shuffle_checkbox.stateChanged.connect(
+            lambda state: self._launched_widget.set_shuffle_state(bool(state))
+        )
         score_widget: ScoreWidgetAPI = cast(
             ScoreWidgetAPI, self._launched_widget
         )
@@ -550,6 +565,7 @@ class GenerateProjectReports:
         self._button_text = "1.Generate Project Reports"
 
         self._button = QPushButton(self._button_text)
+        self._button.clicked.connect(self.launch_widget)
 
         self._connecting_method_str = (
             "_generate_projects_reports_button_pressed"
@@ -568,7 +584,13 @@ class GenerateProjectReports:
         self._button.setEnabled(True)
 
     def launch_widget(self) -> QWidget:
-        return QWidget()
+        self._launched_widget = GenerateResultsWidget(
+            self._napari_viewer, self._main_widget
+        )
+        self._main_widget.set_prepare_widget(
+            self._launched_widget, "clt Generate Project Reports"
+        )
+        return self._launched_widget
 
     def set_status_label_state(self, state: bool) -> None:
         _ = state

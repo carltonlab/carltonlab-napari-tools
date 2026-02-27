@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, cast
 
 from napari.layers import Image
+from napari.utils.notifications import show_info
 from qtpy.QtCore import Qt, QTimer
 from qtpy.QtWidgets import (
     QFrame,
@@ -9,6 +10,7 @@ from qtpy.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -17,7 +19,10 @@ from carltonlab_napari_count_tool._model import (
     open_project_image,
     validate_closed_layers,
 )
-from carltonlab_napari_count_tool._shared_widgets import get_file
+from carltonlab_napari_count_tool._shared_widgets import (
+    get_directory,
+    get_file,
+)
 
 if TYPE_CHECKING:
     import napari
@@ -74,6 +79,14 @@ class GonadControlWidget(QWidget):
         )
         self._layout.addWidget(self._open_image_button)
 
+        self._open_zarr_button: QPushButton = QPushButton(
+            "Open OME.zarr image"
+        )
+        self._open_zarr_button.clicked.connect(
+            self._open_zarr_button_pressed
+        )
+        self._layout.addWidget(self._open_zarr_button)
+
         self._open_image_status_label: QLabel = QLabel("")
         self._layout.addWidget(self._open_image_status_label)
         self._set_open_image_status(False)
@@ -84,12 +97,41 @@ class GonadControlWidget(QWidget):
         )
         if not validated_closed_layers:
             return
-        self._image_path = None
-        self._image_layers = None
-        self._project_files_dir = None
         image_path: str | None = get_file(
             self, "Select the project image file"
         )
+        self._open_image_from_path(
+            image_path, validated_closed_layers=validated_closed_layers
+        )
+
+    def _open_zarr_button_pressed(self) -> None:
+        validated_closed_layers: bool = validate_closed_layers(
+            self._napari_viewer
+        )
+        if not validated_closed_layers:
+            return
+        image_path: str | None = get_directory(
+            self, "Select the OME.zarr directory"
+        )
+        if image_path is not None and not image_path.endswith(".zarr"):
+            show_info("Please select a directory ending in .zarr")
+            return
+        self._open_image_from_path(
+            image_path, validated_closed_layers=validated_closed_layers
+        )
+
+    def _open_image_from_path(
+        self, image_path: str | None, validated_closed_layers: bool = False
+    ) -> None:
+        if not validated_closed_layers:
+            validated_closed_layers = validate_closed_layers(
+                self._napari_viewer
+            )
+        if not validated_closed_layers:
+            return
+        self._image_path = None
+        self._image_layers = None
+        self._project_files_dir = None
         main_widget_callbacks: MainWidgetCallBacks = cast(
             MainWidgetCallBacks, self._main_widget
         )
@@ -363,6 +405,48 @@ class CarltonLabCountTool(QWidget):
 
         self._top_container_layout.addStretch()
 
+        self._main_layout.addSpacing(12)
+        speed_separator: QFrame = QFrame(self)
+        speed_separator.setFrameShape(QFrame.Shape.HLine)
+        speed_separator.setFrameShadow(QFrame.Shadow.Sunken)
+        speed_separator.setStyleSheet("background-color: gray;")
+        speed_separator.setFixedHeight(2)
+        self._main_layout.addWidget(speed_separator)
+        self._main_layout.addSpacing(12)
+
+        self._global_scroll_speed_container: QWidget = QWidget()
+        self._global_scroll_speed_container_layout: QHBoxLayout = QHBoxLayout()
+        self._global_scroll_speed_container_layout.setContentsMargins(
+            0, 6, 0, 0
+        )
+        self._global_scroll_speed_container.setLayout(
+            self._global_scroll_speed_container_layout
+        )
+        self._main_layout.addWidget(self._global_scroll_speed_container)
+
+        self._global_scroll_speed_label: QLabel = QLabel("Scroll speed")
+        self._global_scroll_speed_container_layout.addWidget(
+            self._global_scroll_speed_label
+        )
+
+        self._global_scroll_speed_slider: QSlider = QSlider(
+            Qt.Orientation.Horizontal
+        )
+        self._global_scroll_speed_slider.setRange(
+            self._scroll_interval_min_ms, self._scroll_interval_max_ms
+        )
+        self._global_scroll_speed_slider.setValue(
+            self._interval_to_slider_value(self._scroll_interval_ms)
+        )
+        self._global_scroll_speed_slider.setSingleStep(10)
+        self._global_scroll_speed_slider.setPageStep(10)
+        self._global_scroll_speed_slider.valueChanged.connect(
+            self._scroll_speed_slider_changed
+        )
+        self._global_scroll_speed_container_layout.addWidget(
+            self._global_scroll_speed_slider
+        )
+
     ##################################################################
     #   Button connections
     ##################################################################
@@ -512,22 +596,26 @@ class CarltonLabCountTool(QWidget):
 
     def _get_scroll_axis(self) -> int | None:
         dims = self._napari_viewer.dims
-        if dims.ndim <= dims.ndisplay:
-            return None
         non_displayed = [
             axis for axis in range(dims.ndim) if axis not in dims.displayed
         ]
-        if not non_displayed:
-            return None
+        candidate_axes = non_displayed if non_displayed else list(range(dims.ndim))
         axis_labels = [label.lower() for label in dims.axis_labels]
-        for axis in non_displayed:
+        for axis in candidate_axes:
+            nsteps = dims.nsteps[axis]
+            if nsteps is None or nsteps < 2:
+                continue
             if axis < len(axis_labels) and axis_labels[axis] in (
                 "z",
                 "depth",
                 "slice",
             ):
                 return axis
-        return non_displayed[0]
+        for axis in candidate_axes:
+            nsteps = dims.nsteps[axis]
+            if nsteps is not None and nsteps > 1:
+                return axis
+        return None
 
     def _scroll_z(self, delta: int) -> None:
         axis = self._get_scroll_axis()
@@ -575,12 +663,7 @@ class CarltonLabCountTool(QWidget):
         self._scroll_interval_ms = new_interval
         if self._scroll_timer is not None:
             self._scroll_timer.setInterval(self._scroll_interval_ms)
-        if self._score_nuclei_widget is not None and hasattr(
-            self._score_nuclei_widget, "set_scroll_speed_slider_value"
-        ):
-            self._score_nuclei_widget.set_scroll_speed_slider_value(
-                self._scroll_interval_ms
-            )
+        self.set_scroll_speed_slider_value(self._scroll_interval_ms)
 
     def set_scroll_interval_ms(self, interval_ms: int) -> None:
         new_interval = max(
@@ -592,6 +675,7 @@ class CarltonLabCountTool(QWidget):
         self._scroll_interval_ms = new_interval
         if self._scroll_timer is not None:
             self._scroll_timer.setInterval(self._scroll_interval_ms)
+        self.set_scroll_speed_slider_value(self._scroll_interval_ms)
 
     def _increase_scroll_speed(self, event=None) -> None:
         self._adjust_scroll_speed(-10)
@@ -616,3 +700,23 @@ class CarltonLabCountTool(QWidget):
             return
         if hasattr(self._score_nuclei_widget, "_confirm_button_pressed"):
             self._score_nuclei_widget._confirm_button_pressed()
+
+    def _scroll_speed_slider_changed(self, value: int) -> None:
+        self.set_scroll_interval_ms(self._slider_value_to_interval(value))
+
+    def set_scroll_speed_slider_value(self, value: int) -> None:
+        self._global_scroll_speed_slider.blockSignals(True)
+        self._global_scroll_speed_slider.setValue(
+            self._interval_to_slider_value(value)
+        )
+        self._global_scroll_speed_slider.blockSignals(False)
+
+    def _slider_value_to_interval(self, value: int) -> int:
+        min_value = self._global_scroll_speed_slider.minimum()
+        max_value = self._global_scroll_speed_slider.maximum()
+        return max_value - (value - min_value)
+
+    def _interval_to_slider_value(self, interval: int) -> int:
+        min_value = self._global_scroll_speed_slider.minimum()
+        max_value = self._global_scroll_speed_slider.maximum()
+        return max_value - (interval - min_value)

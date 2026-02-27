@@ -1,8 +1,10 @@
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from napari.utils.notifications import show_info
-from qtpy.QtCore import Qt
+from qtpy.QtCore import QSize, Qt
+from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -37,6 +39,9 @@ if TYPE_CHECKING:
     from napari.viewer import ViewerModel
 
 BUTTONS_WIDTH = 30
+ICONS_DIR = Path(__file__).resolve().parent / "assets" / "icons"
+ADD_DIR_ICON = ICONS_DIR / "add_dir.svg"
+REMOVE_ICON = ICONS_DIR / "remove.svg"
 
 
 class MakeMultiGonadWidget(QWidget):
@@ -94,15 +99,25 @@ class MakeMultiGonadWidget(QWidget):
         )
         self._add_remove_container_layout.addWidget(self._q_list_title)
 
-        self._add_gonads_button: QPushButton = QPushButton("+")
+        self._add_gonads_button: QPushButton = QPushButton("")
+        self._add_gonads_button.setIcon(QIcon(str(ADD_DIR_ICON)))
         self._add_gonads_button.setFixedWidth(BUTTONS_WIDTH)
+        self._add_gonads_button.setFixedHeight(BUTTONS_WIDTH)
+        self._add_gonads_button.setIconSize(
+            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
+        )
         self._add_gonads_button.clicked.connect(
             self._add_gonads_button_pressed
         )
         self._add_remove_container_layout.addWidget(self._add_gonads_button)
 
-        self._remove_gonads_button: QPushButton = QPushButton("-")
+        self._remove_gonads_button: QPushButton = QPushButton("")
+        self._remove_gonads_button.setIcon(QIcon(str(REMOVE_ICON)))
         self._remove_gonads_button.setFixedWidth(BUTTONS_WIDTH)
+        self._remove_gonads_button.setFixedHeight(BUTTONS_WIDTH)
+        self._remove_gonads_button.setIconSize(
+            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
+        )
         self._remove_gonads_button.clicked.connect(
             self._remove_gonads_button_pressed
         )

@@ -223,7 +223,10 @@ def _extract_from_dv(
         translation=translation,
         transform_key="stage_metadata",
     )
+    print(f"writing ome.zarr: {output_path}")
+    print(f"spacing: {spacing} translation: {translation}")
     ngff_utils.write_sim_to_ome_zarr(sim, output_path, overwrite=False)
+    print_ome_zarr_summary(output_path)
     _write_stage_ini(output_path, translation, stage_units=stage_units)
     return True
 
@@ -252,7 +255,9 @@ def _extract_from_tiff(
         data,
         dims=["c", "z", "y", "x"],
     )
+    print(f"writing ome.zarr: {output_path}")
     ngff_utils.write_sim_to_ome_zarr(sim, output_path, overwrite=False)
+    print_ome_zarr_summary(output_path)
     return True
 
 
@@ -274,7 +279,9 @@ def _extract_from_ome_zarr(
         return False
 
     sim = sim.isel(c=selected)
+    print(f"writing ome.zarr: {output_path}")
     ngff_utils.write_sim_to_ome_zarr(sim, output_path, overwrite=False)
+    print_ome_zarr_summary(output_path)
     return True
 
 
@@ -317,6 +324,13 @@ def print_ome_zarr_summary(file_path: str) -> None:
 def _prepare_data_for_channels(
     data: np.ndarray, override_dims: list[str] | None, file_path: str
 ) -> np.ndarray | None:
+    print(
+        f"prepare_data_for_channels: file={file_path} ndim={data.ndim} shape={data.shape}"
+    )
+    if override_dims is not None:
+        print(
+            f"prepare_data_for_channels: override_dims_len={len(override_dims)} override_dims={override_dims}"
+        )
     if override_dims is None:
         if data.ndim == 5:
             dims = ["t", "z", "c", "y", "x"]

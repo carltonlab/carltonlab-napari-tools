@@ -68,6 +68,7 @@ def validate_closed_layers(napari_viewer: ViewerModel) -> bool:
 def open_project_image(
     napari_viewer: ViewerModel, image_path: str
 ) -> tuple[str, list[Image], str] | None:
+    is_zarr_dir = os.path.isdir(image_path) and image_path.endswith(".zarr")
     image_dir: str = os.path.dirname(image_path)
     project_files_dir: str = os.path.join(image_dir, DEFAULT_PROJECT_NAME)
     if not os.path.exists(project_files_dir):
@@ -84,25 +85,54 @@ def open_project_image(
         else:
             return None
     image_list: list[Image] = []
-    image_data = tifffile.imread(image_path)
-    if len(image_data.shape) != 4:
-        showing_string: str = (
-            f"The image shape is: {image_data.shape}, expected 4 dimensions (ZCYX). ERROR"
+    if is_zarr_dir:
+        opened_layers = napari_viewer.open(image_path)
+        if not isinstance(opened_layers, list):
+            opened_layers = [opened_layers]
+        opened_images = [
+            layer for layer in opened_layers if isinstance(layer, Image)
+        ]
+        if len(opened_images) == 0:
+            show_info("No image layers were opened from the OME.zarr path")
+            return None
+        if len(opened_images) == 1:
+            image_layer = opened_images[0]
+            image_data = image_layer.data
+            if hasattr(image_data, "ndim") and image_data.ndim >= 4:
+                napari_viewer.layers.remove(image_layer)
+                split_layers = napari_viewer.add_image(
+                    image_data, channel_axis=1
+                )
+                if isinstance(split_layers, Image):
+                    show_info(
+                        "Only one image open when trying to split channels from OME.zarr"
+                    )
+                    return None
+                image_list = cast(list[Image], split_layers)
+            else:
+                image_list = opened_images
+        else:
+            image_list = opened_images
+    else:
+        image_data = tifffile.imread(image_path)
+        if len(image_data.shape) != 4:
+            showing_string: str = (
+                f"The image shape is: {image_data.shape}, expected 4 dimensions (ZCYX). ERROR"
+            )
+            show_info(showing_string)
+            print(showing_string)
+            return None
+        image_opened: list[Image] | Image = open_image_as_layer(
+            napari_viewer, image_path, split_channel_axis=1
         )
-        show_info(showing_string)
-        print(showing_string)
-        return None
-    image_opened: list[Image] | Image = open_image_as_layer(
-        napari_viewer, image_path, split_channel_axis=1
-    )
-    if isinstance(image_opened, Image):
-        showing_string: str = (
-            "Only one image open when trying to open multiple channels. ERROR"
-        )
-        show_info(showing_string)
-        print(showing_string)
-        return None
-    image_list = cast(list[Image], image_opened)
+        if isinstance(image_opened, Image):
+            showing_string: str = (
+                "Only one image open when trying to open multiple channels. ERROR"
+            )
+            show_info(showing_string)
+            print(showing_string)
+            return None
+        image_list = cast(list[Image], image_opened)
     contrast_validation: bool = verify_image_contrasts_file(image_path)
     if contrast_validation:
         contrasts: dict[int, tuple[float, float]] | None = (
@@ -239,6 +269,8 @@ def create_project_dir_structure(image_path: str) -> str:
     parent_dir_path: str = os.path.dirname(image_path)
     image_file_path_object: Path = Path(image_path)
     image_file_name_no_ext: str = image_file_path_object.stem
+    if "".join(image_file_path_object.suffixes).endswith(".ome.zarr"):
+        image_file_name_no_ext = image_file_path_object.name[: -len(".ome.zarr")]
     image_file_name: str = image_file_path_object.name
     new_project_path: str = os.path.join(
         parent_dir_path, image_file_name_no_ext + DEFAULT_PROJECT_EXTENSION

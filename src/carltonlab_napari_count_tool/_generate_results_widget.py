@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -18,15 +17,12 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from carltonlab_napari_count_tool._protocols import (
-    CToolButton,
-    MainWidgetCallBacks,
+from carltonlab_napari_count_tool._generate_results_widget_model import (
+    generate_plots,
+    generate_summaries,
 )
+from carltonlab_napari_count_tool._protocols import MainWidgetCallBacks
 from carltonlab_napari_count_tool._shared_widgets import get_directories
-from carltonlab_napari_count_tool._stitch_widget_model import (
-    get_stitched_output_path,
-    stitch_directories,
-)
 
 if TYPE_CHECKING:
     from napari.viewer import ViewerModel
@@ -37,19 +33,17 @@ ADD_DIR_ICON = ICONS_DIR / "add_dir.svg"
 REMOVE_ICON = ICONS_DIR / "remove.svg"
 
 
-class StitchOmeZarrWidget(QWidget):
+class GenerateResultsWidget(QWidget):
     def __init__(
         self,
         napari_viewer: "ViewerModel",
         parent_widget: MainWidgetCallBacks,
-        ct_tool_button: CToolButton,
     ):
         parent_q_widget: QWidget = cast(QWidget, parent_widget)
         super().__init__(parent_q_widget)
 
         self._napari_viewer = napari_viewer
         self._parent_widget: MainWidgetCallBacks = parent_widget
-        self._ct_tool_button = ct_tool_button
         self._directories_list: list[str] = []
 
         self.setSizePolicy(
@@ -71,7 +65,7 @@ class StitchOmeZarrWidget(QWidget):
         self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._main_container.setLayout(self._main_layout)
 
-        self._main_title_label = QLabel("CL Stitch OME.zarr")
+        self._main_title_label = QLabel("CL Generate Project Reports")
         self._main_title_label.setStyleSheet(
             "font-weight: bold; font-size: 20px"
         )
@@ -84,7 +78,7 @@ class StitchOmeZarrWidget(QWidget):
         self._add_remove_container_layout.setSpacing(6)
         self._add_remove_container.setLayout(self._add_remove_container_layout)
 
-        self._q_list_title: QLabel = QLabel("OME.zarr directories")
+        self._q_list_title: QLabel = QLabel("Gonad directories")
         self._q_list_title.setStyleSheet("font-weight: bold")
         self._q_list_title.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
@@ -148,15 +142,27 @@ class StitchOmeZarrWidget(QWidget):
         self._main_layout.addWidget(separator)
         self._main_layout.addSpacing(6)
 
-        self._stitch_button: QPushButton = QPushButton("Stitch gonads")
-        self._stitch_button.clicked.connect(
-            self._stitch_button_pressed
+        self._summaries_button: QPushButton = QPushButton("Generate summaries")
+        self._summaries_button.clicked.connect(
+            self._summaries_button_pressed
         )
-        self._main_layout.addWidget(self._stitch_button)
+        self._main_layout.addWidget(self._summaries_button)
 
-        self._files_created_status_label: QLabel = QLabel("")
-        self._main_layout.addWidget(self._files_created_status_label)
-        self._set_files_created_label_state(False)
+        self._summaries_status_label: QLabel = QLabel("")
+        self._main_layout.addWidget(self._summaries_status_label)
+        self._set_summaries_status(False)
+
+        self._plots_button: QPushButton = QPushButton("Generate plots")
+        self._plots_button.clicked.connect(self._plots_button_pressed)
+        self._main_layout.addWidget(self._plots_button)
+
+        self._plots_status_label: QLabel = QLabel("")
+        self._main_layout.addWidget(self._plots_status_label)
+        self._set_plots_status(False)
+
+        self._reset_gui_button: QPushButton = QPushButton("Reset")
+        self._reset_gui_button.clicked.connect(self._reset_gui)
+        self._main_layout.addWidget(self._reset_gui_button)
 
         self._main_layout.addStretch()
 
@@ -181,26 +187,43 @@ class StitchOmeZarrWidget(QWidget):
                 self._directories_list.remove(item_path)
         self._update_qlist()
 
-    def _stitch_button_pressed(self) -> None:
+    def _summaries_button_pressed(self) -> None:
         if not self._directories_list:
             return
-        stitched_ok = stitch_directories(self._directories_list)
-        expected_outputs = [
-            get_stitched_output_path(directory)
-            for directory in self._directories_list
-        ]
-        all_created = stitched_ok and all(
-            os.path.exists(path) for path in expected_outputs
+        created_paths = generate_summaries(self._directories_list)
+        self._set_summaries_status(
+            len(created_paths) == len(self._directories_list)
         )
-        self._set_files_created_label_state(all_created)
 
-    def _set_files_created_label_state(self, state: bool) -> None:
+    def _plots_button_pressed(self) -> None:
+        if not self._directories_list:
+            return
+        created_paths = generate_plots(self._directories_list)
+        self._set_plots_status(
+            len(created_paths) == len(self._directories_list)
+        )
+
+    def _reset_gui(self) -> None:
+        self._directories_list = []
+        self._directories_q_list.clear()
+        self._set_summaries_status(False)
+        self._set_plots_status(False)
+
+    def _set_summaries_status(self, state: bool) -> None:
         if state:
-            self._files_created_status_label.setText("Files created")
-            self._files_created_status_label.setStyleSheet("color: green")
+            self._summaries_status_label.setText("Summaries created")
+            self._summaries_status_label.setStyleSheet("color: green")
         else:
-            self._files_created_status_label.setText("Files not created")
-            self._files_created_status_label.setStyleSheet("color: red")
+            self._summaries_status_label.setText("Summaries not created")
+            self._summaries_status_label.setStyleSheet("color: red")
+
+    def _set_plots_status(self, state: bool) -> None:
+        if state:
+            self._plots_status_label.setText("Plots created")
+            self._plots_status_label.setStyleSheet("color: green")
+        else:
+            self._plots_status_label.setText("Plots not created")
+            self._plots_status_label.setStyleSheet("color: red")
 
     def _update_qlist(self) -> None:
         self._directories_q_list.clear()

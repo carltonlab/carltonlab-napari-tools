@@ -15,7 +15,6 @@ from qtpy.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -32,6 +31,7 @@ from carltonlab_napari_count_tool._score_nuclei_widget_model import (
     open_image_layer_from_clsp_object,
     open_points_layer_from_clsp_object,
     open_scoring_file,
+    open_scoring_zarr_directory,
     save_points_layer_from_clsp_object,
 )
 from carltonlab_napari_count_tool._shared_widgets import confirm_dialog
@@ -118,9 +118,8 @@ class ScoreNucleiWidget(QWidget):
         self._scoring_sbs_list: list[CLSPSbsObject] = []
         self._showing_sbs_indexes: list[int] = []
         self._ct_button: ScoreWidgetButtonAPI = score_widget_api
-        self._blind_state: bool = True
-        self._shuffle_state: bool = True
-        self._scroll_interval_ms: int = 80
+        self._blind_state: bool = self._ct_button.get_blind_checkbox_state()
+        self._shuffle_state: bool = self._ct_button.get_shuffle_checkbox_state()
 
         self._layout: QVBoxLayout = QVBoxLayout()
         self.setLayout(self._layout)
@@ -164,6 +163,12 @@ class ScoreNucleiWidget(QWidget):
         self._open_file_button.clicked.connect(self._open_file_button_pressed)
         self._scoring_file_container_layout.addWidget(self._open_file_button)
 
+        self._open_zarr_button: QPushButton = QPushButton("Open zarr image")
+        self._open_zarr_button.clicked.connect(
+            self._open_zarr_button_pressed
+        )
+        self._scoring_file_container_layout.addWidget(self._open_zarr_button)
+
         self._main_layout.addSpacing(6)
         separator = QFrame(self._main_container)
         separator.setFrameShape(QFrame.Shape.HLine)
@@ -191,50 +196,6 @@ class ScoreNucleiWidget(QWidget):
             self._points_size_spinbox_changed
         )
         self._points_size_container_layout.addWidget(self._points_size_spinbox)
-        self._main_layout.addSpacing(6)
-
-        self._speed_separator_top: QFrame = QFrame()
-        self._speed_separator_top.setFrameShape(QFrame.Shape.HLine)
-        self._speed_separator_top.setFrameShadow(QFrame.Shadow.Plain)
-        self._speed_separator_top.setFixedHeight(2)
-        self._speed_separator_top.setStyleSheet("background-color: #808080;")
-        self._main_layout.addWidget(self._speed_separator_top)
-        self._main_layout.addSpacing(6)
-
-        self._scroll_speed_container: QWidget = QWidget()
-        self._scroll_speed_container_layout: QHBoxLayout = QHBoxLayout()
-        self._scroll_speed_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._scroll_speed_container.setLayout(
-            self._scroll_speed_container_layout
-        )
-        self._main_layout.addWidget(self._scroll_speed_container)
-
-        self._scroll_speed_label: QLabel = QLabel("Scroll speed")
-        self._scroll_speed_container_layout.addWidget(self._scroll_speed_label)
-
-        self._scroll_speed_slider: QSlider = QSlider(Qt.Orientation.Horizontal)
-        self._scroll_speed_slider.setRange(5, 200)
-        self._scroll_speed_slider.setValue(
-            self._interval_to_slider_value(self._scroll_interval_ms)
-        )
-        self._scroll_speed_slider.setSingleStep(10)
-        self._scroll_speed_slider.setPageStep(10)
-        self._scroll_speed_slider.valueChanged.connect(
-            self._scroll_speed_slider_changed
-        )
-        self._scroll_speed_container_layout.addWidget(
-            self._scroll_speed_slider
-        )
-        self._main_layout.addSpacing(6)
-
-        self._speed_separator_bottom: QFrame = QFrame()
-        self._speed_separator_bottom.setFrameShape(QFrame.Shape.HLine)
-        self._speed_separator_bottom.setFrameShadow(QFrame.Shadow.Plain)
-        self._speed_separator_bottom.setFixedHeight(2)
-        self._speed_separator_bottom.setStyleSheet(
-            "background-color: #808080;"
-        )
-        self._main_layout.addWidget(self._speed_separator_bottom)
         self._main_layout.addSpacing(6)
 
         self._sbs_list_container: QWidget = QWidget()
@@ -334,11 +295,13 @@ class ScoreNucleiWidget(QWidget):
             self._sbs_list_widget.clear()
             return
         scoring_list: QListWidget = self._sbs_list_widget
+        scoring_list.clear()
         blind_selection: bool = self._blind_state
         shuffle_selection: bool = self._shuffle_state
-        if shuffle_selection and not len(self._showing_sbs_indexes) > 0:
+        self._showing_sbs_indexes = []
+        if shuffle_selection:
             self._make_shuffled_indexes()
-        if not shuffle_selection and not len(self._showing_sbs_indexes) > 0:
+        else:
             self._showing_sbs_indexes = list(
                 range(len(self._scoring_sbs_list))
             )
@@ -399,6 +362,18 @@ class ScoreNucleiWidget(QWidget):
 
     def _open_file_button_pressed(self) -> None:
         open_list_validation: OpenFileReturns = open_scoring_file(
+            self._napari_viewer, self
+        )
+        if open_list_validation is None:
+            return
+        if open_list_validation == "failed":
+            return
+        self._scoring_sbs_list = open_list_validation[0]
+        self._open_file_line_edit.setText(open_list_validation[1])
+        self._update_list()
+
+    def _open_zarr_button_pressed(self) -> None:
+        open_list_validation: OpenFileReturns = open_scoring_zarr_directory(
             self._napari_viewer, self
         )
         if open_list_validation is None:
@@ -542,10 +517,12 @@ class ScoreNucleiWidget(QWidget):
         )
         self._scoring_layer = opening_image_layer[1]
         self._extra_layer = opening_image_layer[0]
+        layer_dims = self._scoring_layer.ndim
         opening_points_layer: Points = open_points_layer_from_clsp_object(
             self._napari_viewer,
             selected_widget.get_clsp_object(),
             points_size=self._points_size_spinbox.value(),
+            layer_dims=layer_dims,
         )
         self._showing_points_layer = opening_points_layer
         QTimer.singleShot(
@@ -561,12 +538,16 @@ class ScoreNucleiWidget(QWidget):
         if number_of_points_in_showing_layer > 0:
             showing_data = self._showing_points_layer.data.copy()
             self._adding_points_layer = self._napari_viewer.add_points(
-                showing_data, name="adding_points"
+                showing_data, name="adding_points", ndim=layer_dims
             )
         else:
             self._adding_points_layer = self._napari_viewer.add_points(
-                name="adding_points"
+                name="adding_points", ndim=layer_dims
             )
+        self._napari_viewer.layers.selection.active = (
+            self._adding_points_layer
+        )
+        self._adding_points_layer.mode = "add"
         self._adding_points_layer.size = self._points_size_spinbox.value()
         self._adding_points_layer.current_size = (
             self._points_size_spinbox.value()
@@ -604,34 +585,15 @@ class ScoreNucleiWidget(QWidget):
             self._adding_points_layer.current_size = value
             self._adding_points_layer.refresh()
 
-    def _scroll_speed_slider_changed(self, value: int) -> None:
-        if hasattr(self._parent_widget, "set_scroll_interval_ms"):
-            self._parent_widget.set_scroll_interval_ms(
-                self._slider_value_to_interval(value)
-            )
-
-    def set_scroll_speed_slider_value(self, value: int) -> None:
-        self._scroll_speed_slider.blockSignals(True)
-        self._scroll_speed_slider.setValue(
-            self._interval_to_slider_value(value)
-        )
-        self._scroll_speed_slider.blockSignals(False)
-
-    def _slider_value_to_interval(self, value: int) -> int:
-        min_value = self._scroll_speed_slider.minimum()
-        max_value = self._scroll_speed_slider.maximum()
-        return max_value - (value - min_value)
-
-    def _interval_to_slider_value(self, interval: int) -> int:
-        min_value = self._scroll_speed_slider.minimum()
-        max_value = self._scroll_speed_slider.maximum()
-        return max_value - (interval - min_value)
-
     def set_blind_state(self, state: bool) -> None:
         self._blind_state = state
+        if self._scoring_sbs_list:
+            self._update_list()
 
     def set_shuffle_state(self, state: bool) -> None:
         self._shuffle_state = state
+        if self._scoring_sbs_list:
+            self._update_list()
 
     def _create_summary_pressed(self) -> None:
         gonad_dirs = self._get_gonad_dirs()

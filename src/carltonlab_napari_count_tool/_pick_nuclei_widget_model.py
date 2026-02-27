@@ -382,7 +382,14 @@ def cut_sbs_files_from_squares_and_image_layers(
         show_info("No image layers available for SBS cutting")
         return False
     normalized_data_list: list[NDArray[np.generic]] = []
-    for image_data in (np.asarray(layer.data) for layer in image_layers):
+    for layer in image_layers:
+        image_data = layer.data
+        if getattr(layer, "multiscale", False):
+            image_data = image_data[0]
+        elif isinstance(image_data, (list, tuple)) and image_data:
+            if hasattr(image_data[0], "ndim"):
+                image_data = image_data[0]
+        image_data = np.asarray(image_data)
         if image_data.ndim == 2:
             image_data = image_data[np.newaxis, ...]
         elif image_data.ndim not in {3, 4}:
