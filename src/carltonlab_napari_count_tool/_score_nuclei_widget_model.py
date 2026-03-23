@@ -1,6 +1,7 @@
 import glob
 import os
 from configparser import ConfigParser
+from pathlib import Path
 from typing import Literal, cast
 
 import matplotlib.pyplot as plt
@@ -8,7 +9,7 @@ import numpy as np
 import pandas as pd
 import tifffile
 from napari.layers import Image, Layer, Points
-from napari.utils.notifications import show_info
+from napari.utils.notifications import show_error, show_info
 from napari.viewer import ViewerModel
 from qtpy.QtWidgets import QWidget
 
@@ -483,7 +484,7 @@ def _open_scoring_path(
         print("_open_scoring_path: no path provided")
         return None
     validated_parsers_dict: dict[str, ConfigParser] | Literal["invalid"]
-    if file_path.endswith(".tif") or file_path.endswith(".zarr"):
+    if file_path.endswith((".tif", ".ome.zarr")):
         print("_open_scoring_path: validating image path")
         validated_parsers_dict = validate_image_file_path(file_path)
     elif file_path.endswith(MULTI_GONAD_FILE_EXTENSION):
@@ -625,6 +626,74 @@ def validate_multigonad_file_path(
             return "invalid"
         individual_gonad_parsers[gonad_path] = validated_parser
     return individual_gonad_parsers
+
+
+def read_file_flags(flags_path: str) -> list[str]:
+    with open(flags_path) as f:
+        return [line.strip() for line in f if line.strip() != ""]
+
+
+def write_flags(flags_path: str, lines: list[str]) -> None:
+    writing_lines: list[str] = [
+        line.strip() for line in lines if line.strip() != ""
+    ]
+    writing_lines = sorted(set(writing_lines))
+    print("")
+    print(f"The writing lines are: {writing_lines}")
+    with open(flags_path, "w") as f:
+        f.write("\n".join(writing_lines))
+
+    print(f"Lines written at {flags_path}")
+
+
+def add_flag_to_sbs(image_path: str, passing_flag: str) -> None:
+    flags_file_path: str = resolve_flags_file_name(image_path)
+    print("")
+    print(f"The flags file path is: {flags_file_path}")
+    print("")
+    lines = read_file_flags(flags_file_path)
+    if passing_flag not in lines:
+        lines.append(passing_flag)
+        print("")
+        print(f"The lines are: {lines}")
+    else:
+        show_error(f"The tag {passing_flag} already exists in the flags file.")
+        return
+    write_flags(flags_file_path, lines)
+    return
+
+
+def remove_flag_from_sbs(image_path: str, passing_flag: str) -> None:
+    flags_file_path: str = resolve_flags_file_name(image_path)
+    lines = read_file_flags(flags_file_path)
+    if passing_flag in lines:
+        lines.remove(passing_flag)
+    else:
+        show_error(f"The tag {passing_flag} does not exist in the flags file.")
+        return
+    write_flags(flags_file_path, lines)
+    return
+
+
+def flag_in_image(image_path: str, searching_flag: str) -> bool:
+    return flag_exists(resolve_flags_file_name(image_path), searching_flag)
+
+
+def flag_exists(flags_path: str, searching_flag: str) -> bool:
+    flags: list[str] = read_file_flags(flags_path)
+    return searching_flag in flags
+
+
+def resolve_flags_file_name(image_path: str) -> str:
+    image_dir: str = os.path.dirname(image_path)
+    image_path_obj: Path = Path(image_path)
+    image_path_obj_stem: str = image_path_obj.stem
+    image_flag_file_name: str = image_path_obj_stem + "_flags.txt"
+    image_flag_file_path: str = os.path.join(image_dir, image_flag_file_name)
+    if not os.path.exists(image_flag_file_path):
+        with open(image_flag_file_path, "w") as f:
+            f.write("")
+    return image_flag_file_path
 
 
 class CLSPRegion:

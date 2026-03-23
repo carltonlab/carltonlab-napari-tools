@@ -26,12 +26,15 @@ from carltonlab_napari_count_tool._protocols import (
 )
 from carltonlab_napari_count_tool._score_nuclei_widget_model import (
     CLSPSbsObject,
+    add_flag_to_sbs,
+    flag_in_image,
     generate_scored_points_spline_plot,
     generate_scored_points_spline_summary,
     open_image_layer_from_clsp_object,
     open_points_layer_from_clsp_object,
     open_scoring_file,
     open_scoring_zarr_directory,
+    remove_flag_from_sbs,
     save_points_layer_from_clsp_object,
 )
 from carltonlab_napari_count_tool._shared_widgets import confirm_dialog
@@ -75,18 +78,28 @@ class SBSListItemWidget(QWidget):
         else:
             setting_text: str = self._sbs_object.get_display_name()
         self._sbs_label.setText(setting_text)
-        self._points_label.setText(
-            " -- " + str(self._sbs_object.get_number_of_points()) + " Points"
+        ignored_flag: bool = flag_in_image(
+            self._sbs_object.get_image_path(), "ignore"
         )
-        saved_state: bool = self._sbs_object.saved_state()
-        setting_saved_str: str = (
-            " -- Saved" if saved_state else " -- Not saved"
-        )
-        self._saved_state_label.setText(setting_saved_str)
-        if saved_state:
-            self._saved_state_label.setStyleSheet("color: green")
+        if not ignored_flag:
+            self._points_label.setText(
+                " -- "
+                + str(self._sbs_object.get_number_of_points())
+                + " Points"
+            )
+            saved_state: bool = self._sbs_object.saved_state()
+            setting_saved_str: str = (
+                " -- Saved" if saved_state else " -- Not saved"
+            )
+            self._saved_state_label.setText(setting_saved_str)
+            if saved_state:
+                self._saved_state_label.setStyleSheet("color: green")
+            else:
+                self._saved_state_label.setStyleSheet("color: red")
         else:
-            self._saved_state_label.setStyleSheet("color: red")
+            self._points_label.setText(" -- Ignored")
+            self._saved_state_label.setStyleSheet("color: black")
+            self._saved_state_label.setText("")
 
     def get_clsp_object(self) -> CLSPSbsObject:
         return self._sbs_object
@@ -122,6 +135,7 @@ class ScoreNucleiWidget(QWidget):
         self._shuffle_state: bool = (
             self._ct_button.get_shuffle_checkbox_state()
         )
+        self._current_index: int | None = None
 
         self._layout: QVBoxLayout = QVBoxLayout()
         self.setLayout(self._layout)
@@ -273,6 +287,28 @@ class ScoreNucleiWidget(QWidget):
         self._navigate_confirm_buttons_container_layout.addWidget(
             self._next_non_scored_button
         )
+
+        self._ignore_container: QWidget = QWidget()
+        self._ignore_container_layout: QHBoxLayout = QHBoxLayout()
+        self._ignore_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._ignore_container.setLayout(self._ignore_container_layout)
+        self._sbs_list_container_layout.addWidget(self._ignore_container)
+
+        self._ignore_button: QPushButton = QPushButton("Add ignore")
+        self._ignore_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self._ignore_button.clicked.connect(self._ignore_button_pressed)
+        self._ignore_container_layout.addWidget(self._ignore_button)
+
+        self._remove_ignore_button: QPushButton = QPushButton("Remove ignore")
+        self._remove_ignore_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self._remove_ignore_button.clicked.connect(
+            self._remove_ignore_button_pressed
+        )
+        self._ignore_container_layout.addWidget(self._remove_ignore_button)
 
         self._sbs_list_container_layout.addWidget(
             self._navigate_confirm_buttons_container
@@ -494,13 +530,20 @@ class ScoreNucleiWidget(QWidget):
         print("")
 
     def _list_selection_changed(self) -> None:
-        if self._scoring_layer is not None:
+        selected_index: int = self._sbs_list_widget.currentRow()
+        if (
+            self._scoring_layer is not None
+            and self._current_index != selected_index
+        ):
             self._napari_viewer.layers.remove(self._scoring_layer)
         if self._showing_points_layer is not None:
             self._napari_viewer.layers.remove(self._showing_points_layer)
         if self._adding_points_layer is not None:
             self._napari_viewer.layers.remove(self._adding_points_layer)
-        if self._extra_layer is not None:
+        if (
+            self._extra_layer is not None
+            and selected_index != self._current_index
+        ):
             self._napari_viewer.layers.remove(self._extra_layer)
         blind_state: bool = self._blind_state
         selected_item: QListWidgetItem = self._sbs_list_widget.currentItem()
@@ -508,15 +551,19 @@ class ScoreNucleiWidget(QWidget):
             SBSListItemWidget, self._sbs_list_widget.itemWidget(selected_item)
         )
         selected_widget.set_data(blind_state)
-        opening_image_layer: tuple[Image, Image] = (
-            open_image_layer_from_clsp_object(
-                self._napari_viewer,
-                selected_widget.get_clsp_object(),
-                blind=blind_state,
+        if selected_index != self._current_index:
+            opening_image_layer: tuple[Image, Image] = (
+                open_image_layer_from_clsp_object(
+                    self._napari_viewer,
+                    selected_widget.get_clsp_object(),
+                    blind=blind_state,
+                )
             )
-        )
-        self._scoring_layer = opening_image_layer[1]
-        self._extra_layer = opening_image_layer[0]
+            self._scoring_layer = opening_image_layer[1]
+            self._extra_layer = opening_image_layer[0]
+            self._current_index = selected_index
+        if self._scoring_layer is None:
+            return
         layer_dims = self._scoring_layer.ndim
         opening_points_layer: Points = open_points_layer_from_clsp_object(
             self._napari_viewer,
@@ -628,6 +675,34 @@ class ScoreNucleiWidget(QWidget):
             show_info(f"Plot saved: {created_paths[0]}")
         else:
             show_info(f"Plots saved: {len(created_paths)}")
+
+    def _ignore_button_pressed(self) -> None:
+        current_item = self._sbs_list_widget.currentItem()
+        current_item_sbs: SBSListItemWidget = cast(
+            SBSListItemWidget, self._sbs_list_widget.itemWidget(current_item)
+        )
+        clsp_object: CLSPSbsObject = current_item_sbs.get_clsp_object()
+        image_path: str = clsp_object.get_image_path()
+        add_flag_to_sbs(image_path, "ignore")
+        current_item_sbs.set_data(self._blind_state)
+        selection_index: int = self._sbs_list_widget.currentRow()
+        next_index: int = selection_index + 1
+        if next_index < self._sbs_list_widget.count():
+            self._next_non_scored_button_pressed()
+            return
+        return
+
+    def _remove_ignore_button_pressed(self) -> None:
+        current_item = self._sbs_list_widget.currentItem()
+        current_item_sbs = cast(
+            SBSListItemWidget, self._sbs_list_widget.itemWidget(current_item)
+        )
+        clsp_object: CLSPSbsObject = current_item_sbs.get_clsp_object()
+        image_path: str = clsp_object.get_image_path()
+        remove_flag_from_sbs(image_path, "ignore")
+        current_item_sbs.set_data(self._blind_state)
+        self._list_selection_changed()
+        return
 
     def _get_gonad_dirs(self) -> list[str]:
         if not self._scoring_sbs_list:
