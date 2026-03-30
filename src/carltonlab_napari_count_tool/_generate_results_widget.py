@@ -18,6 +18,7 @@ from qtpy.QtWidgets import (
 )
 
 from carltonlab_napari_count_tool._generate_results_widget_model import (
+    generate_foci_summaries,
     generate_plots,
     generate_summaries,
 )
@@ -154,6 +155,18 @@ class GenerateResultsWidget(QWidget):
         self._main_layout.addWidget(self._plots_status_label)
         self._set_plots_status(False)
 
+        self._foci_summaries_button: QPushButton = QPushButton(
+            "Generate foci summaries"
+        )
+        self._foci_summaries_button.clicked.connect(
+            self._foci_summaries_button_pressed
+        )
+        self._main_layout.addWidget(self._foci_summaries_button)
+
+        self._foci_summaries_status_label: QLabel = QLabel("")
+        self._main_layout.addWidget(self._foci_summaries_status_label)
+        self._set_foci_summaries_status(False)
+
         self._reset_gui_button: QPushButton = QPushButton("Reset")
         self._reset_gui_button.clicked.connect(self._reset_gui)
         self._main_layout.addWidget(self._reset_gui_button)
@@ -197,11 +210,20 @@ class GenerateResultsWidget(QWidget):
             len(created_paths) == len(self._directories_list)
         )
 
+    def _foci_summaries_button_pressed(self) -> None:
+        if not self._directories_list:
+            return
+        created_paths = generate_foci_summaries(self._directories_list)
+        self._set_foci_summaries_status(
+            len(created_paths) == len(self._directories_list)
+        )
+
     def _reset_gui(self) -> None:
         self._directories_list = []
         self._directories_q_list.clear()
         self._set_summaries_status(False)
         self._set_plots_status(False)
+        self._set_foci_summaries_status(False)
 
     def _set_summaries_status(self, state: bool) -> None:
         if state:
@@ -218,6 +240,16 @@ class GenerateResultsWidget(QWidget):
         else:
             self._plots_status_label.setText("Plots not created")
             self._plots_status_label.setStyleSheet("color: red")
+
+    def _set_foci_summaries_status(self, state: bool) -> None:
+        if state:
+            self._foci_summaries_status_label.setText("Foci summaries created")
+            self._foci_summaries_status_label.setStyleSheet("color: green")
+        else:
+            self._foci_summaries_status_label.setText(
+                "Foci summaries not created"
+            )
+            self._foci_summaries_status_label.setStyleSheet("color: red")
 
     def _update_qlist(self) -> None:
         self._directories_q_list.clear()
