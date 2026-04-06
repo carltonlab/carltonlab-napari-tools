@@ -16,7 +16,9 @@ from qtpy.QtWidgets import (
 )
 
 from carltonlab_napari_count_tool._model import (
+    close_image_layers,
     open_project_image,
+    open_tile_image,
     validate_closed_layers,
 )
 from carltonlab_napari_count_tool._shared_widgets import (
@@ -55,6 +57,7 @@ class GonadControlWidget(QWidget):
 
         self._image_path: str | None = None
         self._image_layers: list[Image] | None = None
+        self._tile_image_layers: list[Image] = []
         self._image_tiles: dict[int, str] = {}
         self._project_files_dir: str | None = None
 
@@ -197,6 +200,34 @@ class GonadControlWidget(QWidget):
     def get_image_tiles(self) -> dict[int, str]:
         return self._image_tiles
 
+    def open_tile_images(self, tile_index: int) -> list[Image] | None:
+        tile_image_path = self._image_tiles.get(tile_index)
+        if tile_image_path is None:
+            return None
+        opened_tile_layers = self._open_tile_image(tile_image_path)
+        if opened_tile_layers is None:
+            return None
+        for layer_index, image_layer in enumerate(opened_tile_layers):
+            image_layer.name = f"Tile[{tile_index}] - c{layer_index + 1}"
+        return opened_tile_layers
+
+    def close_tile_images(self) -> None:
+        if len(self._tile_image_layers) > 0:
+            close_image_layers(self._napari_viewer, self._tile_image_layers)
+            self._tile_image_layers = []
+
+    def _open_tile_image(self, tile_image_path: str) -> list[Image] | None:
+        if len(self._tile_image_layers) > 0:
+            close_image_layers(self._napari_viewer, self._tile_image_layers)
+            self._tile_image_layers = []
+        opened_tile_layers = open_tile_image(
+            self._napari_viewer, tile_image_path
+        )
+        if opened_tile_layers is None:
+            return None
+        self._tile_image_layers = opened_tile_layers
+        return self._tile_image_layers
+
     def _set_open_image_status(self, status: bool) -> None:
         if status:
             self._open_image_status_label.setText("Image opened")
@@ -219,6 +250,7 @@ class GonadControlWidget(QWidget):
     def set_image_closed(self) -> None:
         self._image_path = None
         self._image_layers = None
+        self.close_tile_images()
         self._project_files_dir = None
         self._open_image_line_edit.setText("")
         self._set_open_image_status(False)
@@ -567,6 +599,14 @@ class CarltonLabCountTool(QWidget):
 
     def get_process_control_tiles(self) -> dict[int, str]:
         return self._process_gonads_control_widget.get_image_tiles()
+
+    def open_process_control_tile_images(
+        self, tile_index: int
+    ) -> list[Image] | None:
+        return self._process_gonads_control_widget.open_tile_images(tile_index)
+
+    def close_process_control_tile_images(self) -> None:
+        self._process_gonads_control_widget.close_tile_images()
 
     def set_image_path(self, image_path: str, image_layer: Image) -> None:
         self._image_path = image_path

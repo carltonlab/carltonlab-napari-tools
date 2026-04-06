@@ -1,5 +1,6 @@
 import os
 from configparser import ConfigParser
+from pathlib import Path
 
 import numpy as np
 import tifffile
@@ -10,6 +11,9 @@ from qtpy.QtWidgets import QWidget
 from carltonlab_napari_count_tool._model import (
     get_file_name_from_path,
     get_loaded_image_contrasts,
+    get_loaded_image_contrasts_from_file_path,
+    get_tile_contrasts_file_path,
+    is_tile_image_path,
     verify_project_directory_from_image_path,
 )
 from carltonlab_napari_count_tool._shared_variables import (
@@ -114,12 +118,43 @@ def save_contrasts(
         config_parser.write(config_file)
 
 
+def save_tile_contrasts(
+    saving_dict: dict[int, tuple[float, float]], tile_image_path: str
+) -> None:
+    tile_path = Path(tile_image_path)
+    tile_name = tile_path.name
+    if tile_name.endswith(".ome.zarr"):
+        tile_stem = tile_name[: -len(".ome.zarr")]
+    else:
+        tile_stem = tile_path.stem
+    saving_contrasts_file_path = (
+        tile_path.parent / f"{tile_stem}_contrasts.config"
+    )
+    config_parser: ConfigParser = ConfigParser()
+    config_parser.add_section("ImageContrasts")
+    config_parser["ImageContrasts"]["NumberOfChannels"] = str(len(saving_dict))
+    for contrast_index in range(len(saving_dict.keys())):
+        contrast_string: str = "channel-" + str(contrast_index + 1)
+        contrast_values: tuple[float, float] = saving_dict[contrast_index]
+        config_parser["ImageContrasts"][contrast_string] = (
+            str(contrast_values[0]) + "," + str(contrast_values[1])
+        )
+    with saving_contrasts_file_path.open("w") as config_file:
+        config_parser.write(config_file)
+
+
 def get_image_contrasts_from_file(
     image_path: str, images: tuple[Image, ...]
 ) -> dict[int, tuple[float, float]] | None:
-    image_dir: str = os.path.dirname(image_path)
-    project_file_dir: str = os.path.join(image_dir, DEFAULT_PROJECT_NAME)
-    returning_dict = get_loaded_image_contrasts(project_file_dir)
+    if is_tile_image_path(image_path):
+        tile_contrasts_file_path = get_tile_contrasts_file_path(image_path)
+        returning_dict = get_loaded_image_contrasts_from_file_path(
+            tile_contrasts_file_path
+        )
+    else:
+        image_dir: str = os.path.dirname(image_path)
+        project_file_dir: str = os.path.join(image_dir, DEFAULT_PROJECT_NAME)
+        returning_dict = get_loaded_image_contrasts(project_file_dir)
     if returning_dict is None:
         return returning_dict
     for layer_index, contrast_tuple in returning_dict.items():

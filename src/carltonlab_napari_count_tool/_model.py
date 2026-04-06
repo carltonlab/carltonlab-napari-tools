@@ -52,6 +52,11 @@ def close_all_non_set_image_layers(
     return True
 
 
+def _set_image_layer_names(image_layers: list[Image], base_name: str) -> None:
+    for layer_index, image_layer in enumerate(image_layers):
+        image_layer.name = f"{base_name}[{layer_index}]"
+
+
 def validate_closed_layers(napari_viewer: ViewerModel) -> bool:
     number_of_layers: int = len(napari_viewer.layers)
     if number_of_layers <= 0:
@@ -151,6 +156,7 @@ def open_project_image(
                 image_layer.contrast_limits = _coerce_contrast_limits(
                     image_layer, setting_contrast
                 )
+    _set_image_layer_names(image_list, "Stitched")
     tiles_dict = get_tile_paths(image_path)
     return (image_path, image_list, tiles_dict, project_files_dir)
 
@@ -204,6 +210,46 @@ def _coerce_contrast_limits(
         else:
             max_contrast = min_contrast + min_gap
     return (min_contrast, max_contrast)
+
+
+def close_image_layers(
+    napari_viewer: ViewerModel, image_layers: list[Image]
+) -> None:
+    for image_layer in image_layers:
+        if image_layer in napari_viewer.layers:
+            napari_viewer.layers.remove(image_layer)
+
+
+def open_tile_image(
+    napari_viewer: ViewerModel, tile_image_path: str
+) -> list[Image] | None:
+    image_list: list[Image] = []
+    opened_layers = napari_viewer.open(tile_image_path)
+    if not isinstance(opened_layers, list):
+        opened_layers = [opened_layers]
+    opened_images = [
+        layer for layer in opened_layers if isinstance(layer, Image)
+    ]
+    if len(opened_images) == 0:
+        show_info("No image layers were opened from the tile OME.zarr path")
+        return None
+    if len(opened_images) == 1:
+        tile_image = opened_images[0]
+        image_data = tile_image.data
+        if hasattr(image_data, "ndim") and image_data.ndim >= 4:
+            close_image_layers(napari_viewer, [tile_image])
+            split_layers = napari_viewer.add_image(image_data, channel_axis=1)
+            if isinstance(split_layers, Image):
+                show_info(
+                    "Only one image open when trying to split channels from tile OME.zarr"
+                )
+                return None
+            image_list = cast(list[Image], split_layers)
+        else:
+            image_list = opened_images
+    else:
+        image_list = opened_images
+    return image_list
 
 
 def open_image_as_layer(
@@ -479,9 +525,26 @@ def get_project_files_dir_from_image_path(image_path: str) -> str:
     return project_files_dir
 
 
+def get_tile_contrasts_file_path(image_path: str) -> str:
+    image_path_obj = Path(image_path)
+    image_name = image_path_obj.name
+    if image_name.endswith(".ome.zarr"):
+        image_stem = image_name[: -len(".ome.zarr")]
+    else:
+        image_stem = image_path_obj.stem
+    return str(image_path_obj.parent / f"{image_stem}_contrasts.config")
+
+
+def is_tile_image_path(image_path: str) -> bool:
+    return Path(image_path).parent.name.endswith("_tiles")
+
+
 def verify_image_contrasts_file(image_path: str | None) -> bool:
     if image_path is None:
         return False
+    if is_tile_image_path(image_path):
+        tile_contrasts_file_path = get_tile_contrasts_file_path(image_path)
+        return os.path.exists(tile_contrasts_file_path)
     image_dir: str = os.path.dirname(image_path)
     saving_contrasts_file_path: str = os.path.join(
         image_dir, DEFAULT_PROJECT_NAME, IMAGE_CONTRASTS_FILE_NAME
@@ -498,6 +561,12 @@ def get_loaded_image_contrasts(
     contrasts_file_path: str = os.path.join(
         project_dir, IMAGE_CONTRASTS_FILE_NAME
     )
+    return get_loaded_image_contrasts_from_file_path(contrasts_file_path)
+
+
+def get_loaded_image_contrasts_from_file_path(
+    contrasts_file_path: str,
+) -> dict[int, tuple[float, float]] | None:
     if not os.path.exists(contrasts_file_path):
         print(
             f"The contrast file with path: {contrasts_file_path} doesn't exist"

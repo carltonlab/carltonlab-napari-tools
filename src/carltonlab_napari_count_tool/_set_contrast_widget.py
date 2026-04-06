@@ -8,6 +8,7 @@ from qtpy.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -28,6 +29,7 @@ from carltonlab_napari_count_tool._protocols import (
 from carltonlab_napari_count_tool._set_contrast_widget_model import (
     get_image_contrasts_from_file,
     save_contrasts,
+    save_tile_contrasts,
     set_layer_contrast_limits,
 )
 from carltonlab_napari_count_tool._shared_widgets import clear_layout
@@ -330,6 +332,7 @@ class SetContrastWidget(QWidget):
         self._main_widget: MainWidgetCallBacks = parent_widget
         self._image_tuple: tuple[Image, ...] | None = None
         self._image_path: str | None = None
+        self._tile_images: list[Image] = []
         self._ctool_button: CToolButton | None = ctool_button
 
         self._contrast_dict: dict[int, ContrastLimitWidget] = {}
@@ -389,6 +392,9 @@ class SetContrastWidget(QWidget):
         )
 
         self._tiles_list_widget: QListWidget = QListWidget()
+        self._tiles_list_widget.itemSelectionChanged.connect(
+            self._tiles_list_widget_selection_changed
+        )
         self._tiles_list_scroll_layout.addWidget(self._tiles_list_widget)
 
         self._top_container_layout.addSpacing(6)
@@ -424,6 +430,13 @@ class SetContrastWidget(QWidget):
 
         self._top_container_layout.addStretch()
 
+        if image_tuple is not None and image_path is not None:
+            self._image_path = image_path
+            self._image_tuple = image_tuple
+            for image in image_tuple:
+                if image is not None:
+                    image.visible = False
+
         self._populate_tiles_list()
 
         # if image_tuple is not None and image_path is not None:
@@ -433,8 +446,68 @@ class SetContrastWidget(QWidget):
         tiles_dict: dict[int, str] = (
             self._main_widget.get_process_control_tiles()
         )
-        print(tiles_dict)
+        self._tiles_list_widget.clear()
+        for tile_index, tile_image_path in sorted(tiles_dict.items()):
+            tile_widget = TileListWidget(
+                self._napari_viewer,
+                self._main_widget,
+                tile_image_path,
+                tile_index,
+            )
+            list_item = QListWidgetItem()
+            list_item.setSizeHint(tile_widget.sizeHint())
+            self._tiles_list_widget.addItem(list_item)
+            self._tiles_list_widget.setItemWidget(list_item, tile_widget)
+        if self._image_path is not None:
+            stitched_widget = TileListWidget(
+                self._napari_viewer,
+                self._main_widget,
+                self._image_path,
+                -1,
+            )
+            stitched_item = QListWidgetItem()
+            stitched_item.setSizeHint(stitched_widget.sizeHint())
+            self._tiles_list_widget.addItem(stitched_item)
+            self._tiles_list_widget.setItemWidget(
+                stitched_item, stitched_widget
+            )
+            self._tiles_list_widget.setCurrentItem(stitched_item)
         return
+
+    def _tiles_list_widget_selection_changed(self) -> None:
+        selected_item = self._tiles_list_widget.currentItem()
+        if selected_item is None:
+            return
+        selected_widget = self._tiles_list_widget.itemWidget(selected_item)
+        if not isinstance(selected_widget, TileListWidget):
+            return
+
+        process_control_data = (
+            self._main_widget.get_process_control_images_and_paths()
+        )
+        if process_control_data is None:
+            return
+        stitched_image_path, _, stitched_images = process_control_data
+
+        if selected_widget.get_tile_index() == -1:
+            self._main_widget.close_process_control_tile_images()
+            for image in stitched_images:
+                image.visible = True
+            self.new_image_open(tuple(stitched_images), stitched_image_path)
+            return
+
+        for image in stitched_images:
+            image.visible = False
+        tile_images = self._main_widget.open_process_control_tile_images(
+            selected_widget.get_tile_index()
+        )
+        if tile_images is None:
+            return
+        for image in tile_images:
+            image.visible = True
+        self.new_image_open(
+            tuple(tile_images), selected_widget.get_image_path()
+        )
 
     def new_image_open(
         self, image_tuple: tuple[Image, ...] | None, image_path: str | None
@@ -517,7 +590,17 @@ class SetContrastWidget(QWidget):
         saving_dict: dict[int, tuple[float, float]] = {}
         for saving_index, saving_value in self._contrast_dict.items():
             saving_dict[saving_index] = saving_value.get_contrast_limits()
-        save_contrasts(self._napari_viewer, saving_dict, self._image_path)
+        tiles_dict: dict[int, str] = (
+            self._main_widget.get_process_control_tiles()
+        )
+        if self._image_path in tiles_dict.values():
+            save_tile_contrasts(saving_dict, self._image_path)
+        else:
+            save_contrasts(
+                self._napari_viewer,
+                saving_dict,
+                self._image_path,
+            )
         self._set_save_image_label_state(True)
         if self._ctool_button is not None:
             self._ctool_button.validate_property(self._image_path)
@@ -568,3 +651,9 @@ class TileListWidget(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         self._layout.addWidget(self._string_label)
+
+    def get_tile_index(self) -> int:
+        return self._tile_index
+
+    def get_image_path(self) -> str:
+        return self._image_path
