@@ -194,6 +194,9 @@ class GonadControlWidget(QWidget):
             return None
         return (self._image_path, self._project_files_dir, self._image_layers)
 
+    def get_image_tiles(self) -> dict[int, tuple[str, list[Image]]]:
+        return self._image_tiles
+
     def _set_open_image_status(self, status: bool) -> None:
         if status:
             self._open_image_status_label.setText("Image opened")
@@ -561,6 +564,9 @@ class CarltonLabCountTool(QWidget):
             self._process_gonads_control_widget.get_images_and_paths()
         )
         return obtained_images_and_paths
+
+    def get_process_control_tiles(self) -> dict[int, tuple[str, list[Image]]]:
+        return self._process_gonads_control_widget.get_image_tiles()
 
     def set_image_path(self, image_path: str, image_layer: Image) -> None:
         self._image_path = image_path

@@ -424,8 +424,17 @@ class SetContrastWidget(QWidget):
 
         self._top_container_layout.addStretch()
 
-        if image_tuple is not None and image_path is not None:
-            self.new_image_open(image_tuple, image_path)
+        self._populate_tiles_list()
+
+        # if image_tuple is not None and image_path is not None:
+        #    self.new_image_open(image_tuple, image_path)
+
+    def _populate_tiles_list(self) -> None:
+        tiles_dict: dict[int, tuple[str, list[Image]]] = (
+            self._main_widget.get_process_control_tiles()
+        )
+        print(tiles_dict)
+        return
 
     def new_image_open(
         self, image_tuple: tuple[Image, ...] | None, image_path: str | None
