@@ -1,4 +1,6 @@
+import csv
 import os
+import shutil
 from collections.abc import Callable
 from configparser import ConfigParser
 from configparser import Error as ConfigParserError
@@ -78,7 +80,11 @@ def open_project_image(
             no_mode=True,
         )
         if confirm_answer:
-            new_image_path: str = create_project_dir_structure(image_path)
+            try:
+                new_image_path = create_project_dir_structure(image_path)
+            except (FileNotFoundError, ValueError, FileExistsError) as exc:
+                show_info(str(exc))
+                return None
             image_path = new_image_path
             image_dir = os.path.dirname(image_path)
             project_files_dir = os.path.join(image_dir, DEFAULT_PROJECT_NAME)
@@ -260,9 +266,144 @@ def verify_project_directory_from_image_path(
     if os.path.exists(searching_project_path):
         return True
     if create_project_if_not_exist:
-        new_image_path: str = create_project_dir_structure(image_path)
+        try:
+            new_image_path: str = create_project_dir_structure(image_path)
+        except (FileNotFoundError, ValueError, FileExistsError) as exc:
+            show_info(str(exc))
+            return False
         return new_image_path
     return False
+
+
+def _strip_ome_zarr_suffix(name: str) -> str:
+    if name.endswith(".ome.zarr"):
+        return name[: -len(".ome.zarr")]
+    return Path(name).stem
+
+
+def _get_tile_positions_csv_path(image_path: str) -> Path:
+    image_path_obj = Path(image_path)
+    return image_path_obj.parent / (
+        f"{_strip_ome_zarr_suffix(image_path_obj.name)}_tile_positions.csv"
+    )
+
+
+def _get_tiles_directory_path(image_path: str) -> Path:
+    image_path_obj = Path(image_path)
+    return image_path_obj.parent / (
+        f"{_strip_ome_zarr_suffix(image_path_obj.name)}_tiles"
+    )
+
+
+def _read_tile_positions_rows(csv_path: Path) -> list[dict[str, str]]:
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        rows = [dict(row) for row in reader]
+    return rows
+
+
+def _get_project_tile_sources(image_path: str) -> tuple[Path, Path] | None:
+    image_path_obj = Path(image_path)
+    if not image_path_obj.name.endswith(".ome.zarr"):
+        return None
+
+    csv_path = _get_tile_positions_csv_path(image_path)
+    if not csv_path.exists():
+        return None
+
+    rows = _read_tile_positions_rows(csv_path)
+    if len(rows) == 0:
+        raise ValueError(f"Tile positions CSV is empty: {csv_path}")
+
+    image_dir = image_path_obj.parent.resolve()
+    tiles_dir = _get_tiles_directory_path(image_path).resolve()
+    if not tiles_dir.exists():
+        raise FileNotFoundError(
+            f"Tiles directory for stitched image was not found: {tiles_dir}"
+        )
+    if not tiles_dir.is_dir():
+        raise ValueError(f"Tiles path is not a directory: {tiles_dir}")
+
+    tile_paths: list[Path] = []
+    for row in rows:
+        tile_path_value = (row.get("tile_path") or "").strip()
+        tile_name_value = (row.get("tile_name") or "").strip()
+        if tile_name_value != "":
+            tile_path = tiles_dir / tile_name_value
+        elif tile_path_value != "":
+            tile_path = Path(tile_path_value)
+        else:
+            raise ValueError(
+                f"Tile positions CSV row is missing tile_path/tile_name: {csv_path}"
+            )
+
+        if not tile_path.is_absolute():
+            tile_path = image_dir / tile_path
+
+        tile_path = tile_path.resolve()
+        if not tile_path.exists():
+            raise FileNotFoundError(
+                f"Tile OME-Zarr directory listed in CSV was not found: {tile_path}"
+            )
+        if not tile_path.is_dir() or not tile_path.name.endswith(".ome.zarr"):
+            raise ValueError(
+                f"Tile path from CSV is not an OME-Zarr directory: {tile_path}"
+            )
+        tile_paths.append(tile_path)
+
+    if len(set(tile_paths)) != len(tile_paths):
+        raise ValueError(
+            f"Tile positions CSV contains duplicate tile paths: {csv_path}"
+        )
+    for tile_path in tile_paths:
+        if tile_path.parent != tiles_dir:
+            raise ValueError(
+                "Tile positions CSV must point to tiles inside the stitched "
+                f"tiles directory. Offending tile: {tile_path}"
+            )
+    return csv_path, tiles_dir
+
+
+def _move_path_into_directory(
+    source_path: Path, destination_dir: Path
+) -> Path:
+    destination_path = destination_dir / source_path.name
+    if destination_path.exists():
+        raise FileExistsError(
+            f"Destination already exists while creating project: {destination_path}"
+        )
+    shutil.move(str(source_path), str(destination_path))
+    return destination_path
+
+
+def _rewrite_tile_positions_csv(
+    csv_path: Path, tile_paths: list[Path]
+) -> None:
+    rows = _read_tile_positions_rows(csv_path)
+    if len(rows) != len(tile_paths):
+        raise ValueError(
+            "Tile positions CSV row count changed during project creation."
+        )
+
+    fieldnames = list(rows[0].keys())
+    for row, tile_path in zip(rows, tile_paths, strict=True):
+        if "tile_path" in row:
+            row["tile_path"] = str(tile_path)
+        if "tile_name" in row:
+            row["tile_name"] = tile_path.name
+
+    with csv_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def _create_project_files_dirs(project_files_dir: Path) -> None:
+    os.makedirs(project_files_dir, exist_ok=True)
+    os.makedirs(project_files_dir / REGIONS_DIR_NAME, exist_ok=True)
+    os.makedirs(project_files_dir / PICK_NUCLEI_DIR_NAME, exist_ok=True)
+    os.makedirs(project_files_dir / SCORED_NUCLEI_DIR_NAME, exist_ok=True)
+    os.makedirs(project_files_dir / RESULTS_DIR, exist_ok=True)
 
 
 def create_project_dir_structure(image_path: str) -> str:
@@ -273,31 +414,31 @@ def create_project_dir_structure(image_path: str) -> str:
         image_file_name_no_ext = image_file_path_object.name[
             : -len(".ome.zarr")
         ]
-    image_file_name: str = image_file_path_object.name
     new_project_path: str = os.path.join(
         parent_dir_path, image_file_name_no_ext + DEFAULT_PROJECT_EXTENSION
     )
     os.makedirs(new_project_path, exist_ok=True)
-    new_image_path: str = os.path.join(new_project_path, image_file_name)
-    if not os.path.exists(new_image_path):
-        os.rename(image_path, new_image_path)
-    project_files_dir: str = os.path.join(
-        new_project_path, DEFAULT_PROJECT_NAME
+    new_project_path_obj = Path(new_project_path)
+
+    tile_sources = _get_project_tile_sources(image_path)
+    new_image_path = _move_path_into_directory(
+        image_file_path_object, new_project_path_obj
     )
-    os.makedirs(project_files_dir, exist_ok=True)
-    regions_path: str = os.path.join(project_files_dir, REGIONS_DIR_NAME)
-    os.makedirs(regions_path, exist_ok=True)
-    pick_nuclei_dir: str = os.path.join(
-        project_files_dir, PICK_NUCLEI_DIR_NAME
-    )
-    os.makedirs(pick_nuclei_dir, exist_ok=True)
-    score_nuclei_dir: str = os.path.join(
-        project_files_dir, SCORED_NUCLEI_DIR_NAME
-    )
-    os.makedirs(score_nuclei_dir, exist_ok=True)
-    results_path: str = os.path.join(project_files_dir, RESULTS_DIR)
-    os.makedirs(results_path, exist_ok=True)
-    return new_image_path
+
+    if tile_sources is not None:
+        csv_path, tiles_dir = tile_sources
+        new_csv_path = _move_path_into_directory(
+            csv_path, new_project_path_obj
+        )
+        moved_tiles_dir = _move_path_into_directory(
+            tiles_dir, new_project_path_obj
+        )
+        moved_tile_paths = sorted(moved_tiles_dir.glob("*.ome.zarr"))
+        _rewrite_tile_positions_csv(new_csv_path, moved_tile_paths)
+
+    project_files_dir = new_project_path_obj / DEFAULT_PROJECT_NAME
+    _create_project_files_dirs(project_files_dir)
+    return str(new_image_path)
 
 
 def get_file_name_from_path(file_path: str) -> tuple[str, str, str]:
