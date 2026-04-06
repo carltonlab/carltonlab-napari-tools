@@ -64,6 +64,64 @@ class ContrastLimitWidget(QWidget):
         )
         self._layout.addWidget(self._set_from_current_contrast_button)
 
+        self._slider_zoom_container: QWidget = QWidget()
+        self._slider_zoom_layout: QHBoxLayout = QHBoxLayout()
+        self._slider_zoom_layout.setContentsMargins(0, 0, 0, 0)
+        self._slider_zoom_container.setLayout(self._slider_zoom_layout)
+        self._layout.addWidget(self._slider_zoom_container)
+
+        self._set_slider_min_zero_button = QPushButton("Set 0")
+        self._set_slider_min_zero_button.clicked.connect(
+            self._set_slider_min_zero_button_pressed
+        )
+        self._slider_zoom_layout.addWidget(self._set_slider_min_zero_button)
+
+        self._set_slider_min_to_lower_button = QPushButton("Set Min")
+        self._set_slider_min_to_lower_button.clicked.connect(
+            self._set_slider_min_to_lower_button_pressed
+        )
+        self._slider_zoom_layout.addWidget(
+            self._set_slider_min_to_lower_button
+        )
+
+        self._decrease_slider_min_button = QPushButton("-10")
+        self._decrease_slider_min_button.clicked.connect(
+            self._decrease_slider_min_button_pressed
+        )
+        self._slider_zoom_layout.addWidget(self._decrease_slider_min_button)
+
+        self._reset_slider_range_button = QPushButton("Reset")
+        self._reset_slider_range_button.clicked.connect(
+            self._reset_slider_range_button_pressed
+        )
+        self._slider_zoom_layout.addWidget(self._reset_slider_range_button)
+
+        self._set_slider_current_button = QPushButton("Set current")
+        self._set_slider_current_button.clicked.connect(
+            self._set_slider_current_button_pressed
+        )
+        self._slider_zoom_layout.addWidget(self._set_slider_current_button)
+
+        self._increase_slider_max_button = QPushButton("+10")
+        self._increase_slider_max_button.clicked.connect(
+            self._increase_slider_max_button_pressed
+        )
+        self._slider_zoom_layout.addWidget(self._increase_slider_max_button)
+
+        self._set_slider_max_to_upper_button = QPushButton("Set Max")
+        self._set_slider_max_to_upper_button.clicked.connect(
+            self._set_slider_max_to_upper_button_pressed
+        )
+        self._slider_zoom_layout.addWidget(
+            self._set_slider_max_to_upper_button
+        )
+
+        self._set_slider_max_full_button = QPushButton("65535")
+        self._set_slider_max_full_button.clicked.connect(
+            self._set_slider_max_full_button_pressed
+        )
+        self._slider_zoom_layout.addWidget(self._set_slider_max_full_button)
+
         self._contrast_slider: QRangeSlider = QRangeSlider(
             Qt.Orientation.Horizontal
         )
@@ -121,15 +179,75 @@ class ContrastLimitWidget(QWidget):
         if all(contrast is not None for contrast in image_layer_contrasts):
             min_contrast: int = int(cast(int, image_layer_contrasts[0]))
             max_contrast: int = int(cast(int, image_layer_contrasts[1]))
+            slider_min = min(self._contrast_slider.minimum(), min_contrast)
+            slider_max = max(self._contrast_slider.maximum(), max_contrast)
             with QSignalBlocker(self._min_spin_box):
                 self._min_spin_box.setValue(min_contrast)
             with QSignalBlocker(self._max_spin_box):
                 self._max_spin_box.setValue(max_contrast)
             with QSignalBlocker(self._contrast_slider):
+                self._contrast_slider.setRange(slider_min, slider_max)
                 self._contrast_slider.setValue((min_contrast, max_contrast))
             set_layer_contrast_limits(
                 self._image_layer, min_contrast, max_contrast
             )
+
+    def _set_slider_bounds(self, slider_min: int, slider_max: int) -> None:
+        slider_min = max(0, min(slider_min, 65535))
+        slider_max = max(slider_min, min(slider_max, 65535))
+        lower_value, upper_value = cast(
+            tuple[int, int], self._contrast_slider.value()
+        )
+        lower_value = min(max(lower_value, slider_min), slider_max)
+        upper_value = min(max(upper_value, slider_min), slider_max)
+        if lower_value > upper_value:
+            lower_value = upper_value
+
+        with QSignalBlocker(self._contrast_slider):
+            self._contrast_slider.setRange(slider_min, slider_max)
+            self._contrast_slider.setValue((lower_value, upper_value))
+        with QSignalBlocker(self._min_spin_box):
+            self._min_spin_box.setValue(lower_value)
+        with QSignalBlocker(self._max_spin_box):
+            self._max_spin_box.setValue(upper_value)
+        set_layer_contrast_limits(self._image_layer, lower_value, upper_value)
+
+    def _set_slider_min_zero_button_pressed(self) -> None:
+        slider_max = self._contrast_slider.maximum()
+        self._set_slider_bounds(0, slider_max)
+
+    def _set_slider_min_to_lower_button_pressed(self) -> None:
+        lower_value, _ = cast(tuple[int, int], self._contrast_slider.value())
+        slider_max = self._contrast_slider.maximum()
+        self._set_slider_bounds(lower_value, slider_max)
+
+    def _decrease_slider_min_button_pressed(self) -> None:
+        slider_min = self._contrast_slider.minimum()
+        slider_max = self._contrast_slider.maximum()
+        self._set_slider_bounds(max(0, slider_min - 10), slider_max)
+
+    def _reset_slider_range_button_pressed(self) -> None:
+        self._set_slider_bounds(0, 65535)
+
+    def _set_slider_current_button_pressed(self) -> None:
+        lower_value, upper_value = cast(
+            tuple[int, int], self._contrast_slider.value()
+        )
+        self._set_slider_bounds(lower_value, upper_value)
+
+    def _increase_slider_max_button_pressed(self) -> None:
+        slider_min = self._contrast_slider.minimum()
+        slider_max = self._contrast_slider.maximum()
+        self._set_slider_bounds(slider_min, min(65535, slider_max + 10))
+
+    def _set_slider_max_to_upper_button_pressed(self) -> None:
+        _, upper_value = cast(tuple[int, int], self._contrast_slider.value())
+        slider_min = self._contrast_slider.minimum()
+        self._set_slider_bounds(slider_min, upper_value)
+
+    def _set_slider_max_full_button_pressed(self) -> None:
+        slider_min = self._contrast_slider.minimum()
+        self._set_slider_bounds(slider_min, 65535)
 
     def _on_min_spinbox_value_changed(self, value: int) -> None:
         max_value = max(value, self._max_spin_box.value())
