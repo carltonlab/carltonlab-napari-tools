@@ -7,6 +7,7 @@ from qtpy.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QListWidget,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -360,10 +361,44 @@ class SetContrastWidget(QWidget):
         self._no_image_open_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._top_container_layout.addWidget(self._no_image_open_label)
 
-        self._contrast_container: QWidget = QWidget()
-        self._contrast_container_layout: QVBoxLayout = QVBoxLayout()
-        self._contrast_container.setLayout(self._contrast_container_layout)
-        self._top_container_layout.addWidget(self._contrast_container)
+        self._tiles_list_container: QWidget = QWidget()
+        self._tiles_list_container_layout: QVBoxLayout = QVBoxLayout()
+        self._tiles_list_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._tiles_list_container.setLayout(self._tiles_list_container_layout)
+        self._top_container_layout.addWidget(self._tiles_list_container)
+
+        self._tiles_list_label: QLabel = QLabel("Tiles")
+        self._tiles_list_label.setStyleSheet("font-weight: bold")
+        self._tiles_list_container_layout.addWidget(self._tiles_list_label)
+
+        self._tiles_list_scroll_area: QScrollArea = QScrollArea()
+        self._tiles_list_scroll_area.setWidgetResizable(True)
+        self._tiles_list_scroll_area.setViewportMargins(0, 0, 10, 0)
+        self._tiles_list_container_layout.addWidget(
+            self._tiles_list_scroll_area
+        )
+
+        self._tiles_list_scroll_container: QWidget = QWidget()
+        self._tiles_list_scroll_area.setWidget(
+            self._tiles_list_scroll_container
+        )
+        self._tiles_list_scroll_layout: QVBoxLayout = QVBoxLayout()
+        self._tiles_list_scroll_layout.setContentsMargins(0, 0, 0, 0)
+        self._tiles_list_scroll_container.setLayout(
+            self._tiles_list_scroll_layout
+        )
+
+        self._tiles_list_widget: QListWidget = QListWidget()
+        self._tiles_list_scroll_layout.addWidget(self._tiles_list_widget)
+
+        self._top_container_layout.addSpacing(6)
+        separator = QFrame(self._top_container)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("background-color: gray;")
+        separator.setFixedHeight(2)
+        self._top_container_layout.addWidget(separator)
+        self._top_container_layout.addSpacing(6)
 
         self._save_container: QWidget = QWidget()
         self._save_container_layout: QVBoxLayout = QVBoxLayout()
@@ -381,6 +416,11 @@ class SetContrastWidget(QWidget):
         self._save_container_layout.addWidget(self._contrast_limit_saved_label)
 
         self._set_save_image_label_state(False)
+
+        self._contrast_container: QWidget = QWidget()
+        self._contrast_container_layout: QVBoxLayout = QVBoxLayout()
+        self._contrast_container.setLayout(self._contrast_container_layout)
+        self._top_container_layout.addWidget(self._contrast_container)
 
         self._top_container_layout.addStretch()
 
@@ -482,3 +522,40 @@ class SetContrastWidget(QWidget):
                 "Contrasts limits not saved"
             )
             self._contrast_limit_saved_label.setStyleSheet("color: red")
+
+
+class TileListWidget(QWidget):
+    _tile_index: int
+    _label_text: str
+    _image_path: str
+    _image_list: list[Image] | None
+    _napari_viewer: ViewerModel
+    _parent_widget: MainWidgetCallBacks
+
+    def __init__(
+        self,
+        napari_viewer: "ViewerModel",
+        parent_widget: MainWidgetCallBacks,
+        image_path: str,
+        tile_index: int,
+    ):
+        super().__init__()
+
+        self._napari_viewer = napari_viewer
+        self._parent_widget = parent_widget
+        self._image_list = []
+        self._image_path = image_path
+        self._tile_index = tile_index
+        self._label_text = ""
+        if tile_index < 0:
+            self._label_text = "Stitched image"
+        else:
+            self._label_text = f"Tile {tile_index}"
+
+        self._layout = QHBoxLayout()
+        self.setLayout(self._layout)
+        self._string_label: QLabel = QLabel(self._label_text, parent=self)
+        self._string_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self._layout.addWidget(self._string_label)
