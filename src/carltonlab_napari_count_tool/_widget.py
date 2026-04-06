@@ -55,7 +55,7 @@ class GonadControlWidget(QWidget):
 
         self._image_path: str | None = None
         self._image_layers: list[Image] | None = None
-        self._image_tiles: dict[int, tuple[str, list[Image]]] = {}
+        self._image_tiles: dict[int, str] = {}
         self._project_files_dir: str | None = None
 
         self._layout = QVBoxLayout()
@@ -145,10 +145,10 @@ class GonadControlWidget(QWidget):
             self._open_image_line_edit.setText("")
             self._set_open_image_status(False)
             return
-        open_answer: (
-            tuple[str, list[Image], dict[int, tuple[str, list[Image]]], str]
-            | None
-        ) = open_project_image(self._napari_viewer, image_path)
+        image_path_str: str = image_path
+        open_answer: tuple[str, list[Image], dict[int, str], str] | None = (
+            open_project_image(self._napari_viewer, image_path_str)
+        )
         if open_answer is None:
             self.open_new_image_process_widget(
                 main_widget_callbacks, None, None
@@ -194,7 +194,7 @@ class GonadControlWidget(QWidget):
             return None
         return (self._image_path, self._project_files_dir, self._image_layers)
 
-    def get_image_tiles(self) -> dict[int, tuple[str, list[Image]]]:
+    def get_image_tiles(self) -> dict[int, str]:
         return self._image_tiles
 
     def _set_open_image_status(self, status: bool) -> None:
@@ -565,7 +565,7 @@ class CarltonLabCountTool(QWidget):
         )
         return obtained_images_and_paths
 
-    def get_process_control_tiles(self) -> dict[int, tuple[str, list[Image]]]:
+    def get_process_control_tiles(self) -> dict[int, str]:
         return self._process_gonads_control_widget.get_image_tiles()
 
     def set_image_path(self, image_path: str, image_layer: Image) -> None:

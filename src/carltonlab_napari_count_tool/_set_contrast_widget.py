@@ -430,7 +430,7 @@ class SetContrastWidget(QWidget):
         #    self.new_image_open(image_tuple, image_path)
 
     def _populate_tiles_list(self) -> None:
-        tiles_dict: dict[int, tuple[str, list[Image]]] = (
+        tiles_dict: dict[int, str] = (
             self._main_widget.get_process_control_tiles()
         )
         print(tiles_dict)

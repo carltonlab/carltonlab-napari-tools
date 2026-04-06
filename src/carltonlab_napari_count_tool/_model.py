@@ -69,7 +69,7 @@ def validate_closed_layers(napari_viewer: ViewerModel) -> bool:
 
 def open_project_image(
     napari_viewer: ViewerModel, image_path: str
-) -> tuple[str, list[Image], dict[int, tuple[str, list[Image]]], str] | None:
+) -> tuple[str, list[Image], dict[int, str], str] | None:
     is_zarr_dir = os.path.isdir(image_path) and image_path.endswith(".zarr")
     image_dir: str = os.path.dirname(image_path)
     project_files_dir: str = os.path.join(image_dir, DEFAULT_PROJECT_NAME)
@@ -155,8 +155,8 @@ def open_project_image(
     return (image_path, image_list, tiles_dict, project_files_dir)
 
 
-def get_tile_paths(image_path: str) -> dict[int, tuple[str, list[Image]]]:
-    image_tiles: dict[int, tuple[str, list[Image]]] = {}
+def get_tile_paths(image_path: str) -> dict[int, str]:
+    image_tiles: dict[int, str] = {}
     csv_path = _get_tile_positions_csv_path(image_path)
     tiles_dir = _get_tiles_directory_path(image_path)
 
@@ -173,7 +173,7 @@ def get_tile_paths(image_path: str) -> dict[int, tuple[str, list[Image]]]:
         if not tile_path.exists():
             continue
 
-        image_tiles[tile_index] = (str(tile_path), [])
+        image_tiles[tile_index] = str(tile_path)
 
     return image_tiles
 
