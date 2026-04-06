@@ -10,11 +10,11 @@ from qtpy.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
+from superqt import QRangeSlider
 
 from carltonlab_napari_count_tool._model import (
     get_image_contrasts,
@@ -64,57 +64,56 @@ class ContrastLimitWidget(QWidget):
         )
         self._layout.addWidget(self._set_from_current_contrast_button)
 
-        self._min_container: QWidget = QWidget()
-        self._min_container_layout: QHBoxLayout = QHBoxLayout()
-        self._min_container.setLayout(self._min_container_layout)
-        self._layout.addWidget(self._min_container)
+        self._contrast_slider: QRangeSlider = QRangeSlider(
+            Qt.Orientation.Horizontal
+        )
+        self._contrast_slider.setRange(0, 65535)
+        self._contrast_slider.setSingleStep(1)
+        self._contrast_slider.setValue((1, 65535))
+        self._contrast_slider.valueChanged.connect(
+            self._on_range_slider_value_changed
+        )
+        self._layout.addWidget(self._contrast_slider)
+
+        self._spin_boxes_container: QWidget = QWidget()
+        self._spin_boxes_container_layout: QHBoxLayout = QHBoxLayout()
+        self._spin_boxes_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._spin_boxes_container.setLayout(self._spin_boxes_container_layout)
+        self._layout.addWidget(self._spin_boxes_container)
 
         self._min_label: QLabel = QLabel("Min")
-        self._min_container_layout.addWidget(self._min_label)
-        self._min_slider: QSlider = QSlider(Qt.Orientation.Horizontal)
-        self._min_slider.setSizePolicy(
+        self._min_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        self._spin_boxes_container_layout.addWidget(self._min_label)
+        self._min_spin_box: QSpinBox = QSpinBox()
+        self._min_spin_box.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        self._min_slider.setRange(0, 65535)
-        self._min_slider.setSingleStep(1)
-        self._min_slider.setValue(1)
-        self._min_slider.valueChanged.connect(
-            self._on_min_spinbox_value_changed
-        )
-        self._min_container_layout.addWidget(self._min_slider)
-        self._min_spin_box: QSpinBox = QSpinBox()
+        self._min_spin_box.setKeyboardTracking(False)
         self._min_spin_box.setRange(0, 65535)
         self._min_spin_box.setValue(1)
-        self._min_spin_box.valueChanged.connect(
-            self._on_min_spinbox_value_changed
+        self._min_spin_box.editingFinished.connect(
+            self._on_min_spinbox_editing_finished
         )
-        self._min_container_layout.addWidget(self._min_spin_box)
-
-        self._max_container: QWidget = QWidget()
-        self._max_container_layout: QHBoxLayout = QHBoxLayout()
-        self._max_container.setLayout(self._max_container_layout)
-        self._layout.addWidget(self._max_container)
+        self._spin_boxes_container_layout.addWidget(self._min_spin_box)
 
         self._max_label: QLabel = QLabel("Max")
-        self._max_container_layout.addWidget(self._max_label)
-        self._max_slider: QSlider = QSlider(Qt.Orientation.Horizontal)
-        self._max_slider.setSizePolicy(
+        self._max_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed
+        )
+        self._spin_boxes_container_layout.addWidget(self._max_label)
+        self._max_spin_box: QSpinBox = QSpinBox()
+        self._max_spin_box.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
         )
-        self._max_slider.setRange(0, 65535)
-        self._max_slider.setSingleStep(1)
-        self._max_slider.setValue(65535)
-        self._max_slider.valueChanged.connect(
-            self._on_max_spinbox_value_changed
-        )
-        self._max_container_layout.addWidget(self._max_slider)
-        self._max_spin_box: QSpinBox = QSpinBox()
+        self._max_spin_box.setKeyboardTracking(False)
         self._max_spin_box.setRange(0, 65535)
         self._max_spin_box.setValue(65535)
-        self._max_spin_box.valueChanged.connect(
-            self._on_max_spinbox_value_changed
+        self._max_spin_box.editingFinished.connect(
+            self._on_max_spinbox_editing_finished
         )
-        self._max_container_layout.addWidget(self._max_spin_box)
+        self._spin_boxes_container_layout.addWidget(self._max_spin_box)
 
     def _set_from_current_contrast_button_pressed(self) -> None:
         image_layer: Image = self._image_layer
@@ -124,46 +123,55 @@ class ContrastLimitWidget(QWidget):
             max_contrast: int = int(cast(int, image_layer_contrasts[1]))
             with QSignalBlocker(self._min_spin_box):
                 self._min_spin_box.setValue(min_contrast)
-            with QSignalBlocker(self._min_slider):
-                self._min_slider.setValue(min_contrast)
             with QSignalBlocker(self._max_spin_box):
                 self._max_spin_box.setValue(max_contrast)
-            with QSignalBlocker(self._max_slider):
-                self._max_slider.setValue(max_contrast)
+            with QSignalBlocker(self._contrast_slider):
+                self._contrast_slider.setValue((min_contrast, max_contrast))
+            set_layer_contrast_limits(
+                self._image_layer, min_contrast, max_contrast
+            )
 
-    def _on_min_spinbox_value_changed(self, value) -> None:
-        with QSignalBlocker(self._min_slider):
-            self._min_slider.setValue(value)
+    def _on_min_spinbox_value_changed(self, value: int) -> None:
+        max_value = max(value, self._max_spin_box.value())
         with QSignalBlocker(self._min_spin_box):
             self._min_spin_box.setValue(value)
-        if self._max_slider.value() < value:
-            with QSignalBlocker(self._max_slider):
-                self._max_slider.setValue(value)
-        if self._max_spin_box.value() < value:
-            with QSignalBlocker(self._max_spin_box):
-                self._max_spin_box.setValue(value)
+        with QSignalBlocker(self._max_spin_box):
+            self._max_spin_box.setValue(max_value)
+        with QSignalBlocker(self._contrast_slider):
+            self._contrast_slider.setValue((value, max_value))
         set_layer_contrast_limits(
             self._image_layer,
             self._min_spin_box.value(),
             self._max_spin_box.value(),
         )
 
-    def _on_max_spinbox_value_changed(self, value) -> None:
-        with QSignalBlocker(self._max_slider):
+    def _on_min_spinbox_editing_finished(self) -> None:
+        self._on_min_spinbox_value_changed(self._min_spin_box.value())
+
+    def _on_max_spinbox_value_changed(self, value: int) -> None:
+        min_value = min(value, self._min_spin_box.value())
+        with QSignalBlocker(self._min_spin_box):
+            self._min_spin_box.setValue(min_value)
+        with QSignalBlocker(self._max_spin_box):
             self._max_spin_box.setValue(value)
-        with QSignalBlocker(self._min_slider):
-            self._max_slider.setValue(value)
-        if self._min_spin_box.value() > self._max_spin_box.value():
-            with QSignalBlocker(self._min_spin_box):
-                self._min_spin_box.setValue(value)
-        if self._min_slider.value() > self._max_slider.value():
-            with QSignalBlocker(self._min_slider):
-                self._min_slider.setValue(value)
+        with QSignalBlocker(self._contrast_slider):
+            self._contrast_slider.setValue((min_value, value))
         set_layer_contrast_limits(
             self._image_layer,
             self._min_spin_box.value(),
             self._max_spin_box.value(),
         )
+
+    def _on_max_spinbox_editing_finished(self) -> None:
+        self._on_max_spinbox_value_changed(self._max_spin_box.value())
+
+    def _on_range_slider_value_changed(self, values: tuple[int, int]) -> None:
+        min_value, max_value = values
+        with QSignalBlocker(self._min_spin_box):
+            self._min_spin_box.setValue(min_value)
+        with QSignalBlocker(self._max_spin_box):
+            self._max_spin_box.setValue(max_value)
+        set_layer_contrast_limits(self._image_layer, min_value, max_value)
 
     def set_contrast_limits(self, contrast_limits: list[float | None]) -> None:
         if any(contrast_limit is None for contrast_limit in contrast_limits):
@@ -172,6 +180,8 @@ class ContrastLimitWidget(QWidget):
             )
         int_min = cast(int, contrast_limits[0])
         int_max = cast(int, contrast_limits[1])
+        with QSignalBlocker(self._contrast_slider):
+            self._contrast_slider.setValue((int_min, int_max))
         self._min_spin_box.setValue(int_min)
         self._max_spin_box.setValue(int_max)
 
