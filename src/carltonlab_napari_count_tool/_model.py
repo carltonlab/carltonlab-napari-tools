@@ -69,7 +69,7 @@ def validate_closed_layers(napari_viewer: ViewerModel) -> bool:
 
 def open_project_image(
     napari_viewer: ViewerModel, image_path: str
-) -> tuple[str, list[Image], str] | None:
+) -> tuple[str, list[Image], dict[int, tuple[str, list[Image]]], str] | None:
     is_zarr_dir = os.path.isdir(image_path) and image_path.endswith(".zarr")
     image_dir: str = os.path.dirname(image_path)
     project_files_dir: str = os.path.join(image_dir, DEFAULT_PROJECT_NAME)
@@ -151,7 +151,31 @@ def open_project_image(
                 image_layer.contrast_limits = _coerce_contrast_limits(
                     image_layer, setting_contrast
                 )
-    return (image_path, image_list, project_files_dir)
+    tiles_dict = get_tile_paths(image_path)
+    return (image_path, image_list, tiles_dict, project_files_dir)
+
+
+def get_tile_paths(image_path: str) -> dict[int, tuple[str, list[Image]]]:
+    image_tiles: dict[int, tuple[str, list[Image]]] = {}
+    csv_path = _get_tile_positions_csv_path(image_path)
+    tiles_dir = _get_tiles_directory_path(image_path)
+
+    if not csv_path.exists() or not tiles_dir.is_dir():
+        return image_tiles
+
+    rows = _read_tile_positions_rows(csv_path)
+    for tile_index, row in enumerate(rows):
+        tile_name = (row.get("tile_name") or "").strip()
+        if tile_name == "":
+            continue
+
+        tile_path = (tiles_dir / tile_name).resolve()
+        if not tile_path.exists():
+            continue
+
+        image_tiles[tile_index] = (str(tile_path), [])
+
+    return image_tiles
 
 
 def _coerce_contrast_limits(

@@ -55,6 +55,7 @@ class GonadControlWidget(QWidget):
 
         self._image_path: str | None = None
         self._image_layers: list[Image] | None = None
+        self._image_tiles: dict[int, tuple[str, list[Image]]] = {}
         self._project_files_dir: str | None = None
 
         self._layout = QVBoxLayout()
@@ -129,6 +130,7 @@ class GonadControlWidget(QWidget):
             return
         self._image_path = None
         self._image_layers = None
+        self._image_tiles = {}
         self._project_files_dir = None
         main_widget_callbacks: MainWidgetCallBacks = cast(
             MainWidgetCallBacks, self._main_widget
@@ -143,9 +145,10 @@ class GonadControlWidget(QWidget):
             self._open_image_line_edit.setText("")
             self._set_open_image_status(False)
             return
-        open_answer: tuple[str, list[Image], str] | None = open_project_image(
-            self._napari_viewer, image_path
-        )
+        open_answer: (
+            tuple[str, list[Image], dict[int, tuple[str, list[Image]]], str]
+            | None
+        ) = open_project_image(self._napari_viewer, image_path)
         if open_answer is None:
             self.open_new_image_process_widget(
                 main_widget_callbacks, None, None
@@ -158,7 +161,8 @@ class GonadControlWidget(QWidget):
             return
         self._image_path = open_answer[0]
         self._image_layers = open_answer[1]
-        self._project_files_dir = open_answer[2]
+        self._image_tiles = open_answer[2]
+        self._project_files_dir = open_answer[3]
         self.update_line_edit()
         self.open_new_image_process_widget(
             main_widget_callbacks, tuple(self._image_layers), self._image_path

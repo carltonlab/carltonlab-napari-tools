@@ -193,6 +193,8 @@ class SetContrastWidget(QWidget):
         parent_q_widget: QWidget = cast(QWidget, parent_widget)
         super().__init__(parent_q_widget)
 
+        self._image_pairs_list: list[tuple[Image, Image]] = []
+
         self._napari_viewer = napari_viewer
         self._base_layer: Image
         self._scoring_layer: Image
