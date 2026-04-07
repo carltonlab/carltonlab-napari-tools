@@ -665,15 +665,27 @@ def _load_tile_infos_from_gonad_dir(
     if len(tile_positions_paths) == 0:
         return {}
     tile_positions_path = tile_positions_paths[0]
+    tile_positions_stem = tile_positions_path.name[
+        : -len("_tile_positions.csv")
+    ]
+    tiles_dir = Path(gonad_dir) / f"{tile_positions_stem}_tiles"
     with tile_positions_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         rows = [dict(row) for row in reader]
     tile_infos: dict[int, dict[str, int | str]] = {}
     for tile_index, row in enumerate(rows):
         tile_info: dict[str, int | str] = {}
+        tile_name = (row.get("tile_name") or "").strip()
         tile_path = (row.get("tile_path") or "").strip()
-        if tile_path != "":
-            tile_info["tile_path"] = tile_path
+        resolved_tile_path = ""
+        if tile_name != "":
+            local_tile_path = tiles_dir / tile_name
+            if local_tile_path.exists():
+                resolved_tile_path = str(local_tile_path)
+        if resolved_tile_path == "" and tile_path != "":
+            resolved_tile_path = tile_path
+        if resolved_tile_path != "":
+            tile_info["tile_path"] = resolved_tile_path
         for dim in ("y", "x"):
             min_key = f"{dim}_min_px_index"
             max_key = f"{dim}_max_px_index_exclusive"
