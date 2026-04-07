@@ -14,6 +14,10 @@ from napari.utils.notifications import show_error, show_info
 from napari.viewer import ViewerModel
 from qtpy.QtWidgets import QWidget
 
+from carltonlab_napari_count_tool._model import (
+    get_loaded_image_contrasts_from_file_path,
+    get_tile_contrasts_file_path,
+)
 from carltonlab_napari_count_tool._regions_widget_model import SPLINE_FILE_NAME
 from carltonlab_napari_count_tool._set_contrast_widget_model import (
     get_loaded_image_contrasts,
@@ -50,6 +54,9 @@ class CLSPSbsObject:
         sbs_file_path: str,
         gonad_file_name: str,
         crop_box_yx: tuple[int, int, int, int] | None = None,
+        setting_contrast: dict[int, tuple[float, float]] | None = None,
+        overlapping_tiles: list[int] | None = None,
+        contrast_source: str = "stitched",
     ):
         self._napari_viewer = napari_viewer
         self._name: str = name
@@ -64,6 +71,13 @@ class CLSPSbsObject:
         self._image_file_path: str = sbs_file_path
         self._gonad_file_name: str = gonad_file_name
         self._crop_box_yx: tuple[int, int, int, int] | None = crop_box_yx
+        self._setting_contrast: dict[int, tuple[float, float]] | None = (
+            setting_contrast
+        )
+        self._overlapping_tiles: list[int] = (
+            [] if overlapping_tiles is None else overlapping_tiles
+        )
+        self._contrast_source: str = contrast_source
         self._number_of_points: int
         self._saved_state: bool
 
@@ -84,6 +98,32 @@ class CLSPSbsObject:
 
     def get_crop_box_yx(self) -> tuple[int, int, int, int] | None:
         return self._crop_box_yx
+
+    @property
+    def overlapping_tiles(self) -> list[int]:
+        return self._overlapping_tiles
+
+    @overlapping_tiles.setter
+    def overlapping_tiles(self, value: list[int]) -> None:
+        self._overlapping_tiles = value
+
+    @property
+    def contrast_source(self) -> str:
+        return self._contrast_source
+
+    @contrast_source.setter
+    def contrast_source(self, value: str) -> None:
+        self._contrast_source = value
+
+    @property
+    def setting_contrast(self) -> dict[int, tuple[float, float]] | None:
+        return self._setting_contrast
+
+    @setting_contrast.setter
+    def setting_contrast(
+        self, value: dict[int, tuple[float, float]] | None
+    ) -> None:
+        self._setting_contrast = value
 
     def load_number_of_points(self) -> int | None:
         points_file_path: str = os.path.join(
@@ -154,10 +194,7 @@ def open_image_layer_from_clsp_object(
     napari_viewer: ViewerModel, clsp_object: CLSPSbsObject, blind: bool = False
 ) -> tuple[Image, Image]:
     image_path: str = clsp_object.get_image_path()
-    project_dir: str = clsp_object.get_gonad_dir()
-    layers_contrasts: dict[int, tuple[float, float]] | None = (
-        _load_layers_contrasts(project_dir)
-    )
+    layers_contrasts = clsp_object.setting_contrast
     print(f"The layers contrasts are: {layers_contrasts}")
     print(f"The image path is: {image_path}")
     image_data = tifffile.imread(image_path)
@@ -523,6 +560,7 @@ def _open_scoring_path(
             print(f"The sbs directory {sbs_directory} doesn't exist")
             return "failed"
         metadata_by_sbs_name = _load_sbs_metadata_by_name(sbs_directory)
+        tile_infos = _load_tile_infos_from_gonad_dir(gonad_file_path)
         scored_nuclei_dir: str = os.path.join(
             gonad_file_path, DEFAULT_PROJECT_NAME, SCORED_NUCLEI_DIR_NAME
         )
@@ -549,6 +587,15 @@ def _open_scoring_path(
                         f"The sbs file with path {sbs_file_path} doesn't exist"
                     )
                     return "failed"
+                (
+                    setting_contrast,
+                    overlapping_tiles,
+                    contrast_source,
+                ) = _get_setting_contrast_for_sbs(
+                    gonad_file_path,
+                    metadata_by_sbs_name.get(sbs_file_name),
+                    tile_infos,
+                )
                 current_sbs_object: CLSPSbsObject = CLSPSbsObject(
                     napari_viewer,
                     sbs_string,
@@ -557,6 +604,9 @@ def _open_scoring_path(
                     sbs_file_path,
                     gonad_file_name,
                     metadata_by_sbs_name.get(sbs_file_name),
+                    setting_contrast,
+                    overlapping_tiles,
+                    contrast_source,
                 )
                 clsp_sbs_object_list.append(current_sbs_object)
     print(f"_open_scoring_path: built {len(clsp_sbs_object_list)} sbs objects")
@@ -596,6 +646,21 @@ def _load_sbs_metadata_by_name(
 def load_tile_bounding_boxes_from_gonad_dir(
     gonad_dir: str,
 ) -> dict[int, dict[str, int]]:
+    tile_infos = _load_tile_infos_from_gonad_dir(gonad_dir)
+    tile_bounding_boxes: dict[int, dict[str, int]] = {}
+    for tile_index, tile_info in tile_infos.items():
+        tile_bounding_boxes[tile_index] = {
+            "y_min_px_index": tile_info["y_min_px_index"],
+            "y_max_px_index_exclusive": tile_info["y_max_px_index_exclusive"],
+            "x_min_px_index": tile_info["x_min_px_index"],
+            "x_max_px_index_exclusive": tile_info["x_max_px_index_exclusive"],
+        }
+    return tile_bounding_boxes
+
+
+def _load_tile_infos_from_gonad_dir(
+    gonad_dir: str,
+) -> dict[int, dict[str, int | str]]:
     tile_positions_paths = sorted(Path(gonad_dir).glob("*_tile_positions.csv"))
     if len(tile_positions_paths) == 0:
         return {}
@@ -603,21 +668,65 @@ def load_tile_bounding_boxes_from_gonad_dir(
     with tile_positions_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         rows = [dict(row) for row in reader]
-    tile_bounding_boxes: dict[int, dict[str, int]] = {}
+    tile_infos: dict[int, dict[str, int | str]] = {}
     for tile_index, row in enumerate(rows):
-        bounding_box: dict[str, int] = {}
+        tile_info: dict[str, int | str] = {}
+        tile_path = (row.get("tile_path") or "").strip()
+        if tile_path != "":
+            tile_info["tile_path"] = tile_path
         for dim in ("y", "x"):
             min_key = f"{dim}_min_px_index"
             max_key = f"{dim}_max_px_index_exclusive"
             min_value = (row.get(min_key) or "").strip()
             max_value = (row.get(max_key) or "").strip()
             if min_value != "":
-                bounding_box[min_key] = int(min_value)
+                tile_info[min_key] = int(min_value)
             if max_value != "":
-                bounding_box[max_key] = int(max_value)
-        if bounding_box:
-            tile_bounding_boxes[tile_index] = bounding_box
-    return tile_bounding_boxes
+                tile_info[max_key] = int(max_value)
+        if tile_info:
+            tile_infos[tile_index] = tile_info
+    return tile_infos
+
+
+def _crop_box_intersects_tile(
+    crop_box_yx: tuple[int, int, int, int],
+    tile_info: dict[str, int | str],
+) -> bool:
+    y1, x1, y2, x2 = crop_box_yx
+    tile_y1 = int(cast(int, tile_info["y_min_px_index"]))
+    tile_y2 = int(cast(int, tile_info["y_max_px_index_exclusive"]))
+    tile_x1 = int(cast(int, tile_info["x_min_px_index"]))
+    tile_x2 = int(cast(int, tile_info["x_max_px_index_exclusive"]))
+    return y1 < tile_y2 and y2 > tile_y1 and x1 < tile_x2 and x2 > tile_x1
+
+
+def _get_setting_contrast_for_sbs(
+    gonad_dir: str,
+    crop_box_yx: tuple[int, int, int, int] | None,
+    tile_infos: dict[int, dict[str, int | str]],
+) -> tuple[dict[int, tuple[float, float]] | None, list[int], str]:
+    stitched_project_dir = os.path.join(gonad_dir, DEFAULT_PROJECT_NAME)
+    stitched_contrasts = get_loaded_image_contrasts(stitched_project_dir)
+    if crop_box_yx is None:
+        return stitched_contrasts, [], "stitched"
+    overlapping_tiles = [
+        tile_index
+        for tile_index in sorted(tile_infos.keys())
+        if _crop_box_intersects_tile(crop_box_yx, tile_infos[tile_index])
+    ]
+    if len(overlapping_tiles) == 0:
+        return stitched_contrasts, [], "stitched"
+    tile_info = tile_infos[overlapping_tiles[-1]]
+    tile_path_value = tile_info.get("tile_path")
+    if not isinstance(tile_path_value, str) or tile_path_value == "":
+        return stitched_contrasts, overlapping_tiles, "stitched"
+    tile_contrasts_path = get_tile_contrasts_file_path(tile_path_value)
+    tile_contrasts = get_loaded_image_contrasts_from_file_path(
+        tile_contrasts_path
+    )
+    if tile_contrasts is not None:
+        return tile_contrasts, overlapping_tiles, "tile"
+    return stitched_contrasts, overlapping_tiles, "stitched"
 
 
 def get_valid_points_summary_parser_from_image_dir(

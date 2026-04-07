@@ -234,6 +234,10 @@ class ScoreNucleiWidget(QWidget):
         )
         self._sbs_list_scroll_area.setWidget(self._sbs_list_widget)
 
+        self._tile_info_label: QLabel = QLabel("")
+        self._sbs_list_container_layout.addWidget(self._tile_info_label)
+        self._tile_info_label.setVisible(not self._blind_state)
+
         self._sbs_name_line_edit: QLineEdit = QLineEdit(
             DEFAULT_SBS_LINE_EDIT_TEXT
         )
@@ -561,12 +565,26 @@ class ScoreNucleiWidget(QWidget):
         selected_widget: SBSListItemWidget = cast(
             SBSListItemWidget, self._sbs_list_widget.itemWidget(selected_item)
         )
+        selected_clsp_object = selected_widget.get_clsp_object()
+        overlapping_tiles = selected_clsp_object.overlapping_tiles
+        if len(overlapping_tiles) == 0:
+            tile_string = "Tiles: none"
+        else:
+            tile_string = "Tiles: " + ", ".join(
+                str(tile) for tile in overlapping_tiles
+            )
+        self._tile_info_label.setText(
+            tile_string
+            + " | Contrast source: "
+            + selected_clsp_object.contrast_source
+        )
+        self._tile_info_label.setVisible(not blind_state)
         selected_widget.set_data(blind_state)
         if selected_index != self._current_index:
             opening_image_layer: tuple[Image, Image] = (
                 open_image_layer_from_clsp_object(
                     self._napari_viewer,
-                    selected_widget.get_clsp_object(),
+                    selected_clsp_object,
                     blind=blind_state,
                 )
             )
@@ -578,7 +596,7 @@ class ScoreNucleiWidget(QWidget):
         layer_dims = self._scoring_layer.ndim
         opening_points_layer: Points = open_points_layer_from_clsp_object(
             self._napari_viewer,
-            selected_widget.get_clsp_object(),
+            selected_clsp_object,
             points_size=self._points_size_spinbox.value(),
             layer_dims=layer_dims,
         )
@@ -643,6 +661,7 @@ class ScoreNucleiWidget(QWidget):
 
     def set_blind_state(self, state: bool) -> None:
         self._blind_state = state
+        self._tile_info_label.setVisible(not state)
         if self._scoring_sbs_list:
             self._update_list()
 
