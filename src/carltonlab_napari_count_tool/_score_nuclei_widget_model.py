@@ -1,3 +1,4 @@
+import csv
 import glob
 import os
 from configparser import ConfigParser
@@ -590,6 +591,33 @@ def _load_sbs_metadata_by_name(
             x2,
         )
     return metadata_by_name
+
+
+def load_tile_bounding_boxes_from_gonad_dir(
+    gonad_dir: str,
+) -> dict[int, dict[str, int]]:
+    tile_positions_paths = sorted(Path(gonad_dir).glob("*_tile_positions.csv"))
+    if len(tile_positions_paths) == 0:
+        return {}
+    tile_positions_path = tile_positions_paths[0]
+    with tile_positions_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        rows = [dict(row) for row in reader]
+    tile_bounding_boxes: dict[int, dict[str, int]] = {}
+    for tile_index, row in enumerate(rows):
+        bounding_box: dict[str, int] = {}
+        for dim in ("y", "x"):
+            min_key = f"{dim}_min_px_index"
+            max_key = f"{dim}_max_px_index_exclusive"
+            min_value = (row.get(min_key) or "").strip()
+            max_value = (row.get(max_key) or "").strip()
+            if min_value != "":
+                bounding_box[min_key] = int(min_value)
+            if max_value != "":
+                bounding_box[max_key] = int(max_value)
+        if bounding_box:
+            tile_bounding_boxes[tile_index] = bounding_box
+    return tile_bounding_boxes
 
 
 def get_valid_points_summary_parser_from_image_dir(

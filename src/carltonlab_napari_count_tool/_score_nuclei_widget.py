@@ -30,6 +30,7 @@ from carltonlab_napari_count_tool._score_nuclei_widget_model import (
     flag_in_image,
     generate_scored_points_spline_plot,
     generate_scored_points_spline_summary,
+    load_tile_bounding_boxes_from_gonad_dir,
     open_image_layer_from_clsp_object,
     open_points_layer_from_clsp_object,
     open_scoring_file,
@@ -129,6 +130,7 @@ class ScoreNucleiWidget(QWidget):
         self._showing_points_layer: Points | None = None
         self._adding_points_layer: Points | None = None
         self._scoring_sbs_list: list[CLSPSbsObject] = []
+        self._tile_bounding_boxes: dict[str, dict[int, dict[str, int]]] = {}
         self._showing_sbs_indexes: list[int] = []
         self._ct_button: ScoreWidgetButtonAPI = score_widget_api
         self._blind_state: bool = self._ct_button.get_blind_checkbox_state()
@@ -405,6 +407,7 @@ class ScoreNucleiWidget(QWidget):
         if open_list_validation == "failed":
             return
         self._scoring_sbs_list = open_list_validation[0]
+        self._load_tile_bounding_boxes()
         self._open_file_line_edit.setText(open_list_validation[1])
         self._update_list()
 
@@ -417,8 +420,16 @@ class ScoreNucleiWidget(QWidget):
         if open_list_validation == "failed":
             return
         self._scoring_sbs_list = open_list_validation[0]
+        self._load_tile_bounding_boxes()
         self._open_file_line_edit.setText(open_list_validation[1])
         self._update_list()
+
+    def _load_tile_bounding_boxes(self) -> None:
+        self._tile_bounding_boxes = {}
+        for gonad_dir in self._get_gonad_dirs():
+            self._tile_bounding_boxes[gonad_dir] = (
+                load_tile_bounding_boxes_from_gonad_dir(gonad_dir)
+            )
 
     def _get_non_scored_entries(self) -> list[int]:
         total_entries: int = self._sbs_list_widget.count()
