@@ -263,9 +263,9 @@ def _load_spline_polyline(spline_csv_path: str) -> np.ndarray | None:
     if "index" in shape_df.columns:
         min_index = shape_df["index"].min()
         shape_df = shape_df[shape_df["index"] == min_index]
-    if "vertex_index" in shape_df.columns:
-        shape_df = shape_df.sort_values("vertex_index")
-    spline_points = shape_df[axis_cols].to_numpy()
+    if "vertex_index" in shape_df.columns:  # type: ignore
+        shape_df = shape_df.sort_values("vertex_index")  # type: ignore
+    spline_points = shape_df[axis_cols].to_numpy()  # type: ignore
     if spline_points.ndim != 2 or spline_points.shape[0] < 2:
         return None
     return spline_points
@@ -333,9 +333,11 @@ def generate_scored_points_spline_summary(
         return None
     metadata_map = {}
     for _, row in metadata_df.iterrows():
+        y1 = int(cast(float, row["y1"]))
+        x1 = int(cast(float, row["x1"]))
         metadata_map[row["sbs_image_name"]] = {
-            "y1": int(row["y1"]),
-            "x1": int(row["x1"]),
+            "y1": y1,
+            "x1": x1,
         }
 
     points_files = glob.glob(
@@ -361,6 +363,7 @@ def generate_scored_points_spline_summary(
             continue
         offset = metadata_map[sbs_image_name]
         for idx, row in points_df.iterrows():
+            point_index = int(cast(float, idx))
             point_yx = np.array(
                 [row[axis_cols[0]], row[axis_cols[1]]], dtype=np.float64
             )
@@ -372,7 +375,7 @@ def generate_scored_points_spline_summary(
             rows.append(
                 {
                     "sbs_image_name": sbs_image_name,
-                    "point_number": int(idx + 1),
+                    "point_number": point_index + 1,
                     "x_position": x_pos,
                     "y_position": y_pos,
                     "x_y_coord_intersection_to_spline": f"{proj_yx[1]},{proj_yx[0]}",
@@ -576,11 +579,15 @@ def _load_sbs_metadata_by_name(
     metadata_by_name: dict[str, tuple[int, int, int, int]] = {}
     for _, row in metadata_df.iterrows():
         sbs_image_name = str(row["sbs_image_name"])
+        y1 = int(cast(float, row["y1"]))
+        x1 = int(cast(float, row["x1"]))
+        y2 = int(cast(float, row["y2"]))
+        x2 = int(cast(float, row["x2"]))
         metadata_by_name[sbs_image_name] = (
-            int(row["y1"]),
-            int(row["x1"]),
-            int(row["y2"]),
-            int(row["x2"]),
+            y1,
+            x1,
+            y2,
+            x2,
         )
     return metadata_by_name
 
