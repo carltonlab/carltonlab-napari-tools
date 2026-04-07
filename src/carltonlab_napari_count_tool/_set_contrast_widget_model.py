@@ -1,3 +1,4 @@
+import csv
 import os
 from configparser import ConfigParser
 from pathlib import Path
@@ -141,6 +142,55 @@ def save_tile_contrasts(
         )
     with saving_contrasts_file_path.open("w") as config_file:
         config_parser.write(config_file)
+
+
+def get_tile_pixel_positions(
+    stitched_image_path: str, tile_index: int
+) -> dict[str, int] | None:
+    stitched_path = Path(stitched_image_path)
+    stitched_name = stitched_path.name
+    if stitched_name.endswith(".ome.zarr"):
+        stitched_stem = stitched_name[: -len(".ome.zarr")]
+    else:
+        stitched_stem = stitched_path.stem
+    tile_positions_path = (
+        stitched_path.parent / f"{stitched_stem}_tile_positions.csv"
+    )
+    if not tile_positions_path.exists():
+        return None
+    with tile_positions_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        rows = [dict(row) for row in reader]
+    if tile_index < 0 or tile_index >= len(rows):
+        return None
+    row = rows[tile_index]
+    pixel_positions: dict[str, int] = {}
+    for dim in ("z", "y", "x"):
+        min_key = f"{dim}_min_px_index"
+        max_key = f"{dim}_max_px_index_exclusive"
+        min_value = (row.get(min_key) or "").strip()
+        max_value = (row.get(max_key) or "").strip()
+        if min_value != "":
+            pixel_positions[min_key] = int(min_value)
+        if max_value != "":
+            pixel_positions[max_key] = int(max_value)
+    return pixel_positions
+
+
+def set_tile_images_xy_translate(
+    image_layers: tuple[Image, ...] | list[Image],
+    tile_pixel_positions: dict[str, int] | None,
+) -> None:
+    if tile_pixel_positions is None:
+        return
+    y_translate = float(tile_pixel_positions.get("y_min_px_index", 0))
+    x_translate = float(tile_pixel_positions.get("x_min_px_index", 0))
+    for image_layer in image_layers:
+        translate = [0.0] * image_layer.ndim
+        if image_layer.ndim >= 2:
+            translate[-2] = y_translate
+            translate[-1] = x_translate
+        image_layer.translate = tuple(translate)
 
 
 def get_image_contrasts_from_file(

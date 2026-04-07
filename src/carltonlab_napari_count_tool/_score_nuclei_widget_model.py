@@ -48,6 +48,7 @@ class CLSPSbsObject:
         scored_nuclei_dir: str,
         sbs_file_path: str,
         gonad_file_name: str,
+        crop_box_yx: tuple[int, int, int, int] | None = None,
     ):
         self._napari_viewer = napari_viewer
         self._name: str = name
@@ -61,6 +62,7 @@ class CLSPSbsObject:
         )
         self._image_file_path: str = sbs_file_path
         self._gonad_file_name: str = gonad_file_name
+        self._crop_box_yx: tuple[int, int, int, int] | None = crop_box_yx
         self._number_of_points: int
         self._saved_state: bool
 
@@ -78,6 +80,9 @@ class CLSPSbsObject:
             + " - "
             + self._name
         )
+
+    def get_crop_box_yx(self) -> tuple[int, int, int, int] | None:
+        return self._crop_box_yx
 
     def load_number_of_points(self) -> int | None:
         points_file_path: str = os.path.join(
@@ -513,6 +518,7 @@ def _open_scoring_path(
             show_info(f"The sbs directory {sbs_directory} doesn't exist")
             print(f"The sbs directory {sbs_directory} doesn't exist")
             return "failed"
+        metadata_by_sbs_name = _load_sbs_metadata_by_name(sbs_directory)
         scored_nuclei_dir: str = os.path.join(
             gonad_file_path, DEFAULT_PROJECT_NAME, SCORED_NUCLEI_DIR_NAME
         )
@@ -546,6 +552,7 @@ def _open_scoring_path(
                     scored_nuclei_dir,
                     sbs_file_path,
                     gonad_file_name,
+                    metadata_by_sbs_name.get(sbs_file_name),
                 )
                 clsp_sbs_object_list.append(current_sbs_object)
     print(f"_open_scoring_path: built {len(clsp_sbs_object_list)} sbs objects")
@@ -554,6 +561,28 @@ def _open_scoring_path(
 
 def str_to_bool(string: str) -> bool:
     return string.lower() in {"true", "1"}
+
+
+def _load_sbs_metadata_by_name(
+    sbs_directory: str,
+) -> dict[str, tuple[int, int, int, int]]:
+    metadata_path = os.path.join(sbs_directory, SBS_METADATA_FILE_NAME)
+    if not os.path.exists(metadata_path):
+        return {}
+    metadata_df = pd.read_csv(metadata_path)
+    required_columns = {"sbs_image_name", "y1", "x1", "y2", "x2"}
+    if not required_columns.issubset(metadata_df.columns):
+        return {}
+    metadata_by_name: dict[str, tuple[int, int, int, int]] = {}
+    for _, row in metadata_df.iterrows():
+        sbs_image_name = str(row["sbs_image_name"])
+        metadata_by_name[sbs_image_name] = (
+            int(row["y1"]),
+            int(row["x1"]),
+            int(row["y2"]),
+            int(row["x2"]),
+        )
+    return metadata_by_name
 
 
 def get_valid_points_summary_parser_from_image_dir(

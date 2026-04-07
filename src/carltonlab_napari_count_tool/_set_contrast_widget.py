@@ -28,9 +28,11 @@ from carltonlab_napari_count_tool._protocols import (
 )
 from carltonlab_napari_count_tool._set_contrast_widget_model import (
     get_image_contrasts_from_file,
+    get_tile_pixel_positions,
     save_contrasts,
     save_tile_contrasts,
     set_layer_contrast_limits,
+    set_tile_images_xy_translate,
 )
 from carltonlab_napari_count_tool._shared_widgets import clear_layout
 
@@ -217,17 +219,17 @@ class ContrastLimitWidget(QWidget):
 
     def _set_slider_min_zero_button_pressed(self) -> None:
         slider_max = self._contrast_slider.maximum()
-        self._set_slider_bounds(0, slider_max)
+        self._set_slider_bounds(0, int(slider_max))
 
     def _set_slider_min_to_lower_button_pressed(self) -> None:
         lower_value, _ = cast(tuple[int, int], self._contrast_slider.value())
         slider_max = self._contrast_slider.maximum()
-        self._set_slider_bounds(lower_value, slider_max)
+        self._set_slider_bounds(lower_value, int(slider_max))
 
     def _decrease_slider_min_button_pressed(self) -> None:
         slider_min = self._contrast_slider.minimum()
         slider_max = self._contrast_slider.maximum()
-        self._set_slider_bounds(max(0, slider_min - 10), slider_max)
+        self._set_slider_bounds(int(max(0, slider_min - 10)), int(slider_max))
 
     def _reset_slider_range_button_pressed(self) -> None:
         self._set_slider_bounds(0, 65535)
@@ -241,16 +243,18 @@ class ContrastLimitWidget(QWidget):
     def _increase_slider_max_button_pressed(self) -> None:
         slider_min = self._contrast_slider.minimum()
         slider_max = self._contrast_slider.maximum()
-        self._set_slider_bounds(slider_min, min(65535, slider_max + 10))
+        self._set_slider_bounds(
+            int(slider_min), int(min(65535, slider_max + 10))
+        )
 
     def _set_slider_max_to_upper_button_pressed(self) -> None:
         _, upper_value = cast(tuple[int, int], self._contrast_slider.value())
         slider_min = self._contrast_slider.minimum()
-        self._set_slider_bounds(slider_min, upper_value)
+        self._set_slider_bounds(int(slider_min), int(upper_value))
 
     def _set_slider_max_full_button_pressed(self) -> None:
         slider_min = self._contrast_slider.minimum()
-        self._set_slider_bounds(slider_min, 65535)
+        self._set_slider_bounds(int(slider_min), 65535)
 
     def _on_min_spinbox_value_changed(self, value: int) -> None:
         max_value = max(value, self._max_spin_box.value())
@@ -498,11 +502,15 @@ class SetContrastWidget(QWidget):
 
         for image in stitched_images:
             image.visible = False
+        tile_pixel_positions = get_tile_pixel_positions(
+            stitched_image_path, selected_widget.get_tile_index()
+        )
         tile_images = self._main_widget.open_process_control_tile_images(
             selected_widget.get_tile_index()
         )
         if tile_images is None:
             return
+        set_tile_images_xy_translate(tile_images, tile_pixel_positions)
         for image in tile_images:
             image.visible = True
         self.new_image_open(

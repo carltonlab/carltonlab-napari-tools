@@ -543,6 +543,13 @@ class CarltonLabCountTool(QWidget):
             return
 
     def close_other_widgets(self) -> None:
+        self._process_gonads_control_widget.close_tile_images()
+        process_control_data = (
+            self._process_gonads_control_widget.get_images_and_paths()
+        )
+        if process_control_data is not None:
+            for image_layer in process_control_data[2]:
+                image_layer.visible = True
         if self._prepare_widget is not None:
             try:
                 parent_dock_widget: QWidget | None = (
