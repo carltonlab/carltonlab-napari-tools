@@ -303,8 +303,8 @@ class ContrastLimitWidget(QWidget):
             raise ValueError(
                 f"The contrast_limits cannot be None: {contrast_limits}"
             )
-        int_min = cast(int, contrast_limits[0])
-        int_max = cast(int, contrast_limits[1])
+        int_min = int(cast(int, contrast_limits[0]))
+        int_max = int(cast(int, contrast_limits[1]))
         with QSignalBlocker(self._contrast_slider):
             self._contrast_slider.setValue((int_min, int_max))
         self._min_spin_box.setValue(int_min)
