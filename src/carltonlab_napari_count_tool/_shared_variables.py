@@ -31,6 +31,7 @@ MULTI_GONAD_FILE_EXTENSION = "_multi_gonad_file.config"
 
 SCORED_NUCLEI_DIR_NAME = "scored_nuclei"
 SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION = "_scored_nuclei_points.csv"
+SCORED_NUCLEI_FOCI_SUMMARY_FILE_NAME = "scored_nuclei_foci_summary.csv"
 SCORED_NUCLEI_SUMMARY_FILE_NAME = "scored_points_spline_summary.csv"
 SCORED_NUCLEI_PLOT_FILE_NAME = "scored_points_spline_cumulative_plot.pdf"
 

@@ -155,7 +155,9 @@ def clear_layout(layout: QLayout) -> None:
         if widget is not None:
             widget.deleteLater()
         else:
-            clear_layout(item.layout())
+            child_layout = item.layout()
+            if child_layout is not None:
+                clear_layout(child_layout)
 
 
 def add_separator_to_container(

@@ -30,6 +30,7 @@ from carltonlab_napari_count_tool._score_nuclei_widget_model import (
     flag_in_image,
     generate_scored_points_spline_plot,
     generate_scored_points_spline_summary,
+    load_tile_bounding_boxes_from_gonad_dir,
     open_image_layer_from_clsp_object,
     open_points_layer_from_clsp_object,
     open_scoring_file,
@@ -129,6 +130,7 @@ class ScoreNucleiWidget(QWidget):
         self._showing_points_layer: Points | None = None
         self._adding_points_layer: Points | None = None
         self._scoring_sbs_list: list[CLSPSbsObject] = []
+        self._tile_bounding_boxes: dict[str, dict[int, dict[str, int]]] = {}
         self._showing_sbs_indexes: list[int] = []
         self._ct_button: ScoreWidgetButtonAPI = score_widget_api
         self._blind_state: bool = self._ct_button.get_blind_checkbox_state()
@@ -231,6 +233,10 @@ class ScoreNucleiWidget(QWidget):
             self._list_selection_changed
         )
         self._sbs_list_scroll_area.setWidget(self._sbs_list_widget)
+
+        self._tile_info_label: QLabel = QLabel("")
+        self._sbs_list_container_layout.addWidget(self._tile_info_label)
+        self._tile_info_label.setVisible(not self._blind_state)
 
         self._sbs_name_line_edit: QLineEdit = QLineEdit(
             DEFAULT_SBS_LINE_EDIT_TEXT
@@ -405,6 +411,7 @@ class ScoreNucleiWidget(QWidget):
         if open_list_validation == "failed":
             return
         self._scoring_sbs_list = open_list_validation[0]
+        self._load_tile_bounding_boxes()
         self._open_file_line_edit.setText(open_list_validation[1])
         self._update_list()
 
@@ -417,8 +424,16 @@ class ScoreNucleiWidget(QWidget):
         if open_list_validation == "failed":
             return
         self._scoring_sbs_list = open_list_validation[0]
+        self._load_tile_bounding_boxes()
         self._open_file_line_edit.setText(open_list_validation[1])
         self._update_list()
+
+    def _load_tile_bounding_boxes(self) -> None:
+        self._tile_bounding_boxes = {}
+        for gonad_dir in self._get_gonad_dirs():
+            self._tile_bounding_boxes[gonad_dir] = (
+                load_tile_bounding_boxes_from_gonad_dir(gonad_dir)
+            )
 
     def _get_non_scored_entries(self) -> list[int]:
         total_entries: int = self._sbs_list_widget.count()
@@ -550,12 +565,26 @@ class ScoreNucleiWidget(QWidget):
         selected_widget: SBSListItemWidget = cast(
             SBSListItemWidget, self._sbs_list_widget.itemWidget(selected_item)
         )
+        selected_clsp_object = selected_widget.get_clsp_object()
+        overlapping_tiles = selected_clsp_object.overlapping_tiles
+        if len(overlapping_tiles) == 0:
+            tile_string = "Tiles: none"
+        else:
+            tile_string = "Tiles: " + ", ".join(
+                str(tile) for tile in overlapping_tiles
+            )
+        self._tile_info_label.setText(
+            tile_string
+            + " | Contrast source: "
+            + selected_clsp_object.contrast_source
+        )
+        self._tile_info_label.setVisible(not blind_state)
         selected_widget.set_data(blind_state)
         if selected_index != self._current_index:
             opening_image_layer: tuple[Image, Image] = (
                 open_image_layer_from_clsp_object(
                     self._napari_viewer,
-                    selected_widget.get_clsp_object(),
+                    selected_clsp_object,
                     blind=blind_state,
                 )
             )
@@ -567,7 +596,7 @@ class ScoreNucleiWidget(QWidget):
         layer_dims = self._scoring_layer.ndim
         opening_points_layer: Points = open_points_layer_from_clsp_object(
             self._napari_viewer,
-            selected_widget.get_clsp_object(),
+            selected_clsp_object,
             points_size=self._points_size_spinbox.value(),
             layer_dims=layer_dims,
         )
@@ -632,6 +661,7 @@ class ScoreNucleiWidget(QWidget):
 
     def set_blind_state(self, state: bool) -> None:
         self._blind_state = state
+        self._tile_info_label.setVisible(not state)
         if self._scoring_sbs_list:
             self._update_list()
 
