@@ -151,8 +151,6 @@ class StitchGonads:
         self._button = QPushButton(self._button_text)
         self._button.clicked.connect(self.launch_widget)
 
-        self._connecting_method_str = "_launch_stitch_gonads_widget"
-
     def get_button(self) -> QPushButton:
         return self._button
 
@@ -201,8 +199,6 @@ class SetContrastButton:
 
         self._button = QPushButton(self._button_text)
         self._button.clicked.connect(self.launch_widget)
-
-        self._connecting_method_str = "_launch_set_contrast_widget"
 
     def get_button(self) -> QPushButton:
         return self._button
@@ -276,8 +272,6 @@ class RegionsToolButtons:
 
         self._button: QPushButton = QPushButton(self._button_text)
         self._button.clicked.connect(self.launch_widget)
-
-        self._connecting_method_str = "_launch_regions_widget"
 
     def get_button(self) -> QPushButton:
         return self._button
@@ -564,10 +558,6 @@ class GenerateProjectReports:
 
         self._button = QPushButton(self._button_text)
         self._button.clicked.connect(self.launch_widget)
-
-        self._connecting_method_str = (
-            "_generate_projects_reports_button_pressed"
-        )
 
     def get_button(self) -> QPushButton:
         return self._button
