@@ -17,13 +17,12 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 # napari can be included in dependencies if napari imports are required.
 # However, you should not include napari[all], napari[qt],
 # or any other Qt bindings directly (e.g. PyQt5, PySide2).
@@ -32,14 +31,40 @@ dependencies = [
     "numpy",
     "matplotlib",
     "magicgui",
-    "qtpy",
     "scikit-image",
+    "ndevio",
+    "bioio-tifffile",
+    "multiview-stitcher>=0.1.37",
+    "mrc",
+    "tifffile",
+    "pandas",
+    "scipy",
+    "dask",
+    "superqt",
 ]
 
 [project.optional-dependencies]
 # Allow easily installation with the full, default napari installation
 # (including Qt backend) using carltonlab-napari-count-tool[all].
 all = ["napari[all]"]
+segmentation = [
+    "cellpose",
+    "torch",
+]
+gpu-cuda12 = [
+    "cupy-cuda12x",
+]
+full-cpu = [
+    "napari[all]",
+    "cellpose",
+    "torch",
+]
+full-cuda12 = [
+    "napari[all]",
+    "cellpose",
+    "torch",
+    "cupy-cuda12x",
+]
 
 [dependency-groups]
 dev = [
@@ -86,7 +111,7 @@ testpaths = ["tests"]
 
 [tool.black]
 line-length = 79
-target-version = ['py310', 'py311', 'py312', 'py313']
+target-version = ['py311', 'py312', 'py313']
 
 [tool.ruff]
 line-length = 79
