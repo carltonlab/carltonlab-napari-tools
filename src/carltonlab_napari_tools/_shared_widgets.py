@@ -1,5 +1,9 @@
 from typing import TYPE_CHECKING, Literal
 
+from carltonlab_napari_count_tool._shared_variables import (
+    DEFAULT_SEPARATOR_SPACING,
+    DEFAULT_SEPARATOR_THICKNESS,
+)
 from qtpy.QtCore import QDir
 from qtpy.QtWidgets import (
     QAbstractItemView,
@@ -12,11 +16,6 @@ from qtpy.QtWidgets import (
     QTreeView,
     QVBoxLayout,
     QWidget,
-)
-
-from carltonlab_napari_tools._shared_variables import (
-    DEFAULT_SEPARATOR_SPACING,
-    DEFAULT_SEPARATOR_THICKNESS,
 )
 
 if TYPE_CHECKING:

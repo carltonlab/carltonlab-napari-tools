@@ -2,13 +2,24 @@ DEFAULT_PROJECT_NAME = "cl_score_points_project"
 DEFAULT_PROJECT_EXTENSION = "_clsp"
 
 IMAGE_CONTRASTS_FILE_NAME = "cl_image_contrasts.config"
+TILE_CONTRASTS_FILE_NAME_SUFFIX = "_contrasts.config"
 
 PICK_NUCLEI_DIR_NAME = "pick_nuclei"
 POINTS_SUMMARY_FILE_NAME = "points_summary.csv"
 REGION_ROOT_NAME = "region-"
 SBS_ROOT_NAME = "sbs-"
 POINT_FILE_NAME_EXTENSION = "_points_layer.csv"
+FILTERED_CSV_FILE_NAME_SUFFIX = "_filtered.csv"
+AUTO_COUNT_POINTS_FILE_NAME_EXTENSION = "_points.csv"
+AUTO_COUNT_FILTERED_POINTS_FILE_NAME_EXTENSION = "_filtered_points.csv"
 SQUARES_FILE_NAME_EXTENSION = "_squares_layer.csv"
+AUTO_COUNT_PROCESSED_SPOTS_IMAGE_FILE_NAME_SUFFIX = (
+    "_processed_spots_image.tif"
+)
+AUTO_COUNT_PREPROCESSING_STATS_FILE_NAME_SUFFIX = "_preprocessing_stats.json"
+AUTO_COUNT_BINARY_MASK_FILE_NAME_SUFFIX_TEMPLATE = (
+    "_channel_{channel_number}_binary_mask.tif"
+)
 SBS_FILE_NAME_EXTENSION = "_cut_nuclei.tif"
 CUT_SBS_DIR_NAME = "cut_sbs"
 SBS_FILE_NAME_EXTENSION = "_cut_sbs.tif"
@@ -21,6 +32,9 @@ PICK_NUCLEI_REPORT_PLOT_NORM_FILE_NAME = (
 
 
 REGIONS_DIR_NAME = "regions"
+CLSA_SPLINE_LAYER_FILE_NAME_SUFFIX = "_clsa_spline_layer.csv"
+CLSA_RAW_SPLINE_LAYER_FILE_NAME_SUFFIX = "_clsa_raw_spline_layer.csv"
+CLSA_SPLINE_PREVIEW_FILE_NAME_SUFFIX = "_clsa_spline_preview.tif"
 EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME = (
     "clt_expanded_regions_values.config"
 )
@@ -34,8 +48,21 @@ SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION = "_scored_nuclei_points.csv"
 SCORED_NUCLEI_FOCI_SUMMARY_FILE_NAME = "scored_nuclei_foci_summary.csv"
 SCORED_NUCLEI_SUMMARY_FILE_NAME = "scored_points_spline_summary.csv"
 SCORED_NUCLEI_PLOT_FILE_NAME = "scored_points_spline_cumulative_plot.pdf"
+AUTO_COUNT_DIR_NAME = "auto_count"
+TILES_DIR_NAME = "tiles"
+STITCHED_IMAGE_DIR_NAME = "stitched_image"
+STITCHED_IMAGE_SUFFIX = "_stitched.ome.zarr"
+PROJECT_FILE_DIR_NAME = "project_file"
+SEGMENTATION_DIR_NAME = "segmentation"
+SBS_IMAGES_DIR_NAME = "sbs_images"
+CLSA_PROJECT_SUFFIX = "_clsa_project"
 
 RESULTS_DIR = "summaries_and_plots"
+TILE_POSITIONS_FILE_NAME_SUFFIX = "_tile_positions.csv"
+SEGMENTATION_MASKS_FILE_NAME_SUFFIX = "_meiotic_3d_crops_masks.npy"
+FILTERED_SEGMENTATION_MASKS_FILE_NAME_SUFFIX = "_filtered.npy"
+SBS_TILE_COORDINATES_FILE_NAME_SUFFIX = "_tile_coordinates.csv"
+SBS_STITCHED_COORDINATES_FILE_NAME_SUFFIX = "_stitched_coordinates.csv"
 
 DEFAULT_SEPARATOR_THICKNESS = 2
 DEFAULT_SEPARATOR_SPACING = 6

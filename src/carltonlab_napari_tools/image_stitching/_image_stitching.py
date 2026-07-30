@@ -16,6 +16,9 @@ from multiview_stitcher import (
 from multiview_stitcher import spatial_image_utils as si_utils
 from napari.utils.notifications import show_error
 
+from carltonlab_napari_tools._shared_variables import STITCHED_IMAGE_SUFFIX
+from carltonlab_napari_tools._utils import get_common_prefix
+
 
 def _load_stage_translation(zarr_path: str) -> dict[str, float]:
     ini_path = Path(f"{zarr_path}.ini")
@@ -356,6 +359,37 @@ def _save_registered_tile_positions(
         writer.writerows(rows)
 
     return coordinates_path
+
+
+def convert_to_ome_zarr(image_list: list[Path]) -> list[Path] | None:
+    return []
+
+
+def stitch_ome_zarr_images(
+    image_list: list[Path],
+    output_dir: Path,
+    apply_ini_translation: bool = False,
+    num_workers: int | None = None,
+    n_batch: int | None = None,
+    use_gpu: bool = False,
+) -> bool:
+    if not image_list:
+        show_error("No images to stitch, list is empty.")
+    if any(not str(p).endswith(".ome.zarr") for p in image_list):
+        message: str = " \nThe stitching files are not in .ome.zarr format:"
+        for image in image_list:
+            message = message + "\n" + str(image)
+        show_error(message)
+        return False
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    image_names: list[str] = [_strip_ome_zarr(p.name) for p in image_list]
+    common_prefix = get_common_prefix(image_names)
+    stitched_name = common_prefix + STITCHED_IMAGE_SUFFIX
+    print(stitched_name)
+
+    return True
 
 
 def stitch_directories(
