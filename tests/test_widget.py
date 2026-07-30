@@ -1,6 +1,6 @@
 import numpy as np
 
-from carltonlab_napari_count_tool._widget import (
+from carltonlab_napari_tools._widget import (
     ExampleQWidget,
     ImageThreshold,
     threshold_autogenerate_widget,
