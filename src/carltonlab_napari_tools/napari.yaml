@@ -1,0 +1,14 @@
+name: carltonlab-napari-tools
+display_name: Carltonlab Count Tool
+# use 'hidden' to remove plugin from napari hub search results
+visibility: hidden
+# see https://napari.org/stable/plugins/technical_references/manifest.html#fields for valid categories
+# categories: []
+contributions:
+  commands:
+    - id: carltonlab-napari-tools.make_count_tool_widget
+      python_name: carltonlab_napari_tools:CarltonLabCountTool
+      title: Make Count Tool Widget
+  widgets:
+    - command: carltonlab-napari-tools.make_count_tool_widget
+      display_name: CarltonLab Count Tool
