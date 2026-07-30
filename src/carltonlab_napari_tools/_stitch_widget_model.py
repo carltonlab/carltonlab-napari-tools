@@ -4,14 +4,10 @@ from carltonlab_napari_tools.image_stitching._image_stitching import (  # noqa: 
     get_stitched_coordinates_path,
     get_stitched_output_path,
     get_stitched_tiles_directory_path,
-    run_stitch,
-    stitch_directories,
 )
 
 __all__ = [
     "get_stitched_coordinates_path",
     "get_stitched_output_path",
     "get_stitched_tiles_directory_path",
-    "run_stitch",
-    "stitch_directories",
 ]
