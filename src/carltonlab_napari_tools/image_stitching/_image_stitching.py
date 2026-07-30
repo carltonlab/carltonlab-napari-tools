@@ -3,6 +3,7 @@ import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from dask.diagnostics.progress import ProgressBar
@@ -18,6 +19,13 @@ from napari.utils.notifications import show_error
 
 from carltonlab_napari_tools._shared_variables import STITCHED_IMAGE_SUFFIX
 from carltonlab_napari_tools._utils import get_common_prefix
+
+
+def _process_batch_using_threads(
+    func, block_ids, num_workers: int = 4
+) -> None:
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        list(executor.map(func, block_ids))
 
 
 def _load_stage_translation(zarr_path: str) -> dict[str, float]:
@@ -80,10 +88,13 @@ def get_stitched_output_path(input_dir: str) -> str:
     return str(Path(input_dir) / output_name)
 
 
-def get_stitched_coordinates_path(output_zarr: str | Path) -> str:
+def get_stitched_coordinates_path(
+    tiles_dir: str | Path,
+    output_zarr: str | Path,
+) -> str:
     output_path = Path(output_zarr)
     base_name = _strip_ome_zarr(output_path.name)
-    return str(output_path.parent / f"{base_name}_tile_positions.csv")
+    return str(Path(tiles_dir) / f"{base_name}_tile_positions.csv")
 
 
 def get_stitched_tiles_directory_path(output_zarr: str | Path) -> str:
@@ -190,15 +201,6 @@ def _relocate_tiles(ome_zarr_paths: list[str], output_zarr: Path) -> list[str]:
             )
         shutil.move(str(tile_path), str(destination_path))
 
-        ini_path = Path(f"{tile_path}.ini")
-        if ini_path.exists():
-            ini_destination_path = tiles_dir / ini_path.name
-            if ini_destination_path.exists():
-                raise FileExistsError(
-                    f"Tile ini destination already exists: {ini_destination_path}"
-                )
-            shutil.move(str(ini_path), str(ini_destination_path))
-
         relocated_paths.append(str(destination_path))
 
     return relocated_paths
@@ -207,6 +209,7 @@ def _relocate_tiles(ome_zarr_paths: list[str], output_zarr: Path) -> list[str]:
 def _save_registered_tile_positions(
     msims,
     ome_zarr_paths: list[str],
+    tiles_dir: Path,
     output_zarr: Path,
     transform_key: str,
 ) -> Path:
@@ -351,7 +354,9 @@ def _save_registered_tile_positions(
                 row[f"affine_{row_index}_{col_index}"] = value
         rows.append(row)
 
-    coordinates_path = Path(get_stitched_coordinates_path(output_zarr))
+    coordinates_path = Path(
+        get_stitched_coordinates_path(tiles_dir, output_zarr)
+    )
     fieldnames = list(rows[0].keys()) if rows else ["tile_path", "tile_name"]
     with coordinates_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -361,6 +366,63 @@ def _save_registered_tile_positions(
     return coordinates_path
 
 
+def register_ome_zarr_msims(
+    msims_list: list[Any], reg_channel: int = 0, reg_scale: int | None = None
+) -> list[Any]:
+    if not msims_list:
+        return []
+
+    images_scale_counts = [
+        len(msi_utils.get_sorted_scale_keys(msim)) for msim in msims_list
+    ]
+
+    min_scales = min(images_scale_counts)
+
+    reg_kwargs: dict[str, Any]
+    if reg_scale is not None:
+        if reg_scale < 0 or reg_scale >= min_scales:
+            raise ValueError(
+                f"Registration scale {reg_scale} is unavailable. "
+                f"All images must contain at least {reg_scale + 1} scales."
+            )
+        reg_kwargs = {"reg_res_level": reg_scale}
+    elif min_scales > 1:
+        reg_kwargs = {"reg_res_level": min(1, min_scales - 1)}
+    else:
+        reg_kwargs = {
+            "registration_binning": {
+                "z": 2,
+                "y": 4,
+                "x": 4,
+            }
+        }
+
+    with ProgressBar():
+        registration.register(
+            msims_list,
+            reg_channel_index=reg_channel,
+            transform_key="stage_metadata",
+            new_transform_key="translation_registered",
+            pre_registration_pruning_method=None,  # type: ignore
+            plot_summary=False,
+            n_parallel_pairwise_regs=4,
+            **reg_kwargs,
+        )
+
+    return msims_list
+
+
+def load_ome_zarr_msims(image_list: list[Path]) -> list[Any]:
+    return [
+        ngff_utils.read_msim_from_ome_zarr(
+            image_path,
+            transform_key="stage_metadata",
+            array_backend="zarr",
+        )
+        for image_path in image_list
+    ]
+
+
 def convert_to_ome_zarr(image_list: list[Path]) -> list[Path] | None:
     return []
 
@@ -368,7 +430,8 @@ def convert_to_ome_zarr(image_list: list[Path]) -> list[Path] | None:
 def stitch_ome_zarr_images(
     image_list: list[Path],
     output_dir: Path,
-    apply_ini_translation: bool = False,
+    registration_channel: int = 0,
+    registration_scale: int | None = None,
     num_workers: int | None = None,
     n_batch: int | None = None,
     use_gpu: bool = False,
@@ -387,7 +450,63 @@ def stitch_ome_zarr_images(
     image_names: list[str] = [_strip_ome_zarr(p.name) for p in image_list]
     common_prefix = get_common_prefix(image_names)
     stitched_name = common_prefix + STITCHED_IMAGE_SUFFIX
-    print(stitched_name)
+    stitched_path = Path(os.path.normpath(str(output_dir / stitched_name)))
+
+    msims = load_ome_zarr_msims(image_list)
+    msims = register_ome_zarr_msims(
+        msims,
+        reg_channel=registration_channel,
+        reg_scale=registration_scale,
+    )
+
+    fusion_backend = "cupy" if use_gpu else None
+    output_chunksize: dict[str, int] | None = None
+
+    if use_gpu:
+        if num_workers is None:
+            num_workers = 2
+        if n_batch is None:
+            n_batch = 10
+
+        output_chunksize = {}
+        spatial_dims = si_utils.get_spatial_dims_from_sim(
+            msi_utils.get_sim_from_msim(msims[0])
+        )
+        if "z" in spatial_dims:
+            output_chunksize["z"] = 24
+        if "y" in spatial_dims:
+            output_chunksize["y"] = 2048
+        if "x" in spatial_dims:
+            output_chunksize["x"] = 2048
+    elif num_workers is None:
+        num_workers = max(1, (os.cpu_count() or 1) // 2)
+
+    if n_batch is None:
+        n_batch = max(1, num_workers)
+
+    batch_options = {
+        "batch_func": _process_batch_using_threads,
+        "n_batch": max(1, n_batch),
+        "batch_func_kwargs": {"num_workers": num_workers},
+    }
+
+    fusion.fuse(
+        images=msims,
+        transform_key="translation_registered",
+        output_zarr_url=str(stitched_path),
+        zarr_options={"ome_zarr": True},
+        backend=fusion_backend,
+        output_chunksize=output_chunksize,  # type: ignore
+        batch_options=batch_options,
+    )
+
+    _save_registered_tile_positions(
+        msims=msims,
+        ome_zarr_paths=[str(path) for path in image_list],
+        tiles_dir=image_list[0].parent,
+        output_zarr=stitched_path,
+        transform_key="translation_registered",
+    )
 
     return True
 
