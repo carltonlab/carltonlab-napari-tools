@@ -3,6 +3,6 @@ try:
 except ImportError:
     __version__ = "unknown"
 
-from ._widget import CarltonLabCountTool
+from .foci_count_widgets._foci_count_widget import CarltonLabCountTool
 
 __all__ = ["CarltonLabCountTool"]

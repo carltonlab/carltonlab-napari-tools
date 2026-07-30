@@ -37,7 +37,9 @@ from carltonlab_napari_tools._protocols import (
 from carltonlab_napari_tools._regions_widget import RegionWidget
 from carltonlab_napari_tools._score_nuclei_widget import ScoreNucleiWidget
 from carltonlab_napari_tools._set_contrast_widget import SetContrastWidget
-from carltonlab_napari_tools._stitch_widget import StitchOmeZarrWidget
+from carltonlab_napari_tools.foci_count_widgets._stitch_widget import (
+    StitchOmeZarrWidget,
+)
 
 if TYPE_CHECKING:
     from napari.viewer import ViewerModel
