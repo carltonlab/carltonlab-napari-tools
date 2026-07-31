@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -221,7 +220,7 @@ class StitchOmeZarrWidget(QWidget):
             for directory in self._directories_list
         ]
         all_created = stitched_ok and all(
-            os.path.exists(path) for path in expected_outputs
+            path.exists() for path in expected_outputs
         )
         self._set_files_created_label_state(all_created)
 

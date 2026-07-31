@@ -58,11 +58,11 @@ def _apply_stage_translation(
     return msim
 
 
-def _load_ome_zarr_paths(directory: Path) -> list[str]:
+def _load_ome_zarr_paths(directory: Path) -> list[Path]:
     paths = sorted(directory.glob("*.ome.zarr"))
     if not paths:
         raise ValueError(f"No .ome.zarr directories found in {directory}")
-    return [str(path) for path in paths]
+    return paths
 
 
 def _strip_ome_zarr(name: str) -> str:
@@ -78,14 +78,14 @@ def _common_prefix(strings: list[str]) -> str:
     return prefix.rstrip("_-. ")
 
 
-def get_stitched_output_path(input_dir: str) -> str:
+def get_stitched_output_path(input_dir: str | Path) -> Path:
     ome_zarr_paths = _load_ome_zarr_paths(Path(input_dir))
     names = [_strip_ome_zarr(Path(path).name) for path in ome_zarr_paths]
     common = _common_prefix(names)
     if not common:
         common = Path(input_dir).name or "stitched"
     output_name = f"{common}_stitched.ome.zarr"
-    return str(Path(input_dir) / output_name)
+    return Path(input_dir) / output_name
 
 
 def get_stitched_coordinates_path(
@@ -208,7 +208,7 @@ def _relocate_tiles(ome_zarr_paths: list[str], output_zarr: Path) -> list[str]:
 
 def _save_registered_tile_positions(
     msims,
-    ome_zarr_paths: list[str],
+    ome_zarr_paths: list[Path],
     tiles_dir: Path,
     output_zarr: Path,
     transform_key: str,
@@ -289,7 +289,7 @@ def _save_registered_tile_positions(
         bbox_max_px,
     ) in tile_infos_with_pixels:
         row: dict[str, object] = {
-            "tile_path": tile_path,
+            "tile_path": str(tile_path),
             "tile_name": Path(tile_path).name,
             "transform_key": transform_key,
         }
@@ -502,7 +502,7 @@ def stitch_ome_zarr_images(
 
     _save_registered_tile_positions(
         msims=msims,
-        ome_zarr_paths=[str(path) for path in image_list],
+        ome_zarr_paths=image_list,
         tiles_dir=image_list[0].parent,
         output_zarr=stitched_path,
         transform_key="translation_registered",
@@ -512,7 +512,7 @@ def stitch_ome_zarr_images(
 
 
 def stitch_directories(
-    input_dirs: list[str],
+    input_dirs: list[Path],
     apply_ini_translation: bool = False,
     num_workers: int | None = None,
     n_batch: int | None = None,
