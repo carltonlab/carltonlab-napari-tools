@@ -52,6 +52,14 @@ AUTO_COUNT_DIR_NAME = "auto_count"
 TILES_DIR_NAME = "tiles"
 STITCHED_IMAGE_DIR_NAME = "stitched_image"
 STITCHED_IMAGE_SUFFIX = "_stitched.ome.zarr"
+SUPPORTED_STITCH_EXTENSIONS = [
+    ".tif",
+    ".tiff",
+    ".ome.zarr",
+    ".dv",
+    ".dv_add_decon",
+    ".zs",
+]
 PROJECT_FILE_DIR_NAME = "project_file"
 SEGMENTATION_DIR_NAME = "segmentation"
 SBS_IMAGES_DIR_NAME = "sbs_images"

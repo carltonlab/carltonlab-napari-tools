@@ -20,6 +20,39 @@ SUPPORTED_IMAGE_EXTENSIONS: tuple[str, ...] = (
 )
 
 
+def parse_channel_string(channel_string: str) -> list[int]:
+    if not channel_string.strip():
+        return []
+
+    channels: list[int] = []
+    for part in channel_string.split(","):
+        part = part.strip()
+        if not part:
+            return []
+
+        if "-" in part:
+            range_parts = part.split("-")
+            if len(range_parts) != 2:
+                return []
+
+            try:
+                start, end = (int(value.strip()) for value in range_parts)
+            except ValueError:
+                return []
+
+            if start > end:
+                return []
+            channels.extend(range(start, end + 1))
+            continue
+
+        try:
+            channels.append(int(part))
+        except ValueError:
+            return []
+
+    return channels
+
+
 def get_supported_image_extension(path: str | Path) -> str | None:
     file_path = Path(path)
     lower_name = file_path.name.lower()

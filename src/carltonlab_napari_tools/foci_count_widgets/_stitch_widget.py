@@ -2,11 +2,11 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from napari.utils.notifications import show_error
 from qtpy.QtCore import QSize, Qt
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
     QAbstractItemView,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -22,7 +22,14 @@ from carltonlab_napari_tools._protocols import (
     CToolButton,
     MainWidgetCallBacks,
 )
-from carltonlab_napari_tools._shared_widgets import get_directories
+from carltonlab_napari_tools._shared_variables import (
+    SUPPORTED_STITCH_EXTENSIONS,
+)
+from carltonlab_napari_tools._shared_widgets import (
+    FrameSeparator,
+    KeepChannelsWidget,
+    get_directories,
+)
 from carltonlab_napari_tools.image_stitching._image_stitching import (
     get_stitched_output_path,
     stitch_directories,
@@ -50,7 +57,7 @@ class StitchOmeZarrWidget(QWidget):
         self._napari_viewer = napari_viewer
         self._parent_widget: MainWidgetCallBacks = parent_widget
         self._ct_tool_button = ct_tool_button
-        self._directories_list: list[str] = []
+        self._directories_list: list[Path] = []
 
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
@@ -71,12 +78,19 @@ class StitchOmeZarrWidget(QWidget):
         self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._main_container.setLayout(self._main_layout)
 
-        self._main_title_label = QLabel("CL Stitch OME.zarr")
+        self._main_title_label = QLabel("CLT Stitch images")
         self._main_title_label.setStyleSheet(
             "font-weight: bold; font-size: 20px"
         )
         self._main_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._main_layout.addWidget(self._main_title_label)
+
+        self._main_layout.addWidget(FrameSeparator(parent=self))
+
+        self._keep_channels_widget = KeepChannelsWidget(parent=self)
+        self._main_layout.addWidget(self._keep_channels_widget)
+
+        self._main_layout.addWidget(FrameSeparator(parent=self))
 
         self._add_remove_container: QWidget = QWidget()
         self._add_remove_container_layout: QHBoxLayout = QHBoxLayout()
@@ -84,7 +98,7 @@ class StitchOmeZarrWidget(QWidget):
         self._add_remove_container_layout.setSpacing(6)
         self._add_remove_container.setLayout(self._add_remove_container_layout)
 
-        self._q_list_title: QLabel = QLabel("OME.zarr directories")
+        self._q_list_title: QLabel = QLabel("Image directories")
         self._q_list_title.setStyleSheet("font-weight: bold")
         self._q_list_title.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
@@ -136,13 +150,7 @@ class StitchOmeZarrWidget(QWidget):
         self._main_layout.addWidget(self._list_scroll_area)
         self._main_layout.addSpacing(6)
 
-        separator = QFrame(self._main_container)
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setFrameShadow(QFrame.Shadow.Sunken)
-        separator.setStyleSheet("background-color: gray;")
-        separator.setFixedHeight(2)
-        self._main_layout.addWidget(separator)
-        self._main_layout.addSpacing(6)
+        self._main_layout.addWidget(FrameSeparator(parent=self))
 
         self._stitch_button: QPushButton = QPushButton("Stitch gonads")
         self._stitch_button.clicked.connect(self._stitch_button_pressed)
@@ -154,14 +162,43 @@ class StitchOmeZarrWidget(QWidget):
 
         self._main_layout.addStretch()
 
+    def _verify_directory(self, directory_path: Path) -> bool:
+        files_only = [
+            p
+            for p in directory_path.iterdir()
+            if p.is_file() or p.name.endswith(".ome.zarr")
+        ]
+        if not files_only:
+            show_error(
+                f"The directory {directory_path} does not contain any files"
+            )
+            return False
+        suffix_set = {
+            ".ome.zarr" if p.name.endswith(".ome.zarr") else p.suffix
+            for p in files_only
+        }
+        if len(suffix_set) != 1:
+            show_error(
+                f"The directory {directory_path}\nhas multiple suffixes"
+            )
+            return False
+        suffix = list(suffix_set)[0]
+        if suffix not in SUPPORTED_STITCH_EXTENSIONS:
+            show_error(f"The suffix {suffix} is not supported")
+            return False
+        return True
+
     def _add_directory_button_pressed(self) -> None:
-        directories_path_list: list[str] | None = get_directories(
+        directories_path_list: list[Path] | None = get_directories(
             self, caption="Select the directories"
         )
         if directories_path_list is None:
             return
         for directory_path in directories_path_list:
-            if directory_path not in self._directories_list:
+            if (
+                directory_path not in self._directories_list
+                and self._verify_directory(directory_path)
+            ):
                 self._directories_list.append(directory_path)
         self._update_qlist()
 

@@ -1,25 +1,158 @@
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from carltonlab_napari_count_tool._shared_variables import (
-    DEFAULT_SEPARATOR_SPACING,
-    DEFAULT_SEPARATOR_THICKNESS,
-)
-from qtpy.QtCore import QDir
 from qtpy.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QLayout,
+    QLineEdit,
     QListView,
     QMessageBox,
+    QSizePolicy,
     QTreeView,
     QVBoxLayout,
     QWidget,
 )
 
+from carltonlab_napari_tools._shared_variables import (
+    DEFAULT_SEPARATOR_SPACING,
+    DEFAULT_SEPARATOR_THICKNESS,
+)
+
 if TYPE_CHECKING:
     from napari.components import ViewerModel
+
+
+class FrameSeparator(QWidget):
+    def __init__(
+        self,
+        spacing_width: tuple[int, int] = (
+            DEFAULT_SEPARATOR_SPACING,
+            DEFAULT_SEPARATOR_SPACING,
+        ),
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(layout)
+
+        layout.addSpacing(spacing_width[0])
+
+        separator = QFrame(self)
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setStyleSheet("background-color: gray;")
+        separator.setFixedHeight(DEFAULT_SEPARATOR_THICKNESS)
+        layout.addWidget(separator)
+
+        layout.addSpacing(spacing_width[1])
+
+
+class KeepChannelsWidget(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+
+        self._channel_list: list[int] = []
+
+        self._layout = QVBoxLayout()
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(self._layout)
+
+        self._keep_channels_cb = QCheckBox("Keep channels")
+        self._keep_channels_cb.toggled.connect(self._on_keep_channels_toggled)
+        self._layout.addWidget(self._keep_channels_cb)
+
+        self._keep_channels_row = QWidget()
+        self._keep_channels_row_layout = QHBoxLayout()
+        self._keep_channels_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._keep_channels_row.setLayout(self._keep_channels_row_layout)
+        self._layout.addWidget(self._keep_channels_row)
+
+        self._keep_channels_label = QLabel("Keep channels")
+        self._keep_channels_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._keep_channels_row_layout.addWidget(self._keep_channels_label)
+
+        self._keep_channels_line_edit = QLineEdit()
+        self._keep_channels_line_edit.editingFinished.connect(
+            self._on_keep_channels_edited
+        )
+        self._keep_channels_row_layout.addWidget(self._keep_channels_line_edit)
+
+        self._output_channel_row = QWidget()
+        self._output_channel_row_layout = QHBoxLayout()
+        self._output_channel_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._output_channel_row.setLayout(self._output_channel_row_layout)
+        self._layout.addWidget(self._output_channel_row)
+
+        self._output_channel_label = QLabel("Channel order: ")
+        self._output_channel_row_layout.addWidget(self._output_channel_label)
+
+        self._output_channel_result_label = QLabel("All channels")
+        self._output_channel_row_layout.addWidget(
+            self._output_channel_result_label
+        )
+        self._output_channel_row_layout.addStretch()
+
+        self._on_keep_channels_toggled(False)
+
+    @staticmethod
+    def _parse_channels(channel_string: str) -> list[int]:
+        if not channel_string.strip():
+            return []
+
+        channels: list[int] = []
+        for part in channel_string.split(","):
+            part = part.strip()
+            if not part:
+                return []
+
+            if "-" in part:
+                range_parts = part.split("-")
+                if len(range_parts) != 2:
+                    return []
+                try:
+                    start, end = (int(value.strip()) for value in range_parts)
+                except ValueError:
+                    return []
+                if start > end:
+                    return []
+                channels.extend(range(start, end + 1))
+            else:
+                try:
+                    channels.append(int(part))
+                except ValueError:
+                    return []
+
+        return channels
+
+    def _on_keep_channels_edited(self) -> None:
+        self._channel_list = self._parse_channels(
+            self._keep_channels_line_edit.text()
+        )
+        if not self._channel_list:
+            self._keep_channels_line_edit.clear()
+            self._output_channel_result_label.setText("All channels")
+        else:
+            self._output_channel_result_label.setText(
+                ", ".join(str(channel) for channel in self._channel_list)
+            )
+
+    def _on_keep_channels_toggled(self, state: bool) -> None:
+        self._keep_channels_line_edit.setEnabled(state)
+
+    def get_channels(self) -> list[int]:
+        if not self._keep_channels_cb.isChecked():
+            return []
+        return self._channel_list.copy()
 
 
 def confirm_dialog(
@@ -78,30 +211,26 @@ def get_files(
 def get_directories(
     parent: QWidget | None = None,
     caption: str = "Select directories",
-) -> list[str] | None:
+) -> list[Path] | None:
     dialog = QFileDialog(parent, caption)
     dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
 
-    # Directory picking mode
     dialog.setFileMode(QFileDialog.FileMode.Directory)
     dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
 
-    # Allow multi-selection in the internal views
     views = dialog.findChildren(QListView) + dialog.findChildren(QTreeView)
     for view in views:
         view.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
 
-    # (Optional) start at home; remove if you want Qt's default
-    dialog.setDirectory(QDir.homePath())
-
     if not dialog.exec():
         return None
 
-    # selectedFiles() will contain directories in Directory mode
     dirs = dialog.selectedFiles()
-    return dirs or None
+    if not dirs:
+        return None
+    return [Path(p) for p in dirs]
 
 
 ClspPickResult = list[str] | None | Literal["non-clsp"]
