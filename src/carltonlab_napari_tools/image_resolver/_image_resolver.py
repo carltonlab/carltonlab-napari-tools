@@ -4,6 +4,7 @@ import struct
 from argparse import ArgumentParser
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+from typing import Any
 
 from bioio_base.exceptions import UnsupportedFileFormatError
 from mrc import DVFile
@@ -109,7 +110,7 @@ def _repair_dv_metadata(image_path: Path) -> str:
             mode="wb",
             dir=image_path.parent,
             prefix=f".{image_path.name}.",
-            suffix=image_path.suffix or ".dv",
+            suffix=".dv",
             delete=False,
         ) as temporary:
             temporary_path = temporary.name
@@ -128,13 +129,72 @@ def _repair_dv_metadata(image_path: Path) -> str:
     return str(image_path)
 
 
+def _carltonlab_normalize_dv_path(image_path: Path) -> Path:
+    """Repair and normalize CarltonLab DV-related files."""
+    if not _is_dv_like_file(image_path):
+        return image_path
+
+    if not _carltonlab_dv_metadata_check(image_path):
+        image_path = Path(_repair_dv_metadata(image_path))
+
+    normalized_path: Path | None = None
+    name = image_path.name
+
+    if name.endswith("_R3D.dv_add_decon.zs"):
+        normalized_path = image_path.with_name(
+            f"{name.removesuffix('_R3D.dv_add_decon.zs')}_deconzs.dv"
+        )
+    elif name.endswith("_R3D.dv_add_decon"):
+        normalized_path = image_path.with_name(
+            f"{name.removesuffix('_R3D.dv_add_decon')}_decon.dv"
+        )
+
+    if normalized_path is None:
+        return image_path
+
+    if normalized_path.exists():
+        raise FileExistsError(
+            f"Cannot normalize {image_path}: destination already exists: "
+            f"{normalized_path}"
+        )
+
+    image_path.rename(normalized_path)
+    return normalized_path
+
+
+def _carltonlab_normalize_image_data(data: Any) -> Any:
+    """Normalize CarltonLab image data for downstream readers."""
+    if not data.dtype.isnative:
+        data = data.astype(data.dtype.newbyteorder("="), copy=False)
+
+    for dimension in ("S", "T"):
+        if dimension in data.dims:
+            if data.sizes[dimension] != 1:
+                raise ValueError(
+                    f"CarltonLab images must have one {dimension} dimension."
+                )
+            data = data.isel({dimension: 0}, drop=True)
+
+    rename_map = {
+        dimension: dimension.lower()
+        for dimension in data.dims
+        if dimension in {"C", "Z", "Y", "X"}
+    }
+    return data.rename(rename_map)
+
+
+def resolve_image_data(image_path: str | Path) -> Any | None:
+    """Resolve a CarltonLab image and return normalized image data."""
+    image = resolve_image(image_path)
+    if image is None:
+        return None
+    return _carltonlab_normalize_image_data(image.xarray_data)
+
+
 def resolve_image(image_path: str | Path) -> nImage | None:
     image_path = Path(image_path)
 
-    if _is_dv_like_file(image_path) and not _carltonlab_dv_metadata_check(
-        image_path
-    ):
-        image_path = Path(_repair_dv_metadata(image_path))
+    image_path = _carltonlab_normalize_dv_path(image_path)
 
     image: nImage
     try:
