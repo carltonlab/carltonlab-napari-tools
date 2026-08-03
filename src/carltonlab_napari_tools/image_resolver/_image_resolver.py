@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
 
+import numpy as np
 from bioio_base.exceptions import UnsupportedFileFormatError
 from mrc import DVFile
 from mrc._new import BE_HDR, LE_HDR, _byte_order
@@ -129,6 +130,90 @@ def _repair_dv_metadata(image_path: Path) -> str:
     return str(image_path)
 
 
+def _carltonlab_rewrite_dv_data(image_path: Path) -> None:
+    """Rewrite CarltonLab DV payloads as native uint16 data."""
+    with DVFile(image_path) as dv:
+        data = np.asarray(dv.data)
+        header = dv.hdr
+
+    if data.dtype == np.dtype("=u2") and header.pixel_type == 6:
+        return
+
+    with image_path.open("rb") as source:
+        source_byte_order = _byte_order(source)
+        if source_byte_order is None:
+            raise ValueError(f"Invalid DV byte order: {image_path}")
+
+        source_header_struct = LE_HDR if source_byte_order == "<" else BE_HDR
+        unpacked = source_header_struct.unpack(
+            source.read(source_header_struct.size)
+        )
+        title = unpacked[-1]
+        extended_header = source.read(header.ext_hdr_len)
+
+    byte_order = "<"
+    header_struct = LE_HDR
+
+    if source_byte_order != byte_order and extended_header:
+        frame_struct = struct.Struct(f"{source_byte_order}8i14f")
+        output_frame_struct = struct.Struct(f"{byte_order}8i14f")
+        record_length = (header.n_ints + header.n_floats) * 4
+        frame_length = frame_struct.size
+        converted_extended_header = bytearray()
+
+        frame_bytes = header.n_sections * record_length
+        for offset in range(0, frame_bytes, record_length):
+            record = extended_header[offset : offset + record_length]
+            frame = frame_struct.unpack(record[:frame_length])
+            converted_extended_header.extend(output_frame_struct.pack(*frame))
+            converted_extended_header.extend(record[frame_length:])
+
+        converted_extended_header.extend(extended_header[frame_bytes:])
+        extended_header = bytes(converted_extended_header)
+
+    normalized_data = np.nan_to_num(
+        data,
+        nan=0.0,
+        posinf=np.iinfo(np.uint16).max,
+        neginf=0.0,
+    )
+    normalized_data = np.rint(
+        np.clip(normalized_data, 0, np.iinfo(np.uint16).max)
+    )
+    normalized_data = normalized_data.astype(
+        np.dtype(f"{byte_order}u2"),
+        copy=False,
+    )
+
+    normalized_header = header._replace(
+        pixel_type=6,
+        min=float(normalized_data.min()),
+        max=float(normalized_data.max()),
+        mean=float(normalized_data.mean()),
+    )
+    header_bytes = header_struct.pack(*normalized_header, title)
+
+    temporary_path: str | None = None
+    try:
+        with NamedTemporaryFile(
+            mode="wb",
+            dir=image_path.parent,
+            prefix=f".{image_path.name}.",
+            suffix=".dv",
+            delete=False,
+        ) as temporary:
+            temporary_path = temporary.name
+            temporary.write(header_bytes)
+            temporary.write(extended_header)
+            temporary.write(normalized_data.tobytes(order="C"))
+
+        os.replace(temporary_path, image_path)
+    except Exception:
+        if temporary_path is not None:
+            Path(temporary_path).unlink(missing_ok=True)
+        raise
+
+
 def _carltonlab_normalize_dv_path(image_path: Path) -> Path:
     """Repair and normalize CarltonLab DV-related files."""
     if not _is_dv_like_file(image_path):
@@ -136,6 +221,8 @@ def _carltonlab_normalize_dv_path(image_path: Path) -> Path:
 
     if not _carltonlab_dv_metadata_check(image_path):
         image_path = Path(_repair_dv_metadata(image_path))
+
+    _carltonlab_rewrite_dv_data(image_path)
 
     normalized_path: Path | None = None
     name = image_path.name
