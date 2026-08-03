@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -22,16 +23,18 @@ from carltonlab_napari_tools._protocols import (
     MainWidgetCallBacks,
 )
 from carltonlab_napari_tools._shared_variables import (
+    CLSP_PROJECT_SUFFIX,
     SUPPORTED_STITCH_EXTENSIONS,
+    TILES_DIR_NAME,
 )
 from carltonlab_napari_tools._shared_widgets import (
     FrameSeparator,
     KeepChannelsWidget,
     get_directories,
 )
-from carltonlab_napari_tools.image_stitching._image_stitching import (
-    get_stitched_output_path,
-    stitch_directories,
+from carltonlab_napari_tools._utils import (
+    create_project_structure,
+    get_common_prefix,
 )
 
 if TYPE_CHECKING:
@@ -152,7 +155,7 @@ class StitchOmeZarrWidget(QWidget):
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
         self._stitch_button: QPushButton = QPushButton("Stitch gonads")
-        self._stitch_button.clicked.connect(self._stitch_button_pressed)
+        self._stitch_button.clicked.connect(self._on_stitch_button_pressed)
         self._main_layout.addWidget(self._stitch_button)
 
         self._files_created_status_label: QLabel = QLabel("")
@@ -162,6 +165,13 @@ class StitchOmeZarrWidget(QWidget):
         self._main_layout.addStretch()
 
     def _verify_directory(self, directory_path: Path) -> bool:
+        has_existing_project = any(
+            path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
+            for path in directory_path.iterdir()
+        )
+        if has_existing_project:
+            return True
+
         files_only = [
             p
             for p in directory_path.iterdir()
@@ -211,18 +221,97 @@ class StitchOmeZarrWidget(QWidget):
                 self._directories_list.remove(item_path)
         self._update_qlist()
 
-    def _stitch_button_pressed(self) -> None:
+    def _get_project_name(self, directory_path: Path) -> str:
+        image_names: list[str] = []
+
+        for image_path in directory_path.iterdir():
+            if not (
+                image_path.is_file() or image_path.name.endswith(".ome.zarr")
+            ):
+                continue
+
+            image_name = image_path.name
+            for extension in SUPPORTED_STITCH_EXTENSIONS:
+                if image_name.endswith(extension):
+                    image_name = image_name[: -len(extension)]
+                    break
+
+            image_names.append(image_name)
+
+        project_base_name = get_common_prefix(image_names)
+        if not project_base_name:
+            project_base_name = directory_path.name
+
+        return f"{project_base_name}{CLSP_PROJECT_SUFFIX}"
+
+    def _move_tiles(
+        self,
+        project_base_dir: Path,
+        project_path: Path,
+    ) -> bool:
+        tiles_path = project_path / TILES_DIR_NAME
+
+        image_paths = [
+            image_path
+            for image_path in project_base_dir.iterdir()
+            if (
+                image_path.name.endswith(".ome.zarr")
+                or (
+                    image_path.is_file()
+                    and any(
+                        image_path.name.endswith(extension)
+                        for extension in SUPPORTED_STITCH_EXTENSIONS
+                    )
+                )
+            )
+        ]
+
+        if not image_paths:
+            show_error(f"No image tiles found in {project_base_dir}")
+            return False
+
+        destination_paths = [
+            tiles_path / image_path.name for image_path in image_paths
+        ]
+        if any(destination.exists() for destination in destination_paths):
+            show_error(
+                f"One or more tile destinations already exist in {tiles_path}"
+            )
+            return False
+
+        try:
+            for image_path in image_paths:
+                shutil.move(str(image_path), str(tiles_path / image_path.name))
+        except OSError as exc:
+            show_error(f"Could not move tiles from {project_base_dir}: {exc}")
+            return False
+
+        return True
+
+    def _on_stitch_button_pressed(self) -> None:
         if not self._directories_list:
             return
-        stitched_ok = stitch_directories(self._directories_list)
-        expected_outputs = [
-            get_stitched_output_path(directory)
-            for directory in self._directories_list
-        ]
-        all_created = stitched_ok and all(
-            path.exists() for path in expected_outputs
-        )
-        self._set_files_created_label_state(all_created)
+
+        for starting_project in self._directories_list:
+            existing_projects = [
+                path
+                for path in starting_project.iterdir()
+                if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
+            ]
+
+            if existing_projects:
+                project_path = existing_projects[0]
+            else:
+                project_name = self._get_project_name(starting_project)
+                project_path = starting_project / project_name
+                if not create_project_structure(project_path, "clsp"):
+                    continue
+
+            tiles_path = project_path / TILES_DIR_NAME
+            if tiles_path.is_dir() and not any(tiles_path.iterdir()):
+                self._move_tiles(starting_project, project_path)
+
+        return
 
     def _set_files_created_label_state(self, state: bool) -> None:
         if state:

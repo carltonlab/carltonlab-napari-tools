@@ -43,8 +43,7 @@ EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME = (
 EDITED_REGIONS_FILE_NAME = "clt_expanded_regions_layer.csv"
 
 MULTI_GONAD_FILE_SUFFIX = "clsp_"
-MULTI_GONAD_FILE_EXTENSION = "_multi_gonad_file.config"
-
+MULTI_GONAD_FILE_EXTENSON = "_multi_gonad_file.config"
 SCORED_NUCLEI_DIR_NAME = "scored_nuclei"
 SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION = "_scored_nuclei_points.csv"
 SCORED_NUCLEI_FOCI_SUMMARY_FILE_NAME = "scored_nuclei_foci_summary.csv"
@@ -65,7 +64,9 @@ SUPPORTED_STITCH_EXTENSIONS = [
 PROJECT_FILE_DIR_NAME = "project_file"
 SEGMENTATION_DIR_NAME = "segmentation"
 SBS_IMAGES_DIR_NAME = "sbs_images"
+
 CLSA_PROJECT_SUFFIX = "_clsa_project"
+CLSP_PROJECT_SUFFIX = "_clsp_project"
 
 RESULTS_DIR = "summaries_and_plots"
 TILE_POSITIONS_FILE_NAME_SUFFIX = "_tile_positions.csv"
