@@ -1,3 +1,4 @@
+import configparser
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -27,6 +28,7 @@ from carltonlab_napari_tools._protocols import (
 )
 from carltonlab_napari_tools._shared_variables import (
     CLSP_PROJECT_SUFFIX,
+    EXTRACTED_CHANNELS_FILE_NAME,
     SUPPORTED_STITCH_EXTENSIONS,
     TILES_DIR_NAME,
 )
@@ -38,6 +40,7 @@ from carltonlab_napari_tools._shared_widgets import (
 from carltonlab_napari_tools._utils import (
     create_project_structure,
     get_common_prefix,
+    parse_channel_string,
 )
 
 if TYPE_CHECKING:
@@ -233,29 +236,37 @@ class StitchOmeZarrWidget(QWidget):
         if has_existing_project:
             return True
 
-        files_only = [
+        supported_entries = [
             p
             for p in directory_path.iterdir()
-            if p.is_file() or p.name.endswith(".ome.zarr")
+            if p.name.endswith(".ome.zarr")
+            or (
+                p.is_file()
+                and any(
+                    p.name.endswith(extension)
+                    for extension in SUPPORTED_STITCH_EXTENSIONS
+                )
+            )
         ]
-        if not files_only:
+
+        if not supported_entries:
             show_error(
                 f"The directory {directory_path} does not contain any files"
             )
             return False
-        suffix_set = {
-            ".ome.zarr" if p.name.endswith(".ome.zarr") else p.suffix
-            for p in files_only
-        }
-        if len(suffix_set) != 1:
+
+        unsupported_files = [
+            p
+            for p in directory_path.iterdir()
+            if p.is_file() and p not in supported_entries
+        ]
+        if unsupported_files:
             show_error(
-                f"The directory {directory_path}\nhas multiple suffixes"
+                f"The directory {directory_path} contains unsupported files:\n"
+                + "\n".join(str(path.name) for path in unsupported_files)
             )
             return False
-        suffix = list(suffix_set)[0]
-        if suffix not in SUPPORTED_STITCH_EXTENSIONS:
-            show_error(f"The suffix {suffix} is not supported")
-            return False
+
         return True
 
     def _add_directory_button_pressed(self) -> None:
@@ -353,6 +364,8 @@ class StitchOmeZarrWidget(QWidget):
         if not self._directories_list:
             return
 
+        project_paths: list[Path] = []
+
         for starting_project in self._directories_list:
             existing_projects = [
                 path
@@ -365,12 +378,82 @@ class StitchOmeZarrWidget(QWidget):
             else:
                 project_name = self._get_project_name(starting_project)
                 project_path = starting_project / project_name
-                if not create_project_structure(project_path, "clsp"):
-                    continue
+
+            if not create_project_structure(project_path, "clsp"):
+                continue
 
             tiles_path = project_path / TILES_DIR_NAME
-            if tiles_path.is_dir() and not any(tiles_path.iterdir()):
-                self._move_tiles(starting_project, project_path)
+            if (
+                tiles_path.is_dir()
+                and not any(tiles_path.iterdir())
+                and not self._move_tiles(starting_project, project_path)
+            ):
+                continue
+
+            project_paths.append(project_path)
+
+        requested_channels = self._keep_channels_widget.get_channels()
+        requested_channels_string = (
+            "all"
+            if not requested_channels
+            else ",".join(str(channel) for channel in requested_channels)
+        )
+        channel_errors: list[str] = []
+
+        for project_path in project_paths:
+            tiles_path = project_path / TILES_DIR_NAME
+            config_path = tiles_path / EXTRACTED_CHANNELS_FILE_NAME
+            kept_channel_files = list(
+                tiles_path.glob("*_kept_channels_*.ome.zarr")
+            )
+
+            if kept_channel_files and not config_path.exists():
+                channel_errors.append(
+                    f"Project: {project_path}\n"
+                    f"Missing {EXTRACTED_CHANNELS_FILE_NAME}"
+                )
+                continue
+
+            if not config_path.exists():
+                continue
+
+            config = configparser.ConfigParser()
+            try:
+                config.read(config_path)
+                stored_channels = config.get("channels", "kept")
+            except (configparser.Error, OSError, ValueError) as exc:
+                channel_errors.append(
+                    f"Project: {project_path}\n"
+                    f"Could not read {config_path.name}: {exc}"
+                )
+                continue
+
+            if stored_channels == "all":
+                stored_channels_string = "all"
+            else:
+                stored_channels_list = parse_channel_string(stored_channels)
+                stored_channels_string = ",".join(
+                    str(channel) for channel in stored_channels_list
+                )
+
+            if stored_channels_string != requested_channels_string:
+                channel_errors.append(
+                    f"Project: {project_path}\n"
+                    f"Requested channels: {requested_channels_string}\n"
+                    f"Stored channels: {stored_channels_string}"
+                )
+
+        if channel_errors:
+            show_error(
+                "Channel validation failed:\n\n"
+                + "\n\n".join(channel_errors)
+                + "\n\nNo extraction or stitching was performed."
+            )
+            return
+
+        for _project_path in project_paths:
+            # Channel extraction will be implemented next.
+            continue
 
         return
 

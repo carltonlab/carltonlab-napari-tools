@@ -65,8 +65,8 @@ def load_project_structure_from_json(project_type: str) -> list[Path]:
 
 
 def create_project_structure(project_path: Path, project_type: str) -> bool:
-    if project_path.exists():
-        show_error(f"Project path {str(project_path)} already exists")
+    if project_path.exists() and not project_path.is_dir():
+        show_error(f"Project path is not a directory: {project_path}")
         return False
 
     directory_paths = load_project_structure_from_json(project_type)
@@ -74,9 +74,12 @@ def create_project_structure(project_path: Path, project_type: str) -> bool:
         return False
 
     try:
-        project_path.mkdir(parents=True)
+        project_path.mkdir(parents=True, exist_ok=True)
         for directory_path in directory_paths:
-            (project_path / directory_path).mkdir(parents=True)
+            (project_path / directory_path).mkdir(
+                parents=True,
+                exist_ok=True,
+            )
     except OSError as exc:
         show_error(f"Could not create project structure: {exc}")
         return False

@@ -52,6 +52,7 @@ SCORED_NUCLEI_PLOT_FILE_NAME = "scored_points_spline_cumulative_plot.pdf"
 AUTO_COUNT_DIR_NAME = "auto_count"
 TILES_DIR_NAME = "tiles"
 STITCHED_IMAGE_DIR_NAME = "stitched_image"
+EXTRACTED_CHANNELS_FILE_NAME = "extracted_channels.config"
 STITCHED_IMAGE_SUFFIX = "_stitched.ome.zarr"
 SUPPORTED_STITCH_EXTENSIONS = [
     ".tif",
