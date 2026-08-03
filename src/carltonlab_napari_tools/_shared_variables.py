@@ -43,7 +43,7 @@ EDITED_REGIONS_EXPANSION_VALUES_FILE_NAME = (
 EDITED_REGIONS_FILE_NAME = "clt_expanded_regions_layer.csv"
 
 MULTI_GONAD_FILE_SUFFIX = "clsp_"
-MULTI_GONAD_FILE_EXTENSON = "_multi_gonad_file.config"
+MULTI_GONAD_FILE_EXTENSION = "_multi_gonad_file.config"
 SCORED_NUCLEI_DIR_NAME = "scored_nuclei"
 SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION = "_scored_nuclei_points.csv"
 SCORED_NUCLEI_FOCI_SUMMARY_FILE_NAME = "scored_nuclei_foci_summary.csv"

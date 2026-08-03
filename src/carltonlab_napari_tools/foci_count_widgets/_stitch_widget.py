@@ -7,6 +7,8 @@ from qtpy.QtCore import QSize, Qt
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
+    QFormLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -14,6 +16,7 @@ from qtpy.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -92,6 +95,64 @@ class StitchOmeZarrWidget(QWidget):
         self._keep_channels_widget = KeepChannelsWidget(parent=self)
         self._main_layout.addWidget(self._keep_channels_widget)
 
+        self._main_layout.addWidget(FrameSeparator(parent=self))
+
+        self._registration_container = QWidget()
+        self._registration_layout = QFormLayout()
+        self._registration_layout.setContentsMargins(0, 0, 0, 0)
+        self._registration_container.setLayout(self._registration_layout)
+
+        self._registration_channel_spinbox = QSpinBox()
+        self._registration_channel_spinbox.setMinimum(0)
+        self._registration_channel_spinbox.setMaximum(9999)
+        self._registration_channel_spinbox.setValue(0)
+        self._registration_layout.addRow(
+            "Registration channel",
+            self._registration_channel_spinbox,
+        )
+
+        self._registration_scale_spinbox = QSpinBox()
+        self._registration_scale_spinbox.setMinimum(-1)
+        self._registration_scale_spinbox.setMaximum(9999)
+        self._registration_scale_spinbox.setValue(-1)
+        self._registration_scale_spinbox.setSpecialValueText("Automatic")
+        self._registration_layout.addRow(
+            "Registration scale",
+            self._registration_scale_spinbox,
+        )
+
+        self._main_layout.addWidget(self._registration_container)
+        self._main_layout.addWidget(FrameSeparator(parent=self))
+
+        self._fusion_container = QWidget()
+        self._fusion_layout = QFormLayout()
+        self._fusion_layout.setContentsMargins(0, 0, 0, 0)
+        self._fusion_container.setLayout(self._fusion_layout)
+
+        self._use_gpu_checkbox = QCheckBox("Use GPU")
+        self._fusion_layout.addRow(self._use_gpu_checkbox)
+
+        self._num_workers_spinbox = QSpinBox()
+        self._num_workers_spinbox.setMinimum(0)
+        self._num_workers_spinbox.setMaximum(9999)
+        self._num_workers_spinbox.setValue(0)
+        self._num_workers_spinbox.setSpecialValueText("Automatic")
+        self._fusion_layout.addRow(
+            "Number of workers",
+            self._num_workers_spinbox,
+        )
+
+        self._n_batch_spinbox = QSpinBox()
+        self._n_batch_spinbox.setMinimum(0)
+        self._n_batch_spinbox.setMaximum(9999)
+        self._n_batch_spinbox.setValue(0)
+        self._n_batch_spinbox.setSpecialValueText("Automatic")
+        self._fusion_layout.addRow(
+            "Batch count",
+            self._n_batch_spinbox,
+        )
+
+        self._main_layout.addWidget(self._fusion_container)
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
         self._add_remove_container: QWidget = QWidget()
@@ -312,6 +373,25 @@ class StitchOmeZarrWidget(QWidget):
                 self._move_tiles(starting_project, project_path)
 
         return
+
+    def get_stitching_options(
+        self,
+    ) -> dict[str, int | bool | None]:
+        registration_scale = self._registration_scale_spinbox.value()
+        num_workers = self._num_workers_spinbox.value()
+        n_batch = self._n_batch_spinbox.value()
+
+        return {
+            "registration_channel": (
+                self._registration_channel_spinbox.value()
+            ),
+            "registration_scale": (
+                None if registration_scale < 0 else registration_scale
+            ),
+            "num_workers": None if num_workers == 0 else num_workers,
+            "n_batch": None if n_batch == 0 else n_batch,
+            "use_gpu": self._use_gpu_checkbox.isChecked(),
+        }
 
     def _set_files_created_label_state(self, state: bool) -> None:
         if state:

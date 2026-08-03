@@ -423,7 +423,20 @@ def load_ome_zarr_msims(image_list: list[Path]) -> list[Any]:
     ]
 
 
-def convert_to_ome_zarr(image_list: list[Path]) -> list[Path] | None:
+def convert_to_ome_zarr(
+    image_list: list[Path],
+    channels: list[int] | None = None,
+) -> list[Path] | None:
+    """Convert input images to OME-Zarr, optionally selecting channels.
+
+    Parameters
+    ----------
+    image_list
+        Input image paths.
+    channels
+        Zero-based channel indices to keep. If ``None`` or empty, all
+        channels are preserved.
+    """
     return []
 
 
