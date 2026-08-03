@@ -1,0 +1,15 @@
+{
+  "version": "0.1.0",
+  "dir_tree": {
+    "tiles": 0,
+    "stitched_image": 0,
+    "project_file": {
+      "regions": 0,
+      "pick_nuclei": {
+        "cut_sbs": 0
+      },
+      "scored_nuclei": 0,
+      "summaries_and_plots": 0
+    }
+  }
+}

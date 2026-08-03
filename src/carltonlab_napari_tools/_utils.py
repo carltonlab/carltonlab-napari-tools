@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+
+from napari.utils.notifications import show_error
+
+from carltonlab_napari_tools._shared_variables import PROJECT_TYPES
 
 SUPPORTED_IMAGE_EXTENSIONS: tuple[str, ...] = (
     ".ome.zarr",
@@ -18,6 +23,73 @@ SUPPORTED_IMAGE_EXTENSIONS: tuple[str, ...] = (
     ".nd2",
     ".sldy",
 )
+
+
+def load_project_structure_from_json(project_type: str) -> list[Path]:
+    if project_type not in PROJECT_TYPES:
+        return []
+
+    resource_path = (
+        Path(__file__).resolve().parent
+        / "resources"
+        / f"{project_type}_structure.json"
+    )
+
+    try:
+        with resource_path.open("r", encoding="utf-8") as structure_file:
+            structure = json.load(structure_file)
+    except (OSError, json.JSONDecodeError) as exc:
+        show_error(f"Could not load project structure: {exc}")
+        return []
+
+    directory_paths: list[Path] = []
+
+    def collect_directories(
+        directory_tree: dict[str, object],
+        parent: Path = Path(),
+    ) -> None:
+        for directory_name, children in directory_tree.items():
+            directory_path = parent / directory_name
+            directory_paths.append(directory_path)
+
+            if isinstance(children, dict):
+                collect_directories(children, directory_path)
+
+    directory_tree = structure.get("dir_tree")
+    if not isinstance(directory_tree, dict):
+        show_error("Project structure does not contain a valid dir_tree")
+        return []
+
+    collect_directories(directory_tree)
+    return directory_paths
+
+
+def create_project_structure(project_path: Path, project_type: str) -> bool:
+    if project_path.exists():
+        show_error(f"Project path {str(project_path)} already exists")
+        return False
+
+    directory_paths = load_project_structure_from_json(project_type)
+    if not directory_paths:
+        return False
+
+    try:
+        project_path.mkdir(parents=True)
+        for directory_path in directory_paths:
+            (project_path / directory_path).mkdir(parents=True)
+    except OSError as exc:
+        show_error(f"Could not create project structure: {exc}")
+        return False
+
+    return True
+
+
+def create_stitched_project_structure(project_path: Path) -> bool:
+    if project_path.exists():
+        show_error(f"Project path {str(project_path)} already exists")
+        return False
+    project_path.mkdir(parents=True, exist_ok=True)
+    return True
 
 
 def parse_channel_string(channel_string: str) -> list[int]:

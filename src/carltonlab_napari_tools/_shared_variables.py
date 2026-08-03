@@ -1,6 +1,8 @@
 DEFAULT_PROJECT_NAME = "cl_score_points_project"
 DEFAULT_PROJECT_EXTENSION = "_clsp"
 
+PROJECT_TYPES = ["clsp", "clsa"]
+
 IMAGE_CONTRASTS_FILE_NAME = "cl_image_contrasts.config"
 TILE_CONTRASTS_FILE_NAME_SUFFIX = "_contrasts.config"
 

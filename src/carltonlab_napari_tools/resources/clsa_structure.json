@@ -1,0 +1,12 @@
+{
+  "version": "0.1.0",
+  "dir_tree": {
+    "tiles": 0,
+    "stitched_image": 0,
+    "project_file": {
+      "regions": 0,
+      "segmentation": 0,
+      "sbs_images": 0
+    }
+  }
+}
