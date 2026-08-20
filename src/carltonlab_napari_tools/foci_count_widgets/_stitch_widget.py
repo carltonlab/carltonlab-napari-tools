@@ -60,6 +60,76 @@ ADD_DIR_ICON = ICONS_DIR / "add_dir.svg"
 REMOVE_ICON = ICONS_DIR / "remove.svg"
 
 
+class StitchProjectStatusRow(QWidget):
+    def __init__(
+        self,
+        display_name: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(4)
+        self.setLayout(layout)
+
+        name_label = QLabel(display_name)
+        name_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        layout.addWidget(name_label)
+
+        self._extraction_status_button = QPushButton("Ex")
+        self._stitching_status_button = QPushButton("St")
+
+        for button in (
+            self._extraction_status_button,
+            self._stitching_status_button,
+        ):
+            button.setFixedWidth(30)
+            button.setFlat(True)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            layout.addWidget(button)
+
+    def _set_status(
+        self,
+        button: QPushButton,
+        color: str,
+        tooltip: str,
+        bold: bool = False,
+    ) -> None:
+        weight = "bold" if bold else "normal"
+        button.setStyleSheet(f"color: {color}; font-weight: {weight};")
+        button.setToolTip(tooltip)
+
+    def set_extraction_status(
+        self,
+        color: str,
+        tooltip: str,
+        bold: bool = False,
+    ) -> None:
+        self._set_status(
+            self._extraction_status_button,
+            color,
+            tooltip,
+            bold,
+        )
+
+    def set_stitching_status(
+        self,
+        color: str,
+        tooltip: str,
+        bold: bool = False,
+    ) -> None:
+        self._set_status(
+            self._stitching_status_button,
+            color,
+            tooltip,
+            bold,
+        )
+
+
 class StitchOmeZarrWidget(QWidget):
     def __init__(
         self,
@@ -104,6 +174,12 @@ class StitchOmeZarrWidget(QWidget):
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
         self._keep_channels_widget = KeepChannelsWidget(parent=self)
+        self._keep_channels_widget._keep_channels_cb.toggled.connect(
+            self._update_qlist
+        )
+        self._keep_channels_widget._keep_channels_line_edit.editingFinished.connect(
+            self._update_qlist
+        )
         self._main_layout.addWidget(self._keep_channels_widget)
 
         self._main_layout.addWidget(FrameSeparator(parent=self))
@@ -370,6 +446,109 @@ class StitchOmeZarrWidget(QWidget):
 
         return tile_path.with_name(f"{base_name}.ome.zarr")
 
+    def _get_project_path(self, starting_project: Path) -> Path:
+        existing_projects = [
+            path
+            for path in starting_project.iterdir()
+            if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
+        ]
+
+        if existing_projects:
+            return existing_projects[0]
+
+        return starting_project / self._get_project_name(starting_project)
+
+    def _get_stored_channels(
+        self,
+        project_path: Path,
+    ) -> str | list[int] | None:
+        config_path = (
+            project_path / TILES_DIR_NAME / EXTRACTED_CHANNELS_FILE_NAME
+        )
+
+        if not config_path.exists():
+            return None
+
+        config = configparser.ConfigParser()
+        try:
+            config.read(config_path)
+            stored_channels = config.get("channels", "kept").strip()
+        except (configparser.Error, OSError, ValueError):
+            return None
+
+        if stored_channels == "all":
+            return "all"
+
+        parsed_channels = parse_channel_string(stored_channels)
+        if not parsed_channels:
+            return None
+
+        return parsed_channels
+
+    def _has_stitched_image(self, project_path: Path) -> bool:
+        stitched_dir = project_path / STITCHED_IMAGE_DIR_NAME
+        return stitched_dir.is_dir() and any(stitched_dir.glob("*.ome.zarr"))
+
+    def _channels_match(
+        self,
+        stored_channels: str | list[int] | None,
+        requested_channels: list[int],
+    ) -> bool:
+        if stored_channels is None:
+            return False
+
+        if not requested_channels:
+            return stored_channels == "all"
+
+        return stored_channels == requested_channels
+
+    def _set_project_row_status(
+        self,
+        row: StitchProjectStatusRow,
+        project_path: Path,
+    ) -> None:
+        requested_channels = self._keep_channels_widget.get_channels()
+        stored_channels = self._get_stored_channels(project_path)
+
+        if not requested_channels:
+            row.set_extraction_status(
+                "gray",
+                "No channel extraction required",
+            )
+        elif stored_channels is None:
+            row.set_extraction_status(
+                "red",
+                "Channels haven't been created",
+            )
+        elif self._channels_match(stored_channels, requested_channels):
+            row.set_extraction_status(
+                "green",
+                "Channels already extracted",
+            )
+        else:
+            row.set_extraction_status(
+                "orange",
+                "Incompatible channels",
+                bold=True,
+            )
+
+        if not self._has_stitched_image(project_path):
+            row.set_stitching_status(
+                "red",
+                "Stitched image hasn't been created",
+            )
+        elif self._channels_match(stored_channels, requested_channels):
+            row.set_stitching_status(
+                "green",
+                "Stitch already complete",
+            )
+        else:
+            row.set_stitching_status(
+                "orange",
+                "Incompatible channels",
+                bold=True,
+            )
+
     def _write_tiles_config(
         self,
         tiles_path: Path,
@@ -577,17 +756,7 @@ class StitchOmeZarrWidget(QWidget):
         project_paths: list[Path] = []
 
         for starting_project in self._directories_list:
-            existing_projects = [
-                path
-                for path in starting_project.iterdir()
-                if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
-            ]
-
-            if existing_projects:
-                project_path = existing_projects[0]
-            else:
-                project_name = self._get_project_name(starting_project)
-                project_path = starting_project / project_name
+            project_path = self._get_project_path(starting_project)
 
             if not create_project_structure(project_path, "clsp"):
                 continue
@@ -612,8 +781,17 @@ class StitchOmeZarrWidget(QWidget):
             else ",".join(str(channel) for channel in requested_channels)
         )
         channel_errors: list[str] = []
+        completed_projects: set[Path] = set()
 
         for project_path in project_paths:
+            if self._has_stitched_image(project_path):
+                completed_projects.add(project_path)
+                print(
+                    f"Project was already stitch-complete: {project_path}",
+                    flush=True,
+                )
+                continue
+
             tiles_path = project_path / TILES_DIR_NAME
             config_path = tiles_path / EXTRACTED_CHANNELS_FILE_NAME
             kept_channel_files = list(
@@ -669,6 +847,9 @@ class StitchOmeZarrWidget(QWidget):
             project_paths,
             start=1,
         ):
+            if project_path in completed_projects:
+                continue
+
             print(
                 f"\nProject: {project_path.name} "
                 f"({project_number}/{len(project_paths)})",
@@ -694,6 +875,7 @@ class StitchOmeZarrWidget(QWidget):
                 print("Done stitching...\n", flush=True)
 
         print("\nDone processing all projects.\n", flush=True)
+        self._update_qlist()
 
         return
 
@@ -729,6 +911,16 @@ class StitchOmeZarrWidget(QWidget):
         for directory_path in self._directories_list:
             path = Path(directory_path)
             dir_name = f"{path.parent.name}/{path.name}"
-            q_list_item: QListWidgetItem = QListWidgetItem(dir_name)
+            q_list_item = QListWidgetItem()
             q_list_item.setData(Qt.ItemDataRole.UserRole, directory_path)
             self._directories_q_list.addItem(q_list_item)
+
+            row_widget = StitchProjectStatusRow(dir_name)
+            project_path = self._get_project_path(path)
+            self._set_project_row_status(row_widget, project_path)
+
+            q_list_item.setSizeHint(row_widget.sizeHint())
+            self._directories_q_list.setItemWidget(
+                q_list_item,
+                row_widget,
+            )
