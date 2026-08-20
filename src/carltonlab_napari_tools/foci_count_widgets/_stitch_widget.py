@@ -353,6 +353,59 @@ class StitchOmeZarrWidget(QWidget):
 
         return tile_path.with_name(f"{base_name}.ome.zarr")
 
+    def _write_tiles_config(
+        self,
+        tiles_path: Path,
+        tile_paths: list[Path],
+    ) -> bool:
+        """Write the tile filenames to the project manifest."""
+        tiles_config = configparser.ConfigParser()
+        tiles_config["tiles"] = {
+            f"file_{index}": tile_path.name
+            for index, tile_path in enumerate(tile_paths)
+        }
+
+        try:
+            with (tiles_path / TILES_CONFIG_FILE_NAME).open(
+                "w",
+                encoding="utf-8",
+            ) as config_file:
+                tiles_config.write(config_file)
+        except OSError as exc:
+            show_error(
+                f"Could not write {TILES_CONFIG_FILE_NAME} in "
+                f"{tiles_path}: {exc}"
+            )
+            return False
+
+        return True
+
+    def _ensure_tiles_config(self, project_path: Path) -> bool:
+        """Create a tile manifest for an existing project if needed."""
+        tiles_path = project_path / TILES_DIR_NAME
+        config_path = tiles_path / TILES_CONFIG_FILE_NAME
+
+        if config_path.exists():
+            return True
+
+        tile_paths = sorted(
+            path
+            for path in tiles_path.iterdir()
+            if path.name.endswith(".ome.zarr")
+            or (
+                path.is_file()
+                and any(
+                    path.name.endswith(extension)
+                    for extension in SUPPORTED_STITCH_EXTENSIONS
+                )
+            )
+        )
+        if not tile_paths:
+            show_error(f"No tiles found in {tiles_path}.")
+            return False
+
+        return self._write_tiles_config(tiles_path, tile_paths)
+
     def _extract_project_tiles(
         self,
         project_path: Path,
@@ -456,25 +509,7 @@ class StitchOmeZarrWidget(QWidget):
             show_error(f"Could not move tiles from {project_base_dir}: {exc}")
             return False
 
-        tiles_config = configparser.ConfigParser()
-        tiles_config["tiles"] = {
-            f"file_{index}": image_path.name
-            for index, image_path in enumerate(image_paths)
-        }
-        try:
-            with (tiles_path / TILES_CONFIG_FILE_NAME).open(
-                "w",
-                encoding="utf-8",
-            ) as config_file:
-                tiles_config.write(config_file)
-        except OSError as exc:
-            show_error(
-                f"Could not write {TILES_CONFIG_FILE_NAME} in "
-                f"{tiles_path}: {exc}"
-            )
-            return False
-
-        return True
+        return self._write_tiles_config(tiles_path, image_paths)
 
     def _on_stitch_button_pressed(self) -> None:
         if not self._directories_list:
@@ -504,6 +539,9 @@ class StitchOmeZarrWidget(QWidget):
                 and not any(tiles_path.iterdir())
                 and not self._move_tiles(starting_project, project_path)
             ):
+                continue
+
+            if not self._ensure_tiles_config(project_path):
                 continue
 
             project_paths.append(project_path)
@@ -567,9 +605,11 @@ class StitchOmeZarrWidget(QWidget):
             )
             return
 
-        for _project_path in project_paths:
-            # Channel extraction will be implemented next.
-            continue
+        for project_path in project_paths:
+            self._extract_project_tiles(
+                project_path,
+                requested_channels,
+            )
 
         return
 
