@@ -10,6 +10,8 @@ import numpy as np
 from bioio_base.exceptions import UnsupportedFileFormatError
 from mrc import DVFile
 from mrc._new import BE_HDR, LE_HDR, _byte_order
+from multiview_stitcher import msi_utils, ngff_utils
+from multiview_stitcher import spatial_image_utils as si_utils
 from ndevio import nImage
 
 
@@ -278,6 +280,86 @@ def resolve_image_data(image_path: str | Path) -> Any | None:
     return _carltonlab_normalize_image_data(image.xarray_data)
 
 
+def _get_ome_stage_translation(image: nImage) -> dict[str, float]:
+    """Return the stage position for the first OME image plane."""
+    pixels = image.ome_metadata.images[0].pixels
+    first_plane = next(
+        (
+            plane
+            for plane in pixels.planes
+            if plane.the_t == 0 and plane.the_c == 0 and plane.the_z == 0
+        ),
+        None,
+    )
+    if first_plane is None:
+        raise ValueError("Could not find the first OME plane.")
+
+    position_z = first_plane.position_z
+    position_y = first_plane.position_y
+    position_x = first_plane.position_x
+    if position_z is None or position_y is None or position_x is None:
+        raise ValueError("The first OME plane has no complete stage position.")
+
+    return {
+        "z": -float(position_z),
+        "y": -float(position_y),
+        "x": -float(position_x),
+    }
+
+
+def resolve_spatial_data(image_path: str | Path) -> Any | None:
+    """Resolve an image as spatial data ready to write as OME-Zarr."""
+    image_path = Path(image_path)
+
+    if image_path.name.lower().endswith(".ome.zarr"):
+        msim = ngff_utils.read_msim_from_ome_zarr(
+            image_path,
+            transform_key="stage_metadata",
+            array_backend="zarr",
+        )
+        return msi_utils.get_sim_from_msim(msim)
+
+    image = resolve_image(image_path)
+    if image is None:
+        return None
+
+    data = _carltonlab_normalize_image_data(image.xarray_data)
+    if tuple(data.dims) != ("c", "z", "y", "x"):
+        raise ValueError(
+            "Expected normalized image dimensions ('c', 'z', 'y', 'x'), "
+            f"but received {tuple(data.dims)}."
+        )
+
+    pixel_sizes = image.physical_pixel_sizes
+    if None in (pixel_sizes.Z, pixel_sizes.Y, pixel_sizes.X):
+        raise ValueError(f"Could not determine pixel sizes for {image_path}.")
+
+    metadata = image.metadata
+    header = metadata.get("header") if isinstance(metadata, dict) else None
+    if header is not None and all(
+        coordinate in header for coordinate in ("x0", "y0", "z0")
+    ):
+        translation = {
+            "z": -float(header["z0"]),
+            "y": -float(header["y0"]),
+            "x": -float(header["x0"]),
+        }
+    else:
+        translation = _get_ome_stage_translation(image)
+
+    return si_utils.get_sim_from_array(
+        data,
+        dims=list(data.dims),
+        scale={
+            "z": float(pixel_sizes.Z),
+            "y": float(pixel_sizes.Y),
+            "x": float(pixel_sizes.X),
+        },
+        translation=translation,
+        transform_key="stage_metadata",
+    )
+
+
 def resolve_image(image_path: str | Path) -> nImage | None:
     image_path = Path(image_path)
 
@@ -304,4 +386,3 @@ if __name__ == "__main__":
     image = resolve_image(str(arguments.file))
     print("")
     print(f"The image is: {str(arguments.file)}")
-    print(f"The image shape is: {image.shape}")

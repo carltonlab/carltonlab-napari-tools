@@ -3,8 +3,7 @@ from pathlib import Path
 from napari.utils.notifications import show_error
 
 from carltonlab_napari_tools.image_resolver._image_resolver import (
-    _carltonlab_normalize_image_data,
-    resolve_image,
+    resolve_spatial_data,
 )
 
 
@@ -22,12 +21,10 @@ def extract_channels_to_ome_zarr(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    image = resolve_image(input_path)
-    if image is None:
+    data = resolve_spatial_data(input_path)
+    if data is None:
         show_error(f"Could not open image {input_path}")
         return False
-
-    data = _carltonlab_normalize_image_data(image.xarray_data)
 
     expected_dims = ("c", "z", "y", "x")
     if tuple(data.dims) != expected_dims:
@@ -35,6 +32,24 @@ def extract_channels_to_ome_zarr(
             f"Expected image dimensions {expected_dims}, but got {tuple(data.dims)}"
         )
         return False
+
+    channel_count = data.sizes["c"]
+
+    if channels:
+        invalid_channels = [
+            channel
+            for channel in channels
+            if channel < 1 or channel > channel_count
+        ]
+        if invalid_channels:
+            show_error(
+                f"Invalid channel(s): {', '.join(map(str, invalid_channels))}. "
+                f"Expected 1-{channel_count}."
+            )
+            return False
+
+        selected_0base_channels = [channel - 1 for channel in channels]
+        data = data.isel(c=selected_0base_channels)
 
     raise NotImplementedError(
         "Channel extraction to ome.zarr is not yet implemented."
