@@ -30,6 +30,7 @@ from carltonlab_napari_tools._shared_variables import (
     CLSP_PROJECT_SUFFIX,
     EXTRACTED_CHANNELS_FILE_NAME,
     SUPPORTED_STITCH_EXTENSIONS,
+    TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
 )
 from carltonlab_napari_tools._shared_widgets import (
@@ -389,6 +390,24 @@ class StitchOmeZarrWidget(QWidget):
                 shutil.move(str(image_path), str(tiles_path / image_path.name))
         except OSError as exc:
             show_error(f"Could not move tiles from {project_base_dir}: {exc}")
+            return False
+
+        tiles_config = configparser.ConfigParser()
+        tiles_config["tiles"] = {
+            f"file_{index}": image_path.name
+            for index, image_path in enumerate(image_paths)
+        }
+        try:
+            with (tiles_path / TILES_CONFIG_FILE_NAME).open(
+                "w",
+                encoding="utf-8",
+            ) as config_file:
+                tiles_config.write(config_file)
+        except OSError as exc:
+            show_error(
+                f"Could not write {TILES_CONFIG_FILE_NAME} in "
+                f"{tiles_path}: {exc}"
+            )
             return False
 
         return True
