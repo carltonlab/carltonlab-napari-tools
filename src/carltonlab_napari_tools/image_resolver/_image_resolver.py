@@ -256,8 +256,8 @@ def _carltonlab_normalize_image_data(data: Any) -> Any:
     if not data.dtype.isnative:
         data = data.astype(data.dtype.newbyteorder("="), copy=False)
 
-    for dimension in ("S", "T"):
-        if dimension in data.dims:
+    for dimension in tuple(data.dims):
+        if dimension.upper() in {"S", "T"}:
             if data.sizes[dimension] != 1:
                 raise ValueError(
                     f"CarltonLab images must have one {dimension} dimension."

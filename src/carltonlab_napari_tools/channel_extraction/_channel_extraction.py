@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from multiview_stitcher import ngff_utils
 from napari.utils.notifications import show_error
 
 from carltonlab_napari_tools.image_resolver._image_resolver import (
@@ -26,11 +27,15 @@ def extract_channels_to_ome_zarr(
         show_error(f"Could not open image {input_path}")
         return False
 
-    expected_dims = ("c", "z", "y", "x")
+    expected_dims = ("t", "c", "z", "y", "x")
     if tuple(data.dims) != expected_dims:
         show_error(
             f"Expected image dimensions {expected_dims}, but got {tuple(data.dims)}"
         )
+        return False
+
+    if data.sizes["t"] != 1:
+        show_error(f"Expected one time point, but got {data.sizes['t']}.")
         return False
 
     channel_count = data.sizes["c"]
@@ -51,8 +56,15 @@ def extract_channels_to_ome_zarr(
         selected_0base_channels = [channel - 1 for channel in channels]
         data = data.isel(c=selected_0base_channels)
 
-    raise NotImplementedError(
-        "Channel extraction to ome.zarr is not yet implemented."
+    ngff_utils.write_sim_to_ome_zarr(
+        data,
+        output_path,
+        downscale_factors_per_spatial_dim={
+            "z": 2,
+            "y": 2,
+            "x": 2,
+        },
+        overwrite=False,
     )
 
     return True
