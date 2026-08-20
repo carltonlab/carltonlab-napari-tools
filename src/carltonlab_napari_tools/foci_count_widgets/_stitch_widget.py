@@ -43,6 +43,9 @@ from carltonlab_napari_tools._utils import (
     get_common_prefix,
     parse_channel_string,
 )
+from carltonlab_napari_tools.channel_extraction import (
+    extract_channels_to_ome_zarr,
+)
 
 if TYPE_CHECKING:
     from napari.viewer import ViewerModel
@@ -349,6 +352,67 @@ class StitchOmeZarrWidget(QWidget):
             base_name += f"_kept_channels_{channel_string}"
 
         return tile_path.with_name(f"{base_name}.ome.zarr")
+
+    def _extract_project_tiles(
+        self,
+        project_path: Path,
+        channels: list[int],
+    ) -> list[Path] | None:
+        """Extract project tiles and return their OME-Zarr paths."""
+        tiles_path = project_path / TILES_DIR_NAME
+        config_path = tiles_path / TILES_CONFIG_FILE_NAME
+
+        if not config_path.exists():
+            show_error(f"Missing {config_path.name} in {tiles_path}.")
+            return None
+
+        config = configparser.ConfigParser()
+        try:
+            config.read(config_path)
+            tile_names = [filename for _, filename in config.items("tiles")]
+        except (configparser.Error, OSError, ValueError) as exc:
+            show_error(f"Could not read {config_path.name}: {exc}")
+            return None
+
+        if not tile_names:
+            show_error(f"No tiles listed in {config_path.name}.")
+            return None
+
+        tile_paths = [tiles_path / filename for filename in tile_names]
+        missing_paths = [
+            tile_path for tile_path in tile_paths if not tile_path.exists()
+        ]
+        if missing_paths:
+            show_error(
+                "The tile configuration contains missing files:\n"
+                + "\n".join(str(path) for path in missing_paths)
+            )
+            return None
+
+        extracted_paths: list[Path] = []
+        for tile_path in tile_paths:
+            output_path = self._get_extracted_tile_path(
+                tile_path,
+                channels,
+            )
+
+            if output_path in extracted_paths:
+                continue
+
+            if output_path.exists():
+                extracted_paths.append(output_path)
+                continue
+
+            if not extract_channels_to_ome_zarr(
+                tile_path,
+                output_path,
+                channels,
+            ):
+                return None
+
+            extracted_paths.append(output_path)
+
+        return extracted_paths
 
     def _move_tiles(
         self,
