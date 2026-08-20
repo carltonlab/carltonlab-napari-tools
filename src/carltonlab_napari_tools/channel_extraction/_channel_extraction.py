@@ -56,6 +56,17 @@ def extract_channels_to_ome_zarr(
         selected_0base_channels = [channel - 1 for channel in channels]
         data = data.isel(c=selected_0base_channels)
 
+        channel_labels = [str(label) for label in data.coords["c"].values]
+        label_counts: dict[str, int] = {}
+        unique_channel_labels: list[str] = []
+        for label in channel_labels:
+            occurrence = label_counts.get(label, 0) + 1
+            label_counts[label] = occurrence
+            unique_channel_labels.append(
+                label if occurrence == 1 else f"{label}_{occurrence}"
+            )
+        data = data.assign_coords(c=unique_channel_labels)
+
     ngff_utils.write_sim_to_ome_zarr(
         data,
         output_path,

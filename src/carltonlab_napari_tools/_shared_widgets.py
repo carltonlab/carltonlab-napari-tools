@@ -87,6 +87,10 @@ class KeepChannelsWidget(QWidget):
         )
         self._keep_channels_row_layout.addWidget(self._keep_channels_line_edit)
 
+        keep_channels_help = QLabel("?")
+        keep_channels_help.setToolTip("Channel number is 1-based.")
+        self._keep_channels_row_layout.addWidget(keep_channels_help)
+
         self._output_channel_row = QWidget()
         self._output_channel_row_layout = QHBoxLayout()
         self._output_channel_row_layout.setContentsMargins(0, 0, 0, 0)

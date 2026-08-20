@@ -114,12 +114,25 @@ class StitchOmeZarrWidget(QWidget):
         self._registration_container.setLayout(self._registration_layout)
 
         self._registration_channel_spinbox = QSpinBox()
-        self._registration_channel_spinbox.setMinimum(0)
+        self._registration_channel_spinbox.setMinimum(1)
         self._registration_channel_spinbox.setMaximum(9999)
-        self._registration_channel_spinbox.setValue(0)
+        self._registration_channel_spinbox.setValue(1)
+
+        registration_channel_widget = QWidget()
+        registration_channel_layout = QHBoxLayout()
+        registration_channel_layout.setContentsMargins(0, 0, 0, 0)
+        registration_channel_widget.setLayout(registration_channel_layout)
+        registration_channel_layout.addWidget(
+            self._registration_channel_spinbox
+        )
+
+        registration_channel_help = QLabel("?")
+        registration_channel_help.setToolTip("Channel number is 1-based.")
+        registration_channel_layout.addWidget(registration_channel_help)
+
         self._registration_layout.addRow(
             "Registration channel",
-            self._registration_channel_spinbox,
+            registration_channel_widget,
         )
 
         self._registration_scale_spinbox = QSpinBox()
@@ -477,7 +490,7 @@ class StitchOmeZarrWidget(QWidget):
             return None
 
         extracted_paths: list[Path] = []
-        for tile_path in tile_paths:
+        for tile_number, tile_path in enumerate(tile_paths, start=1):
             output_path = self._get_extracted_tile_path(
                 tile_path,
                 channels,
@@ -490,6 +503,11 @@ class StitchOmeZarrWidget(QWidget):
                 extracted_paths.append(output_path)
                 continue
 
+            print(
+                f"\nExtracting tile: {output_path.name} "
+                f"({tile_number}/{len(tile_paths)})",
+                flush=True,
+            )
             if not extract_channels_to_ome_zarr(
                 tile_path,
                 output_path,
@@ -497,6 +515,7 @@ class StitchOmeZarrWidget(QWidget):
             ):
                 return None
 
+            print("Done extracting tile\n", flush=True)
             extracted_paths.append(output_path)
 
         if not self._write_extracted_channels_config(
@@ -646,7 +665,15 @@ class StitchOmeZarrWidget(QWidget):
             return
 
         stitching_options = self.get_stitching_options()
-        for project_path in project_paths:
+        for project_number, project_path in enumerate(
+            project_paths,
+            start=1,
+        ):
+            print(
+                f"\nProject: {project_path.name} "
+                f"({project_number}/{len(project_paths)})",
+                flush=True,
+            )
             extracted_paths = self._extract_project_tiles(
                 project_path,
                 requested_channels,
@@ -654,11 +681,19 @@ class StitchOmeZarrWidget(QWidget):
             if extracted_paths is None:
                 continue
 
-            stitch_ome_zarr_images(
+            print(
+                f"\nStitching: {project_path.name}",
+                flush=True,
+            )
+            stitching_succeeded = stitch_ome_zarr_images(
                 image_list=extracted_paths,
                 output_dir=project_path / STITCHED_IMAGE_DIR_NAME,
                 **stitching_options,
             )
+            if stitching_succeeded:
+                print("Done stitching...\n", flush=True)
+
+        print("\nDone processing all projects.\n", flush=True)
 
         return
 
@@ -671,7 +706,7 @@ class StitchOmeZarrWidget(QWidget):
 
         return {
             "registration_channel": (
-                self._registration_channel_spinbox.value()
+                self._registration_channel_spinbox.value() - 1
             ),
             "registration_scale": (
                 None if registration_scale < 0 else registration_scale
@@ -692,7 +727,8 @@ class StitchOmeZarrWidget(QWidget):
     def _update_qlist(self) -> None:
         self._directories_q_list.clear()
         for directory_path in self._directories_list:
-            dir_name = Path(directory_path).name
+            path = Path(directory_path)
+            dir_name = f"{path.parent.name}/{path.name}"
             q_list_item: QListWidgetItem = QListWidgetItem(dir_name)
             q_list_item.setData(Qt.ItemDataRole.UserRole, directory_path)
             self._directories_q_list.addItem(q_list_item)
