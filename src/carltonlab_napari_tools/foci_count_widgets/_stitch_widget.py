@@ -406,6 +406,36 @@ class StitchOmeZarrWidget(QWidget):
 
         return self._write_tiles_config(tiles_path, tile_paths)
 
+    def _write_extracted_channels_config(
+        self,
+        project_path: Path,
+        channels: list[int],
+    ) -> bool:
+        """Write the channel selection used for project extraction."""
+        config = configparser.ConfigParser()
+        config["channels"] = {
+            "kept": (
+                "all"
+                if not channels
+                else ",".join(str(channel) for channel in channels)
+            )
+        }
+
+        config_path = (
+            project_path / TILES_DIR_NAME / EXTRACTED_CHANNELS_FILE_NAME
+        )
+        try:
+            with config_path.open("w", encoding="utf-8") as config_file:
+                config.write(config_file)
+        except OSError as exc:
+            show_error(
+                f"Could not write {config_path.name} in "
+                f"{config_path.parent}: {exc}"
+            )
+            return False
+
+        return True
+
     def _extract_project_tiles(
         self,
         project_path: Path,
@@ -464,6 +494,12 @@ class StitchOmeZarrWidget(QWidget):
                 return None
 
             extracted_paths.append(output_path)
+
+        if not self._write_extracted_channels_config(
+            project_path,
+            channels,
+        ):
+            return None
 
         return extracted_paths
 
