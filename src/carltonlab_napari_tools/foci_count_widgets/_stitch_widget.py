@@ -29,6 +29,7 @@ from carltonlab_napari_tools._protocols import (
 from carltonlab_napari_tools._shared_variables import (
     CLSP_PROJECT_SUFFIX,
     EXTRACTED_CHANNELS_FILE_NAME,
+    STITCHED_IMAGE_DIR_NAME,
     SUPPORTED_STITCH_EXTENSIONS,
     TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
@@ -45,6 +46,9 @@ from carltonlab_napari_tools._utils import (
 )
 from carltonlab_napari_tools.channel_extraction import (
     extract_channels_to_ome_zarr,
+)
+from carltonlab_napari_tools.image_stitching import (
+    stitch_ome_zarr_images,
 )
 
 if TYPE_CHECKING:
@@ -641,10 +645,19 @@ class StitchOmeZarrWidget(QWidget):
             )
             return
 
+        stitching_options = self.get_stitching_options()
         for project_path in project_paths:
-            self._extract_project_tiles(
+            extracted_paths = self._extract_project_tiles(
                 project_path,
                 requested_channels,
+            )
+            if extracted_paths is None:
+                continue
+
+            stitch_ome_zarr_images(
+                image_list=extracted_paths,
+                output_dir=project_path / STITCHED_IMAGE_DIR_NAME,
+                **stitching_options,
             )
 
         return
