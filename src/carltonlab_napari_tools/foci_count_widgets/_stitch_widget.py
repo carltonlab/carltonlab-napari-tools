@@ -316,6 +316,39 @@ class StitchOmeZarrWidget(QWidget):
 
         return f"{project_base_name}{CLSP_PROJECT_SUFFIX}"
 
+    def _get_extracted_tile_path(
+        self,
+        tile_path: Path,
+        channels: list[int],
+    ) -> Path:
+        """Return the OME-Zarr path for a tile and channel selection."""
+        if tile_path.name.endswith(".ome.zarr") and not channels:
+            return tile_path
+
+        tile_name = tile_path.name
+
+        if tile_name.endswith(".ome.zarr"):
+            base_name = tile_name.removesuffix(".ome.zarr")
+        else:
+            base_name = tile_name
+            for extension in sorted(
+                SUPPORTED_STITCH_EXTENSIONS,
+                key=len,
+                reverse=True,
+            ):
+                if base_name.endswith(extension):
+                    base_name = base_name[: -len(extension)]
+                    break
+
+        if "_kept_channels_" in base_name:
+            base_name = base_name.split("_kept_channels_", 1)[0]
+
+        if channels:
+            channel_string = "-".join(str(channel) for channel in channels)
+            base_name += f"_kept_channels_{channel_string}"
+
+        return tile_path.with_name(f"{base_name}.ome.zarr")
+
     def _move_tiles(
         self,
         project_base_dir: Path,
