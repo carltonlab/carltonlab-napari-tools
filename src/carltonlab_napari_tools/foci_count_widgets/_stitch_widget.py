@@ -61,6 +61,12 @@ REMOVE_ICON = ICONS_DIR / "remove.svg"
 
 
 class StitchProjectStatusRow(QWidget):
+    _status_button_stylesheet = (
+        "QPushButton {{ border: 1px solid gray; border-radius: 4px; "
+        "background-color: palette(button); font-weight: bold; "
+        "color: {color}; }}"
+    )
+
     def __init__(
         self,
         display_name: str,
@@ -87,9 +93,10 @@ class StitchProjectStatusRow(QWidget):
             self._extraction_status_button,
             self._stitching_status_button,
         ):
-            button.setFixedWidth(30)
-            button.setFlat(True)
-            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setSizePolicy(
+                QSizePolicy.Policy.Preferred,
+                QSizePolicy.Policy.Preferred,
+            )
             layout.addWidget(button)
 
     def _set_status(
@@ -99,8 +106,9 @@ class StitchProjectStatusRow(QWidget):
         tooltip: str,
         bold: bool = False,
     ) -> None:
-        weight = "bold" if bold else "normal"
-        button.setStyleSheet(f"color: {color}; font-weight: {weight};")
+        button.setStyleSheet(
+            self._status_button_stylesheet.format(color=color)
+        )
         button.setToolTip(tooltip)
 
     def set_extraction_status(
@@ -121,7 +129,9 @@ class StitchProjectStatusRow(QWidget):
         color: str,
         tooltip: str,
         bold: bool = False,
+        text: str = "St",
     ) -> None:
+        self._stitching_status_button.setText(text)
         self._set_status(
             self._stitching_status_button,
             color,
@@ -502,6 +512,16 @@ class StitchOmeZarrWidget(QWidget):
 
         return stored_channels == requested_channels
 
+    def _format_stored_channels(
+        self,
+        stored_channels: str | list[int] | None,
+    ) -> str:
+        if stored_channels is None:
+            return "unknown"
+        if isinstance(stored_channels, str):
+            return stored_channels
+        return ",".join(str(channel) for channel in stored_channels)
+
     def _set_project_row_status(
         self,
         row: StitchProjectStatusRow,
@@ -547,6 +567,7 @@ class StitchOmeZarrWidget(QWidget):
                 "orange",
                 "Incompatible channels",
                 bold=True,
+                text=f"St - {self._format_stored_channels(stored_channels)}",
             )
 
     def _write_tiles_config(
