@@ -11,9 +11,6 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from carltonlab_napari_tools._extract_channel_widget import (
-    ExctractChannelsWidget,
-)
 from carltonlab_napari_tools._generate_results_widget import (
     GenerateResultsWidget,
 )
@@ -78,56 +75,56 @@ def _results_buttons(
     return _setting_class
 
 
-@_prepare_tools_buttons
-class ExtractChannelsButton:
-    _button: QPushButton
-    _button_text: str
-    _launched_widget: QWidget | None
-    _widget_name: str
-    _status_label: QLabel | None
-
-    def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
-    ) -> None:
-        self._napari_viewer = napari_viewer
-        self._main_widget: MainWidgetCallBacks = main_widget
-        self._widget_name = "clt Extract Channels"
-        self._status_label = None
-
-        self._button_text = "1.Extract channels"
-
-        self._button = QPushButton(self._button_text)
-        self._button.clicked.connect(self.launch_widget)
-
-        self._launched_widget = None
-
-    def get_button(self) -> QPushButton:
-        return self._button
-
-    def get_status_label(self) -> QLabel | None:
-        return self._status_label
-
-    def deactivate_buttons(self) -> None:
-        self._button.setEnabled(False)
-
-    def activate_buttons(self) -> None:
-        self._button.setEnabled(True)
-
-    def launch_widget(self) -> QWidget | None:
-        self._launched_widget = ExctractChannelsWidget(
-            self._napari_viewer, self._main_widget, self
-        )
-        self._main_widget.set_prepare_widget(
-            self._launched_widget, "clt Extract Channels"
-        )
-
-        return
-
-    def set_status_label_state(self, state: bool) -> None:
-        _ = state
-
-    def validate_property(self, image_path: str) -> None:
-        _ = image_path
+# @_prepare_tools_buttons
+# class ExtractChannelsButton:
+#     _button: QPushButton
+#     _button_text: str
+#     _launched_widget: QWidget | None
+#     _widget_name: str
+#     _status_label: QLabel | None
+#
+#     def __init__(
+#         self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
+#     ) -> None:
+#         self._napari_viewer = napari_viewer
+#         self._main_widget: MainWidgetCallBacks = main_widget
+#         self._widget_name = "clt Extract Channels"
+#         self._status_label = None
+#
+#         self._button_text = "1.Extract channels"
+#
+#         self._button = QPushButton(self._button_text)
+#         self._button.clicked.connect(self.launch_widget)
+#
+#         self._launched_widget = None
+#
+#     def get_button(self) -> QPushButton:
+#         return self._button
+#
+#     def get_status_label(self) -> QLabel | None:
+#         return self._status_label
+#
+#     def deactivate_buttons(self) -> None:
+#         self._button.setEnabled(False)
+#
+#     def activate_buttons(self) -> None:
+#         self._button.setEnabled(True)
+#
+#     def launch_widget(self) -> QWidget | None:
+#         self._launched_widget = ExctractChannelsWidget(
+#             self._napari_viewer, self._main_widget, self
+#         )
+#         self._main_widget.set_prepare_widget(
+#             self._launched_widget, "clt Extract Channels"
+#         )
+#
+#         return
+#
+#     def set_status_label_state(self, state: bool) -> None:
+#         _ = state
+#
+#     def validate_property(self, image_path: str) -> None:
+#         _ = image_path
 
 
 @_prepare_tools_buttons
@@ -146,7 +143,7 @@ class StitchGonads:
         self._widget_name = "clt Stitch Gonads"
         self._status_label = None
 
-        self._button_text = "2.Stitch gonads"
+        self._button_text = "1.Stitch gonads"
 
         self._launched_widget = None
 
