@@ -116,6 +116,7 @@ class IntegrationProjectRow(QWidget):
         self._regions_button = QPushButton("Re")
         self._nuclei_button = QPushButton("Nu")
         self._scoring_button = QPushButton("Sc")
+        self._generate_plots_button = QPushButton("GP")
 
         status_buttons = (
             self._extraction_button,
@@ -124,6 +125,7 @@ class IntegrationProjectRow(QWidget):
             self._regions_button,
             self._nuclei_button,
             self._scoring_button,
+            self._generate_plots_button,
         )
 
         for button in status_buttons:
@@ -254,6 +256,32 @@ class IntegrationWidget(QWidget):
             self._save_multigonad_project
         )
         self._layout.addWidget(self._multigonad_project_saver)
+
+        self._layout.addWidget(FrameSeparator(parent=self))
+
+        self._stitch_gonads_button = QPushButton("1.Stitch gonads")
+        self._layout.addWidget(self._stitch_gonads_button)
+
+        self._set_contrast_button = QPushButton("2.Set contrast")
+        self._pick_nuclei_button = QPushButton("3.Pick Nuclei")
+        self._score_nuclei_button = QPushButton("4.Score Nuclei")
+        self._define_regions_button = QPushButton("5.Define Regions")
+        self._generate_reports_button = QPushButton(
+            "6.Generate Project Reports"
+        )
+        self._layout.addWidget(self._set_contrast_button)
+        self._layout.addWidget(self._pick_nuclei_button)
+        self._layout.addWidget(self._score_nuclei_button)
+        self._layout.addWidget(self._define_regions_button)
+        self._layout.addWidget(self._generate_reports_button)
+
+        self._layout.addWidget(FrameSeparator(parent=self))
+
+        self._workflow_widget_container = QWidget()
+        self._workflow_widget_layout = QVBoxLayout()
+        self._workflow_widget_layout.setContentsMargins(0, 0, 0, 0)
+        self._workflow_widget_container.setLayout(self._workflow_widget_layout)
+        self._layout.addWidget(self._workflow_widget_container)
 
     def _save_multigonad_project(self, saving_path: str) -> bool:
         if not self._project_paths:
