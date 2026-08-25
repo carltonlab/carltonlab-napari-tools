@@ -18,10 +18,6 @@ from qtpy.QtWidgets import (
 )
 from superqt import QRangeSlider
 
-from carltonlab_napari_tools._model import (
-    close_image_layers,
-    open_tile_image,
-)
 from carltonlab_napari_tools._shared_variables import (
     CLSP_PROJECT_SUFFIX,
     EXTRACTED_CHANNELS_FILE_NAME,
@@ -32,6 +28,10 @@ from carltonlab_napari_tools._shared_variables import (
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
 from carltonlab_napari_tools._utils import parse_channel_string
+from carltonlab_napari_tools._viewer_utils import (
+    close_image_layers,
+    open_ome_zarr_layers,
+)
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
@@ -281,7 +281,7 @@ class CLTSetContrastWidget(QWidget):
 
         self._clear_open_image()
 
-        opened_layers = open_tile_image(
+        opened_layers = open_ome_zarr_layers(
             self._napari_viewer,
             str(image_path),
         )
