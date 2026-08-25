@@ -30,7 +30,7 @@ class CLToggleSavePathWidget(QWidget):
         self._saving_path: Path = Path("")
         self._allow_overwrite: bool = allow_overwrite
         self._force_suffix: str | None = force_suffix
-        self._save_callback: Callable[[str], None] | None = None
+        self._save_callback: Callable[[str], bool] | None = None
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -185,7 +185,7 @@ class CLToggleSavePathWidget(QWidget):
 
     def connect_save_callback(
         self,
-        callback: Callable[[str], None],
+        callback: Callable[[str], bool],
     ) -> None:
         self._save_callback = callback
 
@@ -196,7 +196,18 @@ class CLToggleSavePathWidget(QWidget):
             return
         if Path(self._path_le.text()).exists() and not self._allow_overwrite:
             return
-        self._save_callback(str(self._saving_path))
+        file_saved = self._save_callback(str(self._saving_path))
+        if file_saved:
+            self._status_lb.setText("File saved")
+            self._status_lb.setStyleSheet(
+                "color: black; font-weight: bold; font-style: normal;"
+            )
+            self._title_cb.setEnabled(False)
+        else:
+            self._status_lb.setText("Failed to save multigonad project")
+            self._status_lb.setStyleSheet(
+                "color: #A80000; font-weight: bold; font-style: normal;"
+            )
 
     @property
     def title(self) -> str | None:
