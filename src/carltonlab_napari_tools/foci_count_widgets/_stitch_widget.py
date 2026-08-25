@@ -1,5 +1,6 @@
 import configparser
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -68,6 +69,15 @@ ICONS_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons"
 ADD_DIR_ICON = ICONS_DIR / "add_dir.svg"
 LOAD_PROJECT_ICON = ICONS_DIR / "file_settings.svg"
 REMOVE_ICON = ICONS_DIR / "remove.svg"
+
+
+@dataclass(frozen=True)
+class ProjectStatus:
+    extraction_color: str
+    extraction_tooltip: str
+    stitching_color: str
+    stitching_tooltip: str
+    stitching_text: str = "St"
 
 
 class StitchProjectStatusRow(QWidget):
@@ -613,6 +623,96 @@ class StitchOmeZarrWidget(QWidget):
         if isinstance(stored_channels, str):
             return stored_channels
         return ",".join(str(channel) for channel in stored_channels)
+
+    @staticmethod
+    def get_project_status(
+        starting_path: str | Path,
+        requested_channels: list[int],
+    ) -> ProjectStatus:
+        project_path = Path(starting_path)
+
+        if not project_path.name.endswith(CLSP_PROJECT_SUFFIX):
+            existing_projects = [
+                path
+                for path in project_path.iterdir()
+                if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
+            ]
+            if existing_projects:
+                project_path = existing_projects[0]
+
+        stored_channels: str | list[int] | None = None
+        channels_config_path = (
+            project_path / TILES_DIR_NAME / EXTRACTED_CHANNELS_FILE_NAME
+        )
+
+        if channels_config_path.exists():
+            config = configparser.ConfigParser()
+            try:
+                config.read(channels_config_path)
+                stored_value = config.get("channels", "kept").strip()
+            except (configparser.Error, OSError, ValueError):
+                stored_value = ""
+
+            if stored_value == "all":
+                stored_channels = "all"
+            elif stored_value:
+                parsed_channels = parse_channel_string(stored_value)
+                if parsed_channels:
+                    stored_channels = parsed_channels
+
+        channels_match = (
+            stored_channels == "all"
+            if not requested_channels
+            else stored_channels == requested_channels
+        )
+
+        if not requested_channels:
+            extraction_color = "gray"
+            extraction_tooltip = "No channel extraction required"
+        elif stored_channels is None:
+            extraction_color = "red"
+            extraction_tooltip = "Channels haven't been created"
+        elif channels_match:
+            extraction_color = "green"
+            extraction_tooltip = "Channels already extracted"
+        else:
+            extraction_color = "orange"
+            extraction_tooltip = "Incompatible channels"
+
+        stitched_image_directory = project_path / STITCHED_IMAGE_DIR_NAME
+        stitched_image_exists = stitched_image_directory.is_dir() and any(
+            stitched_image_directory.glob("*.ome.zarr")
+        )
+
+        if not stitched_image_exists:
+            stitching_color = "red"
+            stitching_tooltip = "Stitched image hasn't been created"
+            stitching_text = "St"
+        elif channels_match:
+            stitching_color = "green"
+            stitching_tooltip = "Stitch already complete"
+            stitching_text = "St"
+        else:
+            stitching_color = "orange"
+            stitching_tooltip = "Incompatible channels"
+            stored_text = (
+                "unknown"
+                if stored_channels is None
+                else (
+                    stored_channels
+                    if isinstance(stored_channels, str)
+                    else ",".join(str(channel) for channel in stored_channels)
+                )
+            )
+            stitching_text = f"St - {stored_text}"
+
+        return ProjectStatus(
+            extraction_color=extraction_color,
+            extraction_tooltip=extraction_tooltip,
+            stitching_color=stitching_color,
+            stitching_tooltip=stitching_tooltip,
+            stitching_text=stitching_text,
+        )
 
     def _set_project_row_status(
         self,
