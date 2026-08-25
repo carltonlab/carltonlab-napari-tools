@@ -1,15 +1,18 @@
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from napari.layers import Image
 from napari.utils.notifications import show_info
-from qtpy.QtCore import Qt, QTimer
+from qtpy.QtCore import QSize, Qt, QTimer
 from qtpy.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -22,6 +25,7 @@ from carltonlab_napari_tools._model import (
     validate_closed_layers,
 )
 from carltonlab_napari_tools._shared_widgets import (
+    FrameSeparator,
     get_directory,
     get_file,
 )
@@ -44,6 +48,109 @@ from carltonlab_napari_tools._protocols import (
     ScoreWidgetAPI,
     SummaryWidgetAPI,
 )
+
+
+class IntegrationProjectRow(QWidget):
+    def __init__(
+        self,
+        display_name: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+
+        self._layout = QHBoxLayout()
+        self._layout.setContentsMargins(4, 0, 4, 0)
+        self._layout.setSpacing(4)
+        self.setLayout(self._layout)
+
+        self._name_label = QLabel(display_name)
+        self._name_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._layout.addWidget(self._name_label)
+
+        self._status_container = QWidget()
+        self._status_container_layout = QVBoxLayout()
+        self._status_container_layout.setContentsMargins(0, 0, 0, 0)
+        self._status_container_layout.setSpacing(2)
+        self._status_container.setLayout(self._status_container_layout)
+        self._layout.addWidget(self._status_container)
+
+        self._first_status_row_layout = QHBoxLayout()
+        self._first_status_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._first_status_row_layout.setSpacing(2)
+        self._status_container_layout.addLayout(self._first_status_row_layout)
+
+        self._second_status_row_layout = QHBoxLayout()
+        self._second_status_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._second_status_row_layout.setSpacing(2)
+        self._status_container_layout.addLayout(self._second_status_row_layout)
+
+        self._extraction_button = QPushButton("Ex")
+        self._stitching_button = QPushButton("St")
+        self._contrast_button = QPushButton("Co")
+        self._regions_button = QPushButton("Re")
+        self._nuclei_button = QPushButton("Nu")
+        self._scoring_button = QPushButton("Sc")
+
+        first_row_buttons = (
+            self._extraction_button,
+            self._stitching_button,
+            self._contrast_button,
+        )
+        second_row_buttons = (
+            self._regions_button,
+            self._nuclei_button,
+            self._scoring_button,
+        )
+
+        for button in first_row_buttons:
+            button.setFixedSize(QSize(30, 30))
+            self._first_status_row_layout.addWidget(button)
+
+        for button in second_row_buttons:
+            button.setFixedSize(QSize(30, 30))
+            self._second_status_row_layout.addWidget(button)
+
+
+class IntegrationWidget(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+
+        self._project_paths: list[Path] = []
+
+        self._layout = QVBoxLayout()
+        self._layout.setContentsMargins(0, 0, 0, 5)
+        self.setLayout(self._layout)
+
+        self._title_label = QLabel("CL Count Tool")
+        self._title_label.setStyleSheet("font-weight: bold; font-size: 20px")
+        self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._layout.addWidget(self._title_label)
+
+        self._layout.addWidget(FrameSeparator(parent=self))
+
+        self._project_directories_container = QWidget()
+        self._project_directories_layout = QVBoxLayout()
+        self._project_directories_layout.setContentsMargins(0, 0, 0, 0)
+        self._project_directories_container.setLayout(
+            self._project_directories_layout
+        )
+        self._layout.addWidget(self._project_directories_container)
+
+        self._project_directories_title = QLabel("Project directories")
+        self._project_directories_title.setStyleSheet("font-weight: bold")
+        self._project_directories_layout.addWidget(
+            self._project_directories_title
+        )
+
+        self._project_directories_list = QListWidget()
+        self._project_directories_layout.addWidget(
+            self._project_directories_list
+        )
+
+        self._layout.addWidget(FrameSeparator(parent=self))
 
 
 class GonadControlWidget(QWidget):
@@ -483,6 +590,9 @@ class CarltonLabCountTool(QWidget):
         self._global_scroll_speed_container_layout.addWidget(
             self._global_scroll_speed_slider
         )
+
+        self._integration_widget = IntegrationWidget(self)
+        self._main_layout.addWidget(self._integration_widget)
 
     ##################################################################
     #   Button connections
