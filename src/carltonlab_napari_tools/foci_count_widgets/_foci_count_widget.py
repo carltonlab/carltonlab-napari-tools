@@ -283,6 +283,22 @@ class IntegrationWidget(QWidget):
         self._workflow_widget_container.setLayout(self._workflow_widget_layout)
         self._layout.addWidget(self._workflow_widget_container)
 
+        self._current_widget: QWidget | None = None
+
+    def _remove_current_widget(self) -> None:
+        if self._current_widget is None:
+            return
+
+        self._workflow_widget_layout.removeWidget(self._current_widget)
+        self._current_widget.setParent(None)
+        self._current_widget.deleteLater()
+        self._current_widget = None
+
+    def _set_current_widget(self, widget: QWidget) -> None:
+        self._remove_current_widget()
+        self._workflow_widget_layout.addWidget(widget)
+        self._current_widget = widget
+
     def _save_multigonad_project(self, saving_path: str) -> bool:
         if not self._project_paths:
             return False
