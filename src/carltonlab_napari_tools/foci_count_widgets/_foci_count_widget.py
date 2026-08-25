@@ -51,6 +51,9 @@ from carltonlab_napari_tools.general_widgets._file_saver_widget import (
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
+from carltonlab_napari_tools.general_widgets._set_contrast_widget import (
+    CLTSetContrastWidget,
+)
 
 if TYPE_CHECKING:
     import napari
@@ -332,6 +335,9 @@ class IntegrationWidget(QWidget):
         self._stitch_gonads_button.clicked.connect(self._show_stitch_widget)
 
         self._set_contrast_button = QPushButton("2.Set contrast")
+        self._set_contrast_button.clicked.connect(
+            self._show_set_contrast_widget
+        )
         self._pick_nuclei_button = QPushButton("3.Pick Nuclei")
         self._score_nuclei_button = QPushButton("4.Score Nuclei")
         self._define_regions_button = QPushButton("5.Define Regions")
@@ -450,6 +456,14 @@ class IntegrationWidget(QWidget):
             keep_channels_widget=self._keep_channels_widget,
         )
         self._set_current_widget(stitch_widget)
+
+    def _show_set_contrast_widget(self) -> None:
+        contrast_widget = CLTSetContrastWidget(
+            napari_viewer=self._napari_viewer,
+            parent=self,
+            project_list_widget=self._project_directories_list,
+        )
+        self._set_current_widget(contrast_widget)
 
     def _save_multigonad_project(self, saving_path: str) -> bool:
         project_paths = self._project_directories_list.get_project_paths()
