@@ -4,6 +4,7 @@ from pathlib import Path
 
 from qtpy.QtWidgets import (
     QCheckBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -29,7 +30,7 @@ class CLToggleSavePathWidget(QWidget):
         self._saving_path: Path = Path("")
         self._allow_overwrite: bool = allow_overwrite
         self._force_suffix: str | None = force_suffix
-        self._save_callback: Callable[[], None] | None = None
+        self._save_callback: Callable[[str], None] | None = None
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -58,8 +59,12 @@ class CLToggleSavePathWidget(QWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
         )
-        self._path_le.textEdited.connect(self._on_path_edited)
+        self._path_le.editingFinished.connect(self._on_path_edited)
         self._path_layout.addWidget(self._path_le)
+
+        self._browse_button = QPushButton("Browse")
+        self._browse_button.clicked.connect(self._on_browse_button_pressed)
+        self._path_layout.addWidget(self._browse_button)
 
         self._status_lb = QLabel("")
         self._layout.addWidget(self._status_lb)
@@ -83,6 +88,12 @@ class CLToggleSavePathWidget(QWidget):
             self._status_lb.setText("No path specified")
             self._status_lb.setStyleSheet("color: gray; font-style: italic;")
             self._save_button.setEnabled(False)
+        elif Path(path_text).exists() and not self._allow_overwrite:
+            self._status_lb.setText("Overwrite not available")
+            self._status_lb.setStyleSheet(
+                "color: #A80000; font-style: normal;"
+            )
+            self._save_button.setEnabled(False)
         elif Path(path_text).exists():
             self._status_lb.setText("Path already exists")
             self._status_lb.setStyleSheet(
@@ -98,7 +109,10 @@ class CLToggleSavePathWidget(QWidget):
             )
             self._save_button.setEnabled(self._title_cb.isChecked())
 
-    def _on_path_edited(self, text: str) -> None:
+    def _on_path_edited(self, text: str | None = None) -> None:
+        if text is None:
+            text = self._path_le.text()
+
         text = text.strip()
         if not text:
             self._saving_path = Path("")
@@ -119,6 +133,16 @@ class CLToggleSavePathWidget(QWidget):
         self._path_le.setText(str(final_path))
         self._saving_path = final_path
         self._update_status_label()
+
+    def _on_browse_button_pressed(self) -> None:
+        selected_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Select save path",
+            "",
+            "All files (*)",
+        )
+        if selected_path:
+            self._on_path_edited(selected_path)
 
     @property
     def saving_path(self) -> Path:
@@ -161,7 +185,7 @@ class CLToggleSavePathWidget(QWidget):
 
     def connect_save_callback(
         self,
-        callback: Callable[[], None],
+        callback: Callable[[str], None],
     ) -> None:
         self._save_callback = callback
 
@@ -172,7 +196,7 @@ class CLToggleSavePathWidget(QWidget):
             return
         if Path(self._path_le.text()).exists() and not self._allow_overwrite:
             return
-        self._save_callback()
+        self._save_callback(str(self._saving_path))
 
     @property
     def title(self) -> str | None:

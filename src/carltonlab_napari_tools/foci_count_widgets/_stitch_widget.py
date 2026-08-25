@@ -29,6 +29,7 @@ from carltonlab_napari_tools._protocols import (
 from carltonlab_napari_tools._shared_variables import (
     CLSP_PROJECT_SUFFIX,
     EXTRACTED_CHANNELS_FILE_NAME,
+    MULTIGONAD_FOCI_COUNT_TOOL_FILE_SUFFIX,
     STITCHED_IMAGE_DIR_NAME,
     SUPPORTED_STITCH_EXTENSIONS,
     TILES_CONFIG_FILE_NAME,
@@ -46,6 +47,9 @@ from carltonlab_napari_tools._utils import (
 )
 from carltonlab_napari_tools.channel_extraction import (
     extract_channels_to_ome_zarr,
+)
+from carltonlab_napari_tools.general_widgets._file_saver_widget import (
+    CLToggleSavePathWidget,
 )
 from carltonlab_napari_tools.image_stitching import (
     stitch_ome_zarr_images,
@@ -322,6 +326,17 @@ class StitchOmeZarrWidget(QWidget):
         self._list_scroll_area.setWidget(list_container)
         self._main_layout.addWidget(self._list_scroll_area)
         self._main_layout.addSpacing(6)
+
+        self._main_layout.addWidget(FrameSeparator(parent=self))
+
+        self._multigonad_project_saver = CLToggleSavePathWidget(
+            self,
+            title="Save multigonad project",
+            toggled=False,
+            allow_overwrite=False,
+            force_suffix=MULTIGONAD_FOCI_COUNT_TOOL_FILE_SUFFIX,
+        )
+        self._main_layout.addWidget(self._multigonad_project_saver)
 
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
