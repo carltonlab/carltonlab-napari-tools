@@ -24,6 +24,7 @@ from qtpy.QtWidgets import (
 
 from carltonlab_napari_tools._multigonad_project import (
     load_multigonad_project,
+    save_multigonad_project,
 )
 from carltonlab_napari_tools._protocols import (
     CToolButton,
@@ -355,6 +356,9 @@ class StitchOmeZarrWidget(QWidget):
             allow_overwrite=False,
             force_suffix=MULTIGONAD_FOCI_COUNT_TOOL_FILE_SUFFIX,
         )
+        self._multigonad_project_saver.connect_save_callback(
+            self._save_multigonad_project
+        )
         self._main_layout.addWidget(self._multigonad_project_saver)
 
         self._main_layout.addWidget(FrameSeparator(parent=self))
@@ -423,6 +427,16 @@ class StitchOmeZarrWidget(QWidget):
             ):
                 self._directories_list.append(directory_path)
         self._update_qlist()
+
+    def _save_multigonad_project(self, saving_path: str) -> bool:
+        if not self._directories_list:
+            return False
+
+        return save_multigonad_project(
+            saving_path=saving_path,
+            project_directories=self._directories_list,
+            project_type="clsp",
+        )
 
     def _load_project_button_pressed(self) -> None:
         project_file_path = get_file(
