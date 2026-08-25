@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from napari.layers import Image
+from napari.utils.notifications import show_error
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
     QHBoxLayout,
@@ -21,8 +22,11 @@ from superqt import QRangeSlider
 from carltonlab_napari_tools._shared_variables import (
     CLSP_PROJECT_SUFFIX,
     EXTRACTED_CHANNELS_FILE_NAME,
+    IMAGE_CONTRASTS_FILE_NAME,
+    PROJECT_FILE_DIR_NAME,
     STITCHED_IMAGE_DIR_NAME,
     SUPPORTED_STITCH_EXTENSIONS,
+    TILE_CONTRASTS_FILE_NAME_SUFFIX,
     TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
 )
@@ -129,6 +133,21 @@ class CLTContrastLimitWidget(QWidget):
         self._max_spin_box.setValue(65535)
         self._spin_boxes_layout.addWidget(self._max_spin_box)
 
+    def set_contrast_limits(
+        self,
+        contrast_limits: tuple[float, float],
+    ) -> None:
+        min_value, max_value = contrast_limits
+        self._contrast_slider.setValue((int(min_value), int(max_value)))
+        self._min_spin_box.setValue(int(min_value))
+        self._max_spin_box.setValue(int(max_value))
+
+    def get_contrast_limits(self) -> tuple[float, float]:
+        return (
+            float(self._min_spin_box.value()),
+            float(self._max_spin_box.value()),
+        )
+
 
 class CLTContrastImageRow(QWidget):
     def __init__(
@@ -162,6 +181,8 @@ class CLTSetContrastWidget(QWidget):
         self._napari_viewer = napari_viewer
         self._project_list_widget = project_list_widget
         self._image_layers: list[Image] = []
+        self._contrast_widgets: list[CLTContrastLimitWidget] = []
+        self._selected_image_path: Path | None = None
         self._project_list_widget.itemSelectionChanged.connect(
             self._on_project_selection_changed
         )
@@ -212,6 +233,16 @@ class CLTSetContrastWidget(QWidget):
         self._contrast_layout.setContentsMargins(0, 0, 0, 0)
         self._contrast_container.setLayout(self._contrast_layout)
         self._container_layout.addWidget(self._contrast_container)
+
+        self._save_contrasts_button = QPushButton("Save contrasts")
+        self._save_contrasts_button.setEnabled(False)
+        self._save_contrasts_button.clicked.connect(
+            self._save_contrasts_button_pressed
+        )
+        self._container_layout.addWidget(self._save_contrasts_button)
+
+        self._contrast_saved_label = QLabel("")
+        self._container_layout.addWidget(self._contrast_saved_label)
 
         self._container_layout.addStretch()
 
@@ -289,13 +320,17 @@ class CLTSetContrastWidget(QWidget):
             return
 
         self._image_layers = opened_layers
+        self._selected_image_path = image_path
         self._create_contrast_widgets(opened_layers)
+        self._load_contrasts(image_path)
+        self._save_contrasts_button.setEnabled(True)
 
     def _create_contrast_widgets(
         self,
         image_layers: list[Image],
     ) -> None:
         self._clear_contrast_widgets()
+        self._contrast_widgets = []
 
         for channel_index, image_layer in enumerate(image_layers):
             contrast_widget = CLTContrastLimitWidget(
@@ -304,23 +339,134 @@ class CLTSetContrastWidget(QWidget):
                 parent=self._contrast_container,
             )
             self._contrast_layout.addWidget(contrast_widget)
+            self._contrast_widgets.append(contrast_widget)
 
     def _clear_open_image(self) -> None:
-        if not self._image_layers:
-            return
-
-        close_image_layers(
-            self._napari_viewer,
-            self._image_layers,
-        )
+        if self._image_layers:
+            close_image_layers(
+                self._napari_viewer,
+                self._image_layers,
+            )
         self._image_layers = []
+        self._selected_image_path = None
+        self._save_contrasts_button.setEnabled(False)
 
     def _clear_contrast_widgets(self) -> None:
+        self._contrast_widgets = []
+
         while self._contrast_layout.count():
             item = self._contrast_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
+
+    def _get_contrast_config_path(self, image_path: Path) -> Path:
+        if image_path.parent.name == TILES_DIR_NAME:
+            tile_name = image_path.name.removesuffix(".ome.zarr")
+            return image_path.parent / (
+                f"{tile_name}{TILE_CONTRASTS_FILE_NAME_SUFFIX}"
+            )
+
+        starting_path = self._project_list_widget.get_current_project_path()
+        project_path = self._resolve_project_path(
+            starting_path or image_path.parent
+        )
+        if project_path is None:
+            raise ValueError("Could not resolve the current project.")
+
+        return project_path / PROJECT_FILE_DIR_NAME / IMAGE_CONTRASTS_FILE_NAME
+
+    def _load_contrasts(self, image_path: Path) -> None:
+        try:
+            contrast_path = self._get_contrast_config_path(image_path)
+        except ValueError:
+            return
+
+        if not contrast_path.exists():
+            self._contrast_saved_label.setText("Contrasts not saved")
+            self._contrast_saved_label.setStyleSheet("color: red")
+            return
+
+        config = configparser.ConfigParser()
+
+        try:
+            config.read(contrast_path)
+            number_of_channels = config.getint(
+                "ImageContrasts",
+                "NumberOfChannels",
+            )
+
+            for channel_index in range(number_of_channels):
+                values = config.get(
+                    "ImageContrasts",
+                    f"channel-{channel_index + 1}",
+                )
+                minimum, maximum = (
+                    float(value.strip())
+                    for value in values.split(",", maxsplit=1)
+                )
+
+                if channel_index >= len(self._contrast_widgets):
+                    continue
+                if channel_index >= len(self._image_layers):
+                    continue
+
+                limits = (minimum, maximum)
+                self._contrast_widgets[channel_index].set_contrast_limits(
+                    limits
+                )
+                self._image_layers[channel_index].contrast_limits = limits
+
+        except (
+            configparser.Error,
+            KeyError,
+            OSError,
+            ValueError,
+        ) as exc:
+            show_error(f"Could not load contrast configuration: {exc}")
+            return
+
+        self._contrast_saved_label.setText("Contrasts loaded")
+        self._contrast_saved_label.setStyleSheet("color: green")
+
+    def _save_contrasts_button_pressed(self) -> None:
+        if self._selected_image_path is None:
+            return
+        if not self._contrast_widgets:
+            return
+
+        try:
+            contrast_path = self._get_contrast_config_path(
+                self._selected_image_path
+            )
+        except ValueError as exc:
+            show_error(str(exc))
+            return
+
+        config = configparser.ConfigParser()
+        config["ImageContrasts"] = {
+            "NumberOfChannels": str(len(self._contrast_widgets)),
+        }
+
+        for channel_index, contrast_widget in enumerate(
+            self._contrast_widgets
+        ):
+            minimum, maximum = contrast_widget.get_contrast_limits()
+            config["ImageContrasts"][
+                f"channel-{channel_index + 1}"
+            ] = f"{minimum},{maximum}"
+
+        try:
+            with contrast_path.open("w", encoding="utf-8") as config_file:
+                config.write(config_file)
+        except OSError as exc:
+            show_error(f"Could not save contrast configuration: {exc}")
+            return
+
+        self._contrast_saved_label.setText("Contrasts saved")
+        self._contrast_saved_label.setStyleSheet(
+            "color: green; font-weight: bold;"
+        )
 
     def _get_contrast_tile_paths(
         self,
