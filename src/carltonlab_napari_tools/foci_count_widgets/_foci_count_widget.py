@@ -1,15 +1,18 @@
+import configparser
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from napari.layers import Image
-from napari.utils.notifications import show_info
+from napari.utils.notifications import show_error, show_info
 from qtpy.QtCore import QSize, Qt, QTimer
+from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -24,10 +27,23 @@ from carltonlab_napari_tools._model import (
     open_tile_image,
     validate_closed_layers,
 )
+from carltonlab_napari_tools._multigonad_project import (
+    load_multigonad_project,
+    save_multigonad_project,
+)
+from carltonlab_napari_tools._shared_variables import (
+    CLSP_PROJECT_SUFFIX,
+    MULTIGONAD_FOCI_COUNT_TOOL_FILE_SUFFIX,
+    SUPPORTED_STITCH_EXTENSIONS,
+)
 from carltonlab_napari_tools._shared_widgets import (
     FrameSeparator,
+    get_directories,
     get_directory,
     get_file,
+)
+from carltonlab_napari_tools.general_widgets._file_saver_widget import (
+    CLToggleSavePathWidget,
 )
 
 if TYPE_CHECKING:
@@ -49,8 +65,24 @@ from carltonlab_napari_tools._protocols import (
     SummaryWidgetAPI,
 )
 
+BUTTONS_WIDTH = 30
+ICONS_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons"
+ADD_DIR_ICON = ICONS_DIR / "add_dir.svg"
+LOAD_PROJECT_ICON = ICONS_DIR / "file_settings.svg"
+REMOVE_ICON = ICONS_DIR / "remove.svg"
+
 
 class IntegrationProjectRow(QWidget):
+    _status_button_stylesheet = (
+        "QPushButton {"
+        "border: 1px solid black;"
+        "border-radius: 4px;"
+        "background-color: white;"
+        "color: black;"
+        "font-weight: bold;"
+        "}"
+    )
+
     def __init__(
         self,
         display_name: str,
@@ -71,21 +103,12 @@ class IntegrationProjectRow(QWidget):
         self._layout.addWidget(self._name_label)
 
         self._status_container = QWidget()
-        self._status_container_layout = QVBoxLayout()
+        self._status_container.setStyleSheet("background-color: transparent;")
+        self._status_container_layout = QHBoxLayout()
         self._status_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._status_container_layout.setSpacing(2)
+        self._status_container_layout.setSpacing(6)
         self._status_container.setLayout(self._status_container_layout)
         self._layout.addWidget(self._status_container)
-
-        self._first_status_row_layout = QHBoxLayout()
-        self._first_status_row_layout.setContentsMargins(0, 0, 0, 0)
-        self._first_status_row_layout.setSpacing(2)
-        self._status_container_layout.addLayout(self._first_status_row_layout)
-
-        self._second_status_row_layout = QHBoxLayout()
-        self._second_status_row_layout.setContentsMargins(0, 0, 0, 0)
-        self._second_status_row_layout.setSpacing(2)
-        self._status_container_layout.addLayout(self._second_status_row_layout)
 
         self._extraction_button = QPushButton("Ex")
         self._stitching_button = QPushButton("St")
@@ -94,24 +117,19 @@ class IntegrationProjectRow(QWidget):
         self._nuclei_button = QPushButton("Nu")
         self._scoring_button = QPushButton("Sc")
 
-        first_row_buttons = (
+        status_buttons = (
             self._extraction_button,
             self._stitching_button,
             self._contrast_button,
-        )
-        second_row_buttons = (
             self._regions_button,
             self._nuclei_button,
             self._scoring_button,
         )
 
-        for button in first_row_buttons:
+        for button in status_buttons:
             button.setFixedSize(QSize(30, 30))
-            self._first_status_row_layout.addWidget(button)
-
-        for button in second_row_buttons:
-            button.setFixedSize(QSize(30, 30))
-            self._second_status_row_layout.addWidget(button)
+            button.setStyleSheet(self._status_button_stylesheet)
+            self._status_container_layout.addWidget(button)
 
 
 class IntegrationWidget(QWidget):
@@ -139,18 +157,241 @@ class IntegrationWidget(QWidget):
         )
         self._layout.addWidget(self._project_directories_container)
 
+        self._project_directories_header = QWidget()
+        self._project_directories_header_layout = QHBoxLayout()
+        self._project_directories_header_layout.setContentsMargins(0, 0, 0, 0)
+        self._project_directories_header_layout.setSpacing(6)
+        self._project_directories_header.setLayout(
+            self._project_directories_header_layout
+        )
+        self._project_directories_layout.addWidget(
+            self._project_directories_header
+        )
+
         self._project_directories_title = QLabel("Project directories")
         self._project_directories_title.setStyleSheet("font-weight: bold")
-        self._project_directories_layout.addWidget(
+        self._project_directories_title.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._project_directories_header_layout.addWidget(
             self._project_directories_title
         )
 
+        self._add_project_directory_button = QPushButton("")
+        self._add_project_directory_button.setIcon(QIcon(str(ADD_DIR_ICON)))
+        self._add_project_directory_button.setFixedSize(
+            BUTTONS_WIDTH,
+            BUTTONS_WIDTH,
+        )
+        self._add_project_directory_button.setIconSize(
+            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
+        )
+        self._add_project_directory_button.setToolTip("Add project directory")
+        self._add_project_directory_button.clicked.connect(
+            self._add_project_directory_button_pressed
+        )
+        self._project_directories_header_layout.addWidget(
+            self._add_project_directory_button
+        )
+
+        self._add_multigonad_config_button = QPushButton("")
+        self._add_multigonad_config_button.setIcon(
+            QIcon(str(LOAD_PROJECT_ICON))
+        )
+        self._add_multigonad_config_button.setFixedSize(
+            BUTTONS_WIDTH,
+            BUTTONS_WIDTH,
+        )
+        self._add_multigonad_config_button.setIconSize(
+            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
+        )
+        self._add_multigonad_config_button.setToolTip(
+            "Add multigonad config file"
+        )
+        self._add_multigonad_config_button.clicked.connect(
+            self._add_multigonad_config_button_pressed
+        )
+        self._project_directories_header_layout.addWidget(
+            self._add_multigonad_config_button
+        )
+
+        self._remove_project_directory_button = QPushButton("")
+        self._remove_project_directory_button.setIcon(QIcon(str(REMOVE_ICON)))
+        self._remove_project_directory_button.setFixedSize(
+            BUTTONS_WIDTH,
+            BUTTONS_WIDTH,
+        )
+        self._remove_project_directory_button.setIconSize(
+            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
+        )
+        self._remove_project_directory_button.setToolTip(
+            "Remove selected project directories"
+        )
+        self._remove_project_directory_button.clicked.connect(
+            self._remove_project_directory_button_pressed
+        )
+        self._project_directories_header_layout.addWidget(
+            self._remove_project_directory_button
+        )
+
         self._project_directories_list = QListWidget()
+        self._project_directories_list.setSpacing(6)
         self._project_directories_layout.addWidget(
             self._project_directories_list
         )
 
         self._layout.addWidget(FrameSeparator(parent=self))
+
+        self._multigonad_project_saver = CLToggleSavePathWidget(
+            self,
+            title="Save multigonad project",
+            toggled=False,
+            allow_overwrite=False,
+            force_suffix=MULTIGONAD_FOCI_COUNT_TOOL_FILE_SUFFIX,
+        )
+        self._multigonad_project_saver.connect_save_callback(
+            self._save_multigonad_project
+        )
+        self._layout.addWidget(self._multigonad_project_saver)
+
+    def _save_multigonad_project(self, saving_path: str) -> bool:
+        if not self._project_paths:
+            return False
+
+        return save_multigonad_project(
+            saving_path=saving_path,
+            project_directories=self._project_paths,
+            project_type="clsp",
+        )
+
+    def _verify_project_directory(self, project_path: Path) -> bool:
+        has_existing_project = any(
+            path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
+            for path in project_path.iterdir()
+        )
+        if has_existing_project:
+            return True
+
+        supported_entries = [
+            path
+            for path in project_path.iterdir()
+            if path.name.endswith(".ome.zarr")
+            or (
+                path.is_file()
+                and any(
+                    path.name.endswith(extension)
+                    for extension in SUPPORTED_STITCH_EXTENSIONS
+                )
+            )
+        ]
+        if not supported_entries:
+            show_error(
+                f"The directory {project_path} does not contain "
+                "supported image files."
+            )
+            return False
+
+        unsupported_files = [
+            path
+            for path in project_path.iterdir()
+            if path.is_file() and path not in supported_entries
+        ]
+        if unsupported_files:
+            show_error(
+                f"The directory {project_path} contains unsupported files:\n"
+                + "\n".join(path.name for path in unsupported_files)
+            )
+            return False
+
+        return True
+
+    def _add_project_directory_button_pressed(self) -> None:
+        project_paths = get_directories(
+            self,
+            caption="Select project directories",
+        )
+        if project_paths is None:
+            return
+
+        for project_path in project_paths:
+            if (
+                project_path not in self._project_paths
+                and self._verify_project_directory(project_path)
+            ):
+                self._project_paths.append(project_path)
+
+        self._update_project_list()
+
+    def _add_multigonad_config_button_pressed(self) -> None:
+        config_path = get_file(
+            self,
+            caption="Select a multigonad project configuration",
+        )
+        if config_path is None:
+            return
+
+        config = load_multigonad_project(config_path)
+        if config is None:
+            show_error("Could not load the multigonad project configuration.")
+            return
+
+        try:
+            if config.get("project", "type") != "clsp":
+                show_error("The selected file is not a CLSP project.")
+                return
+
+            project_paths = [
+                Path(project_path)
+                for _, project_path in config.items("project_directories")
+            ]
+        except configparser.Error:
+            show_error(
+                "The multigonad project configuration is missing "
+                "required sections."
+            )
+            return
+
+        if not project_paths:
+            show_error("The multigonad project contains no directories.")
+            return
+
+        for project_path in project_paths:
+            if not project_path.is_dir():
+                show_error(f"Directory does not exist: {project_path}")
+                return
+            if not self._verify_project_directory(project_path):
+                return
+
+        self._project_paths = project_paths
+        self._update_project_list()
+
+    def _remove_project_directory_button_pressed(self) -> None:
+        selected_items = self._project_directories_list.selectedItems()
+
+        for item in selected_items:
+            project_path = item.data(Qt.ItemDataRole.UserRole)
+            if project_path in self._project_paths:
+                self._project_paths.remove(project_path)
+
+        self._update_project_list()
+
+    def _update_project_list(self) -> None:
+        self._project_directories_list.clear()
+
+        for project_path in self._project_paths:
+            list_item = QListWidgetItem()
+            list_item.setData(Qt.ItemDataRole.UserRole, project_path)
+            self._project_directories_list.addItem(list_item)
+
+            row_widget = IntegrationProjectRow(
+                f"{project_path.parent.name}/{project_path.name}"
+            )
+            list_item.setSizeHint(row_widget.sizeHint())
+            self._project_directories_list.setItemWidget(
+                list_item,
+                row_widget,
+            )
 
 
 class GonadControlWidget(QWidget):
