@@ -22,6 +22,9 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from carltonlab_napari_tools._multigonad_project import (
+    load_multigonad_project,
+)
 from carltonlab_napari_tools._protocols import (
     CToolButton,
     MainWidgetCallBacks,
@@ -39,6 +42,7 @@ from carltonlab_napari_tools._shared_widgets import (
     FrameSeparator,
     KeepChannelsWidget,
     get_directories,
+    get_file,
 )
 from carltonlab_napari_tools._utils import (
     create_project_structure,
@@ -61,6 +65,7 @@ if TYPE_CHECKING:
 BUTTONS_WIDTH = 30
 ICONS_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons"
 ADD_DIR_ICON = ICONS_DIR / "add_dir.svg"
+LOAD_PROJECT_ICON = ICONS_DIR / "file_settings.svg"
 REMOVE_ICON = ICONS_DIR / "remove.svg"
 
 
@@ -293,6 +298,20 @@ class StitchOmeZarrWidget(QWidget):
         )
         self._add_remove_container_layout.addWidget(self._add_directory_button)
 
+        self._load_project_button: QPushButton = QPushButton("")
+        self._load_project_button.setIcon(QIcon(str(LOAD_PROJECT_ICON)))
+        self._load_project_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
+        self._load_project_button.setIconSize(
+            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
+        )
+        self._load_project_button.setToolTip(
+            "Load a multigonad project configuration"
+        )
+        self._load_project_button.clicked.connect(
+            self._load_project_button_pressed
+        )
+        self._add_remove_container_layout.addWidget(self._load_project_button)
+
         self._remove_selected_button: QPushButton = QPushButton("")
         self._remove_selected_button.setIcon(QIcon(str(REMOVE_ICON)))
         self._remove_selected_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
@@ -403,6 +422,50 @@ class StitchOmeZarrWidget(QWidget):
                 and self._verify_directory(directory_path)
             ):
                 self._directories_list.append(directory_path)
+        self._update_qlist()
+
+    def _load_project_button_pressed(self) -> None:
+        project_file_path = get_file(
+            self,
+            caption="Select a multigonad project configuration",
+        )
+        if project_file_path is None:
+            return
+
+        config = load_multigonad_project(project_file_path)
+        if config is None:
+            show_error("Could not load the multigonad project configuration.")
+            return
+
+        try:
+            project_type = config.get("project", "type")
+            if project_type != "clsp":
+                show_error("The selected file is not a CLSP project.")
+                return
+
+            project_directories = [
+                Path(directory_path)
+                for _, directory_path in config.items("project_directories")
+            ]
+        except configparser.Error:
+            show_error(
+                "The multigonad project configuration is missing "
+                "required sections."
+            )
+            return
+
+        if not project_directories:
+            show_error("The multigonad project contains no directories.")
+            return
+
+        for directory_path in project_directories:
+            if not directory_path.is_dir():
+                show_error(f"Directory does not exist: {directory_path}")
+                return
+            if not self._verify_directory(directory_path):
+                return
+
+        self._directories_list = project_directories
         self._update_qlist()
 
     def _remove_selected_button_pressed(self) -> None:
