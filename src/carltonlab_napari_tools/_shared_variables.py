@@ -1,7 +1,30 @@
+from configparser import ConfigParser
+from pathlib import Path
+
+
+def _discover_project_types() -> dict[str, str]:
+    package_root = Path(__file__).resolve().parent
+    project_types: dict[str, str] = {}
+
+    for config_path in package_root.rglob("*_project.config"):
+        config = ConfigParser()
+        try:
+            config.read(config_path)
+            project_type = config.get("project", "type")
+        except (ConfigParser.Error, OSError, KeyError):
+            continue
+
+        project_types[project_type] = str(
+            config_path.relative_to(package_root)
+        )
+
+    return project_types
+
+
 DEFAULT_PROJECT_NAME = "cl_score_points_project"
 DEFAULT_PROJECT_EXTENSION = "_clsp"
 
-PROJECT_TYPES = ["clsp", "clsa"]
+PROJECT_TYPES = _discover_project_types()
 
 IMAGE_CONTRASTS_FILE_NAME = "cl_image_contrasts.config"
 TILE_CONTRASTS_FILE_NAME_SUFFIX = "_contrasts.config"
