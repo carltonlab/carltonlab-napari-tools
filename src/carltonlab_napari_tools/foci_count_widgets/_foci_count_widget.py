@@ -313,9 +313,23 @@ class IntegrationWidget(QWidget):
 
         self._layout.addWidget(FrameSeparator(parent=self))
 
+        self._layout.addSpacing(6)
+
+        self._process_workflow_title = QLabel("Process workflow")
+        self._process_workflow_title.setStyleSheet("font-weight: bold")
+        self._layout.addWidget(self._process_workflow_title)
+
+        self._process_workflow_container = QWidget()
+        self._process_workflow_layout = QVBoxLayout()
+        self._process_workflow_layout.setContentsMargins(0, 0, 0, 0)
+        self._process_workflow_layout.setSpacing(6)
+        self._process_workflow_container.setLayout(
+            self._process_workflow_layout
+        )
+        self._layout.addWidget(self._process_workflow_container)
+
         self._stitch_gonads_button = QPushButton("1.Stitch gonads")
         self._stitch_gonads_button.clicked.connect(self._show_stitch_widget)
-        self._layout.addWidget(self._stitch_gonads_button)
 
         self._set_contrast_button = QPushButton("2.Set contrast")
         self._pick_nuclei_button = QPushButton("3.Pick Nuclei")
@@ -324,11 +338,18 @@ class IntegrationWidget(QWidget):
         self._generate_reports_button = QPushButton(
             "6.Generate Project Reports"
         )
-        self._layout.addWidget(self._set_contrast_button)
-        self._layout.addWidget(self._pick_nuclei_button)
-        self._layout.addWidget(self._score_nuclei_button)
-        self._layout.addWidget(self._define_regions_button)
-        self._layout.addWidget(self._generate_reports_button)
+
+        self._process_status_labels: dict[str, QLabel] = {}
+        self._add_process_button(self._stitch_gonads_button, "stitching")
+        self._add_process_button(self._set_contrast_button, "contrast")
+        self._add_process_button(self._pick_nuclei_button, "nuclei")
+        self._add_process_button(self._score_nuclei_button, "scoring")
+        self._add_process_button(self._define_regions_button, "regions")
+        self._add_process_button(self._generate_reports_button, "reports")
+
+        self._update_process_status_labels()
+
+        self._layout.addSpacing(6)
 
         self._layout.addWidget(FrameSeparator(parent=self))
 
@@ -339,6 +360,73 @@ class IntegrationWidget(QWidget):
         self._layout.addWidget(self._workflow_widget_container)
 
         self._current_widget: QWidget | None = None
+
+    def _add_process_button(
+        self,
+        button: QPushButton,
+        process_name: str,
+    ) -> None:
+        row = QWidget()
+        row_layout = QHBoxLayout()
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(6)
+        row.setLayout(row_layout)
+
+        row_layout.addWidget(button)
+
+        status_label = QLabel("0/0")
+        status_label.setFixedWidth(40)
+        status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        row_layout.addWidget(status_label)
+
+        self._process_status_labels[process_name] = status_label
+        self._process_workflow_layout.addWidget(row)
+
+    def _set_process_status_label(
+        self,
+        label: QLabel,
+        completed: int,
+        total: int,
+    ) -> None:
+        label.setText(f"{completed}/{total}")
+
+        if total > 0 and completed == total:
+            label.setStyleSheet("color: green; font-weight: bold;")
+        else:
+            label.setStyleSheet("color: red;")
+
+    def _update_process_status_labels(self) -> None:
+        project_paths = self._project_directories_list.get_project_paths()
+        total = len(project_paths)
+        requested_channels = self._keep_channels_widget.get_channels()
+
+        stitched_count = sum(
+            StitchOmeZarrWidget.get_project_status(
+                project_path,
+                requested_channels,
+            ).stitching_color
+            == "green"
+            for project_path in project_paths
+        )
+
+        self._set_process_status_label(
+            self._process_status_labels["stitching"],
+            stitched_count,
+            total,
+        )
+
+        for process_name in (
+            "contrast",
+            "nuclei",
+            "scoring",
+            "regions",
+            "reports",
+        ):
+            self._set_process_status_label(
+                self._process_status_labels[process_name],
+                0,
+                total,
+            )
 
     def _remove_current_widget(self) -> None:
         if self._current_widget is None:
@@ -390,6 +478,7 @@ class IntegrationWidget(QWidget):
 
     def _on_keep_channels_changed(self, *_args: object) -> None:
         self._project_directories_list.refresh_rows()
+        self._update_process_status_labels()
 
     def _verify_project_directory(self, project_path: Path) -> bool:
         has_existing_project = any(
@@ -451,6 +540,7 @@ class IntegrationWidget(QWidget):
         ]
 
         self._project_directories_list.add_project_paths(valid_paths)
+        self._update_process_status_labels()
 
     def _add_multigonad_config_button_pressed(self) -> None:
         config_path = get_file(
@@ -493,9 +583,11 @@ class IntegrationWidget(QWidget):
                 return
 
         self._project_directories_list.set_project_paths(project_paths)
+        self._update_process_status_labels()
 
     def _remove_project_directory_button_pressed(self) -> None:
         self._project_directories_list.remove_selected_project_paths()
+        self._update_process_status_labels()
 
 
 class GonadControlWidget(QWidget):
