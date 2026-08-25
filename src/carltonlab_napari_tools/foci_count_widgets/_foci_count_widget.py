@@ -11,8 +11,6 @@ from qtpy.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -44,6 +42,9 @@ from carltonlab_napari_tools._shared_widgets import (
 )
 from carltonlab_napari_tools.general_widgets._file_saver_widget import (
     CLToggleSavePathWidget,
+)
+from carltonlab_napari_tools.general_widgets._project_list_widget import (
+    CLTProjectListWidget,
 )
 
 if TYPE_CHECKING:
@@ -137,8 +138,6 @@ class IntegrationProjectRow(QWidget):
 class IntegrationWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-
-        self._project_paths: list[Path] = []
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 5)
@@ -237,8 +236,10 @@ class IntegrationWidget(QWidget):
             self._remove_project_directory_button
         )
 
-        self._project_directories_list = QListWidget()
-        self._project_directories_list.setSpacing(6)
+        self._project_directories_list = CLTProjectListWidget(
+            self,
+            row_factory=self._create_project_row,
+        )
         self._project_directories_layout.addWidget(
             self._project_directories_list
         )
@@ -300,13 +301,20 @@ class IntegrationWidget(QWidget):
         self._current_widget = widget
 
     def _save_multigonad_project(self, saving_path: str) -> bool:
-        if not self._project_paths:
+        project_paths = self._project_directories_list.get_project_paths()
+
+        if not project_paths:
             return False
 
         return save_multigonad_project(
             saving_path=saving_path,
-            project_directories=self._project_paths,
+            project_directories=project_paths,
             project_type="clsp",
+        )
+
+    def _create_project_row(self, project_path: Path) -> QWidget:
+        return IntegrationProjectRow(
+            f"{project_path.parent.name}/{project_path.name}"
         )
 
     def _verify_project_directory(self, project_path: Path) -> bool:
@@ -358,14 +366,17 @@ class IntegrationWidget(QWidget):
         if project_paths is None:
             return
 
-        for project_path in project_paths:
+        valid_paths = [
+            project_path
+            for project_path in project_paths
             if (
-                project_path not in self._project_paths
+                project_path
+                not in self._project_directories_list.get_project_paths()
                 and self._verify_project_directory(project_path)
-            ):
-                self._project_paths.append(project_path)
+            )
+        ]
 
-        self._update_project_list()
+        self._project_directories_list.add_project_paths(valid_paths)
 
     def _add_multigonad_config_button_pressed(self) -> None:
         config_path = get_file(
@@ -407,35 +418,10 @@ class IntegrationWidget(QWidget):
             if not self._verify_project_directory(project_path):
                 return
 
-        self._project_paths = project_paths
-        self._update_project_list()
+        self._project_directories_list.set_project_paths(project_paths)
 
     def _remove_project_directory_button_pressed(self) -> None:
-        selected_items = self._project_directories_list.selectedItems()
-
-        for item in selected_items:
-            project_path = item.data(Qt.ItemDataRole.UserRole)
-            if project_path in self._project_paths:
-                self._project_paths.remove(project_path)
-
-        self._update_project_list()
-
-    def _update_project_list(self) -> None:
-        self._project_directories_list.clear()
-
-        for project_path in self._project_paths:
-            list_item = QListWidgetItem()
-            list_item.setData(Qt.ItemDataRole.UserRole, project_path)
-            self._project_directories_list.addItem(list_item)
-
-            row_widget = IntegrationProjectRow(
-                f"{project_path.parent.name}/{project_path.name}"
-            )
-            list_item.setSizeHint(row_widget.sizeHint())
-            self._project_directories_list.setItemWidget(
-                list_item,
-                row_widget,
-            )
+        self._project_directories_list.remove_selected_project_paths()
 
 
 class GonadControlWidget(QWidget):
