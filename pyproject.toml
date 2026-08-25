@@ -98,7 +98,7 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-"*" = ["*.yaml", "*.json", "*.config"]
+"*" = ["*.yaml", "*.json", "*.config", "*.md"]
 
 [tool.setuptools_scm]
 write_to = "src/carltonlab_napari_tools/_version.py"

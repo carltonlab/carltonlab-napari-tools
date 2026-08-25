@@ -52,3 +52,17 @@ def save_multigonad_project(
         return False
 
     return True
+
+
+def load_multigonad_project(
+    project_file_path: str | Path,
+) -> ConfigParser | None:
+    config = ConfigParser()
+
+    try:
+        with Path(project_file_path).open(encoding="utf-8") as config_file:
+            config.read_file(config_file)
+    except (OSError, ConfigParser.Error):
+        return None
+
+    return config
