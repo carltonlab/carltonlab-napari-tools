@@ -2,19 +2,15 @@ import configparser
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from napari.utils.notifications import show_error
-from qtpy.QtCore import QSize, Qt
-from qtpy.QtGui import QIcon
+from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
-    QAbstractItemView,
     QCheckBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -23,18 +19,9 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from carltonlab_napari_tools._multigonad_project import (
-    load_multigonad_project,
-    save_multigonad_project,
-)
-from carltonlab_napari_tools._protocols import (
-    CToolButton,
-    MainWidgetCallBacks,
-)
 from carltonlab_napari_tools._shared_variables import (
     CLSP_PROJECT_SUFFIX,
     EXTRACTED_CHANNELS_FILE_NAME,
-    MULTIGONAD_FOCI_COUNT_TOOL_FILE_SUFFIX,
     STITCHED_IMAGE_DIR_NAME,
     SUPPORTED_STITCH_EXTENSIONS,
     TILES_CONFIG_FILE_NAME,
@@ -43,8 +30,6 @@ from carltonlab_napari_tools._shared_variables import (
 from carltonlab_napari_tools._shared_widgets import (
     FrameSeparator,
     KeepChannelsWidget,
-    get_directories,
-    get_file,
 )
 from carltonlab_napari_tools._utils import (
     create_project_structure,
@@ -54,8 +39,8 @@ from carltonlab_napari_tools._utils import (
 from carltonlab_napari_tools.channel_extraction import (
     extract_channels_to_ome_zarr,
 )
-from carltonlab_napari_tools.general_widgets._file_saver_widget import (
-    CLToggleSavePathWidget,
+from carltonlab_napari_tools.general_widgets._project_list_widget import (
+    CLTProjectListWidget,
 )
 from carltonlab_napari_tools.image_stitching import (
     stitch_ome_zarr_images,
@@ -63,12 +48,6 @@ from carltonlab_napari_tools.image_stitching import (
 
 if TYPE_CHECKING:
     from napari.viewer import ViewerModel
-
-BUTTONS_WIDTH = 30
-ICONS_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons"
-ADD_DIR_ICON = ICONS_DIR / "add_dir.svg"
-LOAD_PROJECT_ICON = ICONS_DIR / "file_settings.svg"
-REMOVE_ICON = ICONS_DIR / "remove.svg"
 
 
 @dataclass(frozen=True)
@@ -80,100 +59,19 @@ class ProjectStatus:
     stitching_text: str = "St"
 
 
-class StitchProjectStatusRow(QWidget):
-    _status_button_stylesheet = (
-        "QPushButton {{ border: 1px solid gray; border-radius: 4px; "
-        "background-color: palette(button); font-weight: bold; "
-        "color: {color}; }}"
-    )
-
-    def __init__(
-        self,
-        display_name: str,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(4)
-        self.setLayout(layout)
-
-        name_label = QLabel(display_name)
-        name_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Preferred,
-        )
-        layout.addWidget(name_label)
-
-        self._extraction_status_button = QPushButton("Ex")
-        self._stitching_status_button = QPushButton("St")
-
-        for button in (
-            self._extraction_status_button,
-            self._stitching_status_button,
-        ):
-            button.setSizePolicy(
-                QSizePolicy.Policy.Preferred,
-                QSizePolicy.Policy.Preferred,
-            )
-            layout.addWidget(button)
-
-    def _set_status(
-        self,
-        button: QPushButton,
-        color: str,
-        tooltip: str,
-        bold: bool = False,
-    ) -> None:
-        button.setStyleSheet(
-            self._status_button_stylesheet.format(color=color)
-        )
-        button.setToolTip(tooltip)
-
-    def set_extraction_status(
-        self,
-        color: str,
-        tooltip: str,
-        bold: bool = False,
-    ) -> None:
-        self._set_status(
-            self._extraction_status_button,
-            color,
-            tooltip,
-            bold,
-        )
-
-    def set_stitching_status(
-        self,
-        color: str,
-        tooltip: str,
-        bold: bool = False,
-        text: str = "St",
-    ) -> None:
-        self._stitching_status_button.setText(text)
-        self._set_status(
-            self._stitching_status_button,
-            color,
-            tooltip,
-            bold,
-        )
-
-
 class StitchOmeZarrWidget(QWidget):
     def __init__(
         self,
         napari_viewer: "ViewerModel",
-        parent_widget: MainWidgetCallBacks,
-        ct_tool_button: CToolButton,
-    ):
-        parent_q_widget: QWidget = cast(QWidget, parent_widget)
-        super().__init__(parent_q_widget)
+        parent: QWidget,
+        project_list_widget: CLTProjectListWidget,
+        keep_channels_widget: KeepChannelsWidget,
+    ) -> None:
+        super().__init__(parent)
 
         self._napari_viewer = napari_viewer
-        self._parent_widget: MainWidgetCallBacks = parent_widget
-        self._ct_tool_button = ct_tool_button
-        self._directories_list: list[Path] = []
+        self._project_list_widget = project_list_widget
+        self._keep_channels_widget = keep_channels_widget
 
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
@@ -181,11 +79,11 @@ class StitchOmeZarrWidget(QWidget):
 
         self._layout = QVBoxLayout()
         self.setLayout(self._layout)
-        self._layout.setContentsMargins(25, 2, 2, 25)
+        self._layout.setContentsMargins(0, 0, 0, 0)
 
         self._main_scroll_area: QScrollArea = QScrollArea()
         self._main_scroll_area.setWidgetResizable(True)
-        self._main_scroll_area.setViewportMargins(0, 0, 10, 0)
+        self._main_scroll_area.setViewportMargins(0, 0, 0, 0)
         self._layout.addWidget(self._main_scroll_area, 1)
 
         self._main_container: QWidget = QWidget()
@@ -200,17 +98,6 @@ class StitchOmeZarrWidget(QWidget):
         )
         self._main_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._main_layout.addWidget(self._main_title_label)
-
-        self._main_layout.addWidget(FrameSeparator(parent=self))
-
-        self._keep_channels_widget = KeepChannelsWidget(parent=self)
-        self._keep_channels_widget._keep_channels_cb.toggled.connect(
-            self._update_qlist
-        )
-        self._keep_channels_widget._keep_channels_line_edit.editingFinished.connect(
-            self._update_qlist
-        )
-        self._main_layout.addWidget(self._keep_channels_widget)
 
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
@@ -285,94 +172,6 @@ class StitchOmeZarrWidget(QWidget):
         self._main_layout.addWidget(self._fusion_container)
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
-        self._add_remove_container: QWidget = QWidget()
-        self._add_remove_container_layout: QHBoxLayout = QHBoxLayout()
-        self._add_remove_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._add_remove_container_layout.setSpacing(6)
-        self._add_remove_container.setLayout(self._add_remove_container_layout)
-
-        self._q_list_title: QLabel = QLabel("Image directories")
-        self._q_list_title.setStyleSheet("font-weight: bold")
-        self._q_list_title.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        self._add_remove_container_layout.addWidget(self._q_list_title)
-
-        self._add_directory_button: QPushButton = QPushButton("")
-        self._add_directory_button.setIcon(QIcon(str(ADD_DIR_ICON)))
-        self._add_directory_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
-        self._add_directory_button.setIconSize(
-            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
-        )
-        self._add_directory_button.clicked.connect(
-            self._add_directory_button_pressed
-        )
-        self._add_remove_container_layout.addWidget(self._add_directory_button)
-
-        self._load_project_button: QPushButton = QPushButton("")
-        self._load_project_button.setIcon(QIcon(str(LOAD_PROJECT_ICON)))
-        self._load_project_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
-        self._load_project_button.setIconSize(
-            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
-        )
-        self._load_project_button.setToolTip(
-            "Load a multigonad project configuration"
-        )
-        self._load_project_button.clicked.connect(
-            self._load_project_button_pressed
-        )
-        self._add_remove_container_layout.addWidget(self._load_project_button)
-
-        self._remove_selected_button: QPushButton = QPushButton("")
-        self._remove_selected_button.setIcon(QIcon(str(REMOVE_ICON)))
-        self._remove_selected_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
-        self._remove_selected_button.setIconSize(
-            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
-        )
-        self._remove_selected_button.clicked.connect(
-            self._remove_selected_button_pressed
-        )
-        self._add_remove_container_layout.addWidget(
-            self._remove_selected_button
-        )
-
-        self._main_layout.addWidget(self._add_remove_container)
-
-        self._directories_q_list: QListWidget = QListWidget()
-        self._directories_q_list.setSelectionMode(
-            QAbstractItemView.SelectionMode.MultiSelection
-        )
-
-        self._list_scroll_area: QScrollArea = QScrollArea()
-        self._list_scroll_area.setWidgetResizable(True)
-        self._list_scroll_area.setFixedHeight(300)
-
-        list_container: QWidget = QWidget()
-        list_container_layout = QVBoxLayout()
-        list_container_layout.setContentsMargins(0, 0, 0, 0)
-        list_container.setLayout(list_container_layout)
-        list_container_layout.addWidget(self._directories_q_list)
-
-        self._list_scroll_area.setWidget(list_container)
-        self._main_layout.addWidget(self._list_scroll_area)
-        self._main_layout.addSpacing(6)
-
-        self._main_layout.addWidget(FrameSeparator(parent=self))
-
-        self._multigonad_project_saver = CLToggleSavePathWidget(
-            self,
-            title="Save multigonad project",
-            toggled=False,
-            allow_overwrite=False,
-            force_suffix=MULTIGONAD_FOCI_COUNT_TOOL_FILE_SUFFIX,
-        )
-        self._multigonad_project_saver.connect_save_callback(
-            self._save_multigonad_project
-        )
-        self._main_layout.addWidget(self._multigonad_project_saver)
-
-        self._main_layout.addWidget(FrameSeparator(parent=self))
-
         self._stitch_button: QPushButton = QPushButton("Stitch gonads")
         self._stitch_button.clicked.connect(self._on_stitch_button_pressed)
         self._main_layout.addWidget(self._stitch_button)
@@ -382,125 +181,6 @@ class StitchOmeZarrWidget(QWidget):
         self._set_files_created_label_state(False)
 
         self._main_layout.addStretch()
-
-    def _verify_directory(self, directory_path: Path) -> bool:
-        has_existing_project = any(
-            path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
-            for path in directory_path.iterdir()
-        )
-        if has_existing_project:
-            return True
-
-        supported_entries = [
-            p
-            for p in directory_path.iterdir()
-            if p.name.endswith(".ome.zarr")
-            or (
-                p.is_file()
-                and any(
-                    p.name.endswith(extension)
-                    for extension in SUPPORTED_STITCH_EXTENSIONS
-                )
-            )
-        ]
-
-        if not supported_entries:
-            show_error(
-                f"The directory {directory_path} does not contain any files"
-            )
-            return False
-
-        unsupported_files = [
-            p
-            for p in directory_path.iterdir()
-            if p.is_file() and p not in supported_entries
-        ]
-        if unsupported_files:
-            show_error(
-                f"The directory {directory_path} contains unsupported files:\n"
-                + "\n".join(str(path.name) for path in unsupported_files)
-            )
-            return False
-
-        return True
-
-    def _add_directory_button_pressed(self) -> None:
-        directories_path_list: list[Path] | None = get_directories(
-            self, caption="Select the directories"
-        )
-        if directories_path_list is None:
-            return
-        for directory_path in directories_path_list:
-            if (
-                directory_path not in self._directories_list
-                and self._verify_directory(directory_path)
-            ):
-                self._directories_list.append(directory_path)
-        self._update_qlist()
-
-    def _save_multigonad_project(self, saving_path: str) -> bool:
-        if not self._directories_list:
-            return False
-
-        return save_multigonad_project(
-            saving_path=saving_path,
-            project_directories=self._directories_list,
-            project_type="clsp",
-        )
-
-    def _load_project_button_pressed(self) -> None:
-        project_file_path = get_file(
-            self,
-            caption="Select a multigonad project configuration",
-        )
-        if project_file_path is None:
-            return
-
-        config = load_multigonad_project(project_file_path)
-        if config is None:
-            show_error("Could not load the multigonad project configuration.")
-            return
-
-        try:
-            project_type = config.get("project", "type")
-            if project_type != "clsp":
-                show_error("The selected file is not a CLSP project.")
-                return
-
-            project_directories = [
-                Path(directory_path)
-                for _, directory_path in config.items("project_directories")
-            ]
-        except configparser.Error:
-            show_error(
-                "The multigonad project configuration is missing "
-                "required sections."
-            )
-            return
-
-        if not project_directories:
-            show_error("The multigonad project contains no directories.")
-            return
-
-        for directory_path in project_directories:
-            if not directory_path.is_dir():
-                show_error(f"Directory does not exist: {directory_path}")
-                return
-            if not self._verify_directory(directory_path):
-                return
-
-        self._directories_list = project_directories
-        self._update_qlist()
-
-    def _remove_selected_button_pressed(self) -> None:
-        selected_items = self._directories_q_list.selectedItems()
-        if not selected_items:
-            return
-        for item in selected_items:
-            item_path = item.data(Qt.ItemDataRole.UserRole)
-            if item_path in self._directories_list:
-                self._directories_list.remove(item_path)
-        self._update_qlist()
 
     def _get_project_name(self, directory_path: Path) -> str:
         image_names: list[str] = []
@@ -570,59 +250,9 @@ class StitchOmeZarrWidget(QWidget):
 
         return starting_project / self._get_project_name(starting_project)
 
-    def _get_stored_channels(
-        self,
-        project_path: Path,
-    ) -> str | list[int] | None:
-        config_path = (
-            project_path / TILES_DIR_NAME / EXTRACTED_CHANNELS_FILE_NAME
-        )
-
-        if not config_path.exists():
-            return None
-
-        config = configparser.ConfigParser()
-        try:
-            config.read(config_path)
-            stored_channels = config.get("channels", "kept").strip()
-        except (configparser.Error, OSError, ValueError):
-            return None
-
-        if stored_channels == "all":
-            return "all"
-
-        parsed_channels = parse_channel_string(stored_channels)
-        if not parsed_channels:
-            return None
-
-        return parsed_channels
-
     def _has_stitched_image(self, project_path: Path) -> bool:
         stitched_dir = project_path / STITCHED_IMAGE_DIR_NAME
         return stitched_dir.is_dir() and any(stitched_dir.glob("*.ome.zarr"))
-
-    def _channels_match(
-        self,
-        stored_channels: str | list[int] | None,
-        requested_channels: list[int],
-    ) -> bool:
-        if stored_channels is None:
-            return False
-
-        if not requested_channels:
-            return stored_channels == "all"
-
-        return stored_channels == requested_channels
-
-    def _format_stored_channels(
-        self,
-        stored_channels: str | list[int] | None,
-    ) -> str:
-        if stored_channels is None:
-            return "unknown"
-        if isinstance(stored_channels, str):
-            return stored_channels
-        return ",".join(str(channel) for channel in stored_channels)
 
     @staticmethod
     def get_project_status(
@@ -694,7 +324,6 @@ class StitchOmeZarrWidget(QWidget):
             stitching_text = "St"
         else:
             stitching_color = "orange"
-            stitching_tooltip = "Incompatible channels"
             stored_text = (
                 "unknown"
                 if stored_channels is None
@@ -704,7 +333,10 @@ class StitchOmeZarrWidget(QWidget):
                     else ",".join(str(channel) for channel in stored_channels)
                 )
             )
-            stitching_text = f"St - {stored_text}"
+            stitching_tooltip = (
+                f"Incompatible channels (stored: {stored_text})"
+            )
+            stitching_text = "St"
 
         return ProjectStatus(
             extraction_color=extraction_color,
@@ -713,54 +345,6 @@ class StitchOmeZarrWidget(QWidget):
             stitching_tooltip=stitching_tooltip,
             stitching_text=stitching_text,
         )
-
-    def _set_project_row_status(
-        self,
-        row: StitchProjectStatusRow,
-        project_path: Path,
-    ) -> None:
-        requested_channels = self._keep_channels_widget.get_channels()
-        stored_channels = self._get_stored_channels(project_path)
-
-        if not requested_channels:
-            row.set_extraction_status(
-                "gray",
-                "No channel extraction required",
-            )
-        elif stored_channels is None:
-            row.set_extraction_status(
-                "red",
-                "Channels haven't been created",
-            )
-        elif self._channels_match(stored_channels, requested_channels):
-            row.set_extraction_status(
-                "green",
-                "Channels already extracted",
-            )
-        else:
-            row.set_extraction_status(
-                "orange",
-                "Incompatible channels",
-                bold=True,
-            )
-
-        if not self._has_stitched_image(project_path):
-            row.set_stitching_status(
-                "red",
-                "Stitched image hasn't been created",
-            )
-        elif self._channels_match(stored_channels, requested_channels):
-            row.set_stitching_status(
-                "green",
-                "Stitch already complete",
-            )
-        else:
-            row.set_stitching_status(
-                "orange",
-                "Incompatible channels",
-                bold=True,
-                text=f"St - {self._format_stored_channels(stored_channels)}",
-            )
 
     def _write_tiles_config(
         self,
@@ -963,12 +547,13 @@ class StitchOmeZarrWidget(QWidget):
         return self._write_tiles_config(tiles_path, image_paths)
 
     def _on_stitch_button_pressed(self) -> None:
-        if not self._directories_list:
+        starting_projects = self._project_list_widget.get_project_paths()
+        if not starting_projects:
             return
 
         project_paths: list[Path] = []
 
-        for starting_project in self._directories_list:
+        for starting_project in starting_projects:
             project_path = self._get_project_path(starting_project)
 
             if not create_project_structure(project_path, "clsp"):
@@ -1088,7 +673,7 @@ class StitchOmeZarrWidget(QWidget):
                 print("Done stitching...\n", flush=True)
 
         print("\nDone processing all projects.\n", flush=True)
-        self._update_qlist()
+        self._project_list_widget.refresh_rows()
 
         return
 
@@ -1118,22 +703,3 @@ class StitchOmeZarrWidget(QWidget):
         else:
             self._files_created_status_label.setText("Files not created")
             self._files_created_status_label.setStyleSheet("color: red")
-
-    def _update_qlist(self) -> None:
-        self._directories_q_list.clear()
-        for directory_path in self._directories_list:
-            path = Path(directory_path)
-            dir_name = f"{path.parent.name}/{path.name}"
-            q_list_item = QListWidgetItem()
-            q_list_item.setData(Qt.ItemDataRole.UserRole, directory_path)
-            self._directories_q_list.addItem(q_list_item)
-
-            row_widget = StitchProjectStatusRow(dir_name)
-            project_path = self._get_project_path(path)
-            self._set_project_row_status(row_widget, project_path)
-
-            q_list_item.setSizeHint(row_widget.sizeHint())
-            self._directories_q_list.setItemWidget(
-                q_list_item,
-                row_widget,
-            )

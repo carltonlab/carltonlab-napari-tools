@@ -36,9 +36,14 @@ from carltonlab_napari_tools._shared_variables import (
 )
 from carltonlab_napari_tools._shared_widgets import (
     FrameSeparator,
+    KeepChannelsWidget,
     get_directories,
     get_directory,
     get_file,
+)
+from carltonlab_napari_tools.foci_count_widgets._stitch_widget import (
+    ProjectStatus,
+    StitchOmeZarrWidget,
 )
 from carltonlab_napari_tools.general_widgets._file_saver_widget import (
     CLToggleSavePathWidget,
@@ -130,14 +135,53 @@ class IntegrationProjectRow(QWidget):
         )
 
         for button in status_buttons:
-            button.setFixedSize(QSize(30, 30))
+            button.setFixedSize(QSize(BUTTONS_WIDTH, BUTTONS_WIDTH))
             button.setStyleSheet(self._status_button_stylesheet)
             self._status_container_layout.addWidget(button)
 
+    def _set_status_button(
+        self,
+        button: QPushButton,
+        text: str,
+        color: str,
+        tooltip: str,
+    ) -> None:
+        button.setText(text)
+        button.setToolTip(tooltip)
+        button.setStyleSheet(
+            "QPushButton {"
+            "border: 1px solid black;"
+            "border-radius: 4px;"
+            "background-color: white;"
+            f"color: {color};"
+            "font-weight: bold;"
+            "}"
+        )
+
+    def apply_project_status(self, status: ProjectStatus) -> None:
+        self._set_status_button(
+            self._extraction_button,
+            "Ex",
+            status.extraction_color,
+            status.extraction_tooltip,
+        )
+        self._set_status_button(
+            self._stitching_button,
+            status.stitching_text,
+            status.stitching_color,
+            status.stitching_tooltip,
+        )
+
 
 class IntegrationWidget(QWidget):
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        napari_viewer: "ViewerModel",
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
+
+        self._napari_viewer = napari_viewer
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 5)
@@ -244,6 +288,15 @@ class IntegrationWidget(QWidget):
             self._project_directories_list
         )
 
+        self._keep_channels_widget = KeepChannelsWidget(parent=self)
+        self._keep_channels_widget._keep_channels_cb.toggled.connect(
+            self._on_keep_channels_changed
+        )
+        self._keep_channels_widget._keep_channels_line_edit.editingFinished.connect(
+            self._on_keep_channels_changed
+        )
+        self._project_directories_layout.addWidget(self._keep_channels_widget)
+
         self._layout.addWidget(FrameSeparator(parent=self))
 
         self._multigonad_project_saver = CLToggleSavePathWidget(
@@ -261,6 +314,7 @@ class IntegrationWidget(QWidget):
         self._layout.addWidget(FrameSeparator(parent=self))
 
         self._stitch_gonads_button = QPushButton("1.Stitch gonads")
+        self._stitch_gonads_button.clicked.connect(self._show_stitch_widget)
         self._layout.addWidget(self._stitch_gonads_button)
 
         self._set_contrast_button = QPushButton("2.Set contrast")
@@ -300,6 +354,15 @@ class IntegrationWidget(QWidget):
         self._workflow_widget_layout.addWidget(widget)
         self._current_widget = widget
 
+    def _show_stitch_widget(self) -> None:
+        stitch_widget = StitchOmeZarrWidget(
+            napari_viewer=self._napari_viewer,
+            parent=self,
+            project_list_widget=self._project_directories_list,
+            keep_channels_widget=self._keep_channels_widget,
+        )
+        self._set_current_widget(stitch_widget)
+
     def _save_multigonad_project(self, saving_path: str) -> bool:
         project_paths = self._project_directories_list.get_project_paths()
 
@@ -313,9 +376,20 @@ class IntegrationWidget(QWidget):
         )
 
     def _create_project_row(self, project_path: Path) -> QWidget:
-        return IntegrationProjectRow(
+        requested_channels = self._keep_channels_widget.get_channels()
+        project_status = StitchOmeZarrWidget.get_project_status(
+            project_path,
+            requested_channels,
+        )
+
+        row = IntegrationProjectRow(
             f"{project_path.parent.name}/{project_path.name}"
         )
+        row.apply_project_status(project_status)
+        return row
+
+    def _on_keep_channels_changed(self, *_args: object) -> None:
+        self._project_directories_list.refresh_rows()
 
     def _verify_project_directory(self, project_path: Path) -> bool:
         has_existing_project = any(
@@ -862,7 +936,10 @@ class CarltonLabCountTool(QWidget):
             self._global_scroll_speed_slider
         )
 
-        self._integration_widget = IntegrationWidget(self)
+        self._integration_widget = IntegrationWidget(
+            self._napari_viewer,
+            self,
+        )
         self._main_layout.addWidget(self._integration_widget)
 
     ##################################################################

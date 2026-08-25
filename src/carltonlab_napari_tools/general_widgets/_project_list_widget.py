@@ -53,6 +53,9 @@ class CLTProjectListWidget(QListWidget):
         ]
         self._update_rows()
 
+    def refresh_rows(self) -> None:
+        self._update_rows()
+
     def _update_rows(self) -> None:
         self.clear()
 

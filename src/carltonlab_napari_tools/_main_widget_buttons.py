@@ -34,9 +34,6 @@ from carltonlab_napari_tools._protocols import (
 from carltonlab_napari_tools._regions_widget import RegionWidget
 from carltonlab_napari_tools._score_nuclei_widget import ScoreNucleiWidget
 from carltonlab_napari_tools._set_contrast_widget import SetContrastWidget
-from carltonlab_napari_tools.foci_count_widgets._stitch_widget import (
-    StitchOmeZarrWidget,
-)
 
 if TYPE_CHECKING:
     from napari.viewer import ViewerModel
@@ -125,57 +122,6 @@ def _results_buttons(
 #
 #     def validate_property(self, image_path: str) -> None:
 #         _ = image_path
-
-
-@_prepare_tools_buttons
-class StitchGonads:
-    _button: QPushButton
-    _button_text: str
-    _launched_widget: QWidget | None
-    _widget_name: str
-    _status_label: QLabel | None
-
-    def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: MainWidgetCallBacks
-    ) -> None:
-        self._napari_viewer = napari_viewer
-        self._main_widget = main_widget
-        self._widget_name = "clt Stitch Gonads"
-        self._status_label = None
-
-        self._button_text = "1.Stitch gonads"
-
-        self._launched_widget = None
-
-        self._button = QPushButton(self._button_text)
-        self._button.clicked.connect(self.launch_widget)
-
-    def get_button(self) -> QPushButton:
-        return self._button
-
-    def get_status_label(self) -> QLabel | None:
-        return self._status_label
-
-    def deactivate_buttons(self) -> None:
-        self._button.setEnabled(False)
-
-    def activate_buttons(self) -> None:
-        self._button.setEnabled(True)
-
-    def launch_widget(self) -> QWidget | None:
-        self._launched_widget = StitchOmeZarrWidget(
-            self._napari_viewer, self._main_widget, self
-        )
-        self._main_widget.set_prepare_widget(
-            self._launched_widget, "clt Stitch OME.zarr"
-        )
-        return
-
-    def set_status_label_state(self, state: bool) -> None:
-        _ = state
-
-    def validate_property(self, image_path: str) -> None:
-        _ = image_path
 
 
 @_tool_button
