@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 from napari.layers import Image, Labels, Points, Shapes
+from napari.layers.base import ActionType
 from napari.utils.notifications import show_error
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
@@ -240,6 +241,12 @@ class CLTPickNucleiWidget(QWidget):
             self._nuclei_centers_layer.current_properties = (
                 self._current_nuclei_features
             )
+            self._nuclei_centers_layer.face_color = "#999999"
+            self._nuclei_centers_layer.current_face_color = "#999999"
+            self._nuclei_centers_layer.border_color = "black"
+            self._nuclei_centers_layer.current_border_color = "black"
+            self._nuclei_centers_layer.text = "sbs_number"
+            self._nuclei_centers_layer.text.color = "cyan"
 
         if self._nuclei_squares_path is not None:
             opened_squares = self._napari_viewer.open(
@@ -263,6 +270,58 @@ class CLTPickNucleiWidget(QWidget):
                 name="nuclei_squares",
                 ndim=image_ndim,
             )
+
+        if self._nuclei_centers_layer is not None:
+            self._nuclei_centers_layer.events.data.connect(
+                self._on_nuclei_points_added
+            )
+
+    def _on_nuclei_points_added(self, event: object) -> None:
+        if getattr(event, "action", None) != ActionType.ADDED:
+            return
+
+        if self._nuclei_centers_layer is None:
+            return
+
+        features = self._nuclei_centers_layer.features.copy()
+        if not self._validate_nuclei_features(features):
+            return
+
+        if len(features) != len(self._nuclei_centers_layer.data):
+            return
+
+        feature_index = features.index[-1]
+        point = np.asarray(self._nuclei_centers_layer.data[-1], dtype=float)
+
+        x_coord = float(point[-1])
+        y_coord = float(point[-2]) if len(point) >= 2 else 0.0
+        z_coord = float(point[-3]) if len(point) >= 3 else 0.0
+
+        sbs_header = self._nuclei_features_headers["sbs_number"]
+        existing_sbs_values = pd.to_numeric(
+            features[sbs_header].iloc[:-1],
+            errors="coerce",
+        ).dropna()
+        sbs_number = (
+            int(existing_sbs_values.max()) + 1
+            if not existing_sbs_values.empty
+            else 1
+        )
+
+        features.loc[
+            feature_index,
+            self._nuclei_features_headers["x_coord"],
+        ] = x_coord
+        features.loc[
+            feature_index,
+            self._nuclei_features_headers["y_coord"],
+        ] = y_coord
+        features.loc[
+            feature_index,
+            self._nuclei_features_headers["z_coord"],
+        ] = z_coord
+        features.loc[feature_index, sbs_header] = sbs_number
+        self._nuclei_centers_layer.features = features
 
     def _load_nuclei_features(self) -> None:
         if (
@@ -304,6 +363,12 @@ class CLTPickNucleiWidget(QWidget):
         self._nuclei_centers_layer.current_properties = (
             self._current_nuclei_features
         )
+        self._nuclei_centers_layer.face_color = "#999999"
+        self._nuclei_centers_layer.current_face_color = "#999999"
+        self._nuclei_centers_layer.border_color = "black"
+        self._nuclei_centers_layer.current_border_color = "black"
+        self._nuclei_centers_layer.text = "sbs_number"
+        self._nuclei_centers_layer.text.color = "cyan"
 
     def _validate_nuclei_features(self, features: pd.DataFrame) -> bool:
         required_headers = set(self._nuclei_features_headers.values())
