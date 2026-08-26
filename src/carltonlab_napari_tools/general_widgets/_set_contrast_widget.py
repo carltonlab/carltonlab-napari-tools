@@ -33,10 +33,7 @@ from carltonlab_napari_tools._shared_variables import (
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
 from carltonlab_napari_tools._utils import parse_channel_string
-from carltonlab_napari_tools._viewer_utils import (
-    close_image_layers,
-    open_ome_zarr_layers,
-)
+from carltonlab_napari_tools._viewer_utils import open_ome_zarr_layers
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
@@ -467,11 +464,7 @@ class CLTSetContrastWidget(QWidget):
             self._contrast_widgets.append(contrast_widget)
 
     def _clear_open_image(self) -> None:
-        if self._image_layers:
-            close_image_layers(
-                self._napari_viewer,
-                self._image_layers,
-            )
+        self._napari_viewer.layers.clear()
         self._image_layers = []
         self._selected_image_path = None
         self._save_contrasts_button.setEnabled(False)

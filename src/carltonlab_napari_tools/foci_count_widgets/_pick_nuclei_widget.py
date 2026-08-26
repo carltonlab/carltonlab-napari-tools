@@ -2,6 +2,7 @@ import configparser
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pandas as pd
 from napari.layers import Image, Labels, Points, Shapes
 from napari.utils.notifications import show_error
 from qtpy.QtCore import Qt
@@ -18,15 +19,17 @@ from qtpy.QtWidgets import (
 )
 
 from carltonlab_napari_tools._shared_variables import (
+    CLSP_PROJECT_SUFFIX,
     IMAGE_CONTRASTS_FILE_NAME,
+    NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
+    NUCLEI_POINTS_LAYER_FILE_NAME,
+    NUCLEI_POINTS_SQUARES_LAYER_FILE_NAME,
+    PICK_NUCLEI_DIR_NAME,
     PROJECT_FILE_DIR_NAME,
     STITCHED_IMAGE_DIR_NAME,
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
-from carltonlab_napari_tools._viewer_utils import (
-    close_image_layers,
-    open_ome_zarr_layers,
-)
+from carltonlab_napari_tools._viewer_utils import open_ome_zarr_layers
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
@@ -52,6 +55,15 @@ class CLTPickNucleiWidget(QWidget):
         self._nuclei_centers_layer: Points | None = None
         self._nuclei_squares_layer: Shapes | None = None
         self._nuclei_segmentation_layer: Labels | None = None
+        self._nuclei_points_path: Path | None = None
+        self._nuclei_squares_path: Path | None = None
+        self._nuclei_features_path: Path | None = None
+        self._nuclei_features_headers: dict[str, str] = {
+            "x_coord": "x_coord",
+            "y_coord": "y_coord",
+            "z_coord": "z_coord",
+            "sbs_number": "sbs_number",
+        }
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -158,17 +170,24 @@ class CLTPickNucleiWidget(QWidget):
 
     def _load_current_stitched_image(self) -> None:
         self._image_layer = None
+        self._nuclei_centers_layer = None
+        self._nuclei_squares_layer = None
+        self._nuclei_segmentation_layer = None
+        self._nuclei_points_path = None
+        self._nuclei_squares_path = None
+        self._nuclei_features_path = None
 
-        image_layers = [
-            layer
-            for layer in self._napari_viewer.layers
-            if isinstance(layer, Image)
-        ]
-        close_image_layers(self._napari_viewer, image_layers)
+        self._napari_viewer.layers.clear()
 
         project_path = self._project_list_widget.get_current_project_path()
         if project_path is None:
             return
+
+        project_path = self._resolve_project_path(project_path)
+        if project_path is None:
+            return
+
+        self._load_nuclei_file_paths(project_path)
 
         stitched_directory = project_path / STITCHED_IMAGE_DIR_NAME
         stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
@@ -183,7 +202,115 @@ class CLTPickNucleiWidget(QWidget):
             return
 
         self._load_stitched_contrasts(project_path, opened_images)
+        self._load_nuclei_layers()
+        self._load_nuclei_features()
         self._image_layer = opened_images[0]
+
+    def _load_nuclei_layers(self) -> None:
+        if self._nuclei_points_path is not None:
+            opened_points = self._napari_viewer.open(
+                str(self._nuclei_points_path)
+            )
+            point_layers = (
+                opened_points
+                if isinstance(opened_points, list)
+                else [opened_points]
+            )
+            self._nuclei_centers_layer = next(
+                (layer for layer in point_layers if isinstance(layer, Points)),
+                None,
+            )
+
+        if self._nuclei_squares_path is not None:
+            opened_squares = self._napari_viewer.open(
+                str(self._nuclei_squares_path)
+            )
+            square_layers = (
+                opened_squares
+                if isinstance(opened_squares, list)
+                else [opened_squares]
+            )
+            self._nuclei_squares_layer = next(
+                (
+                    layer
+                    for layer in square_layers
+                    if isinstance(layer, Shapes)
+                ),
+                None,
+            )
+
+    def _load_nuclei_features(self) -> None:
+        if (
+            self._nuclei_features_path is None
+            or self._nuclei_centers_layer is None
+        ):
+            return
+
+        try:
+            features = pd.read_csv(self._nuclei_features_path)
+        except (
+            OSError,
+            UnicodeError,
+            pd.errors.ParserError,
+        ) as exc:
+            show_error(f"Could not load nuclei features: {exc}")
+            return
+
+        number_of_points = len(self._nuclei_centers_layer.data)
+        if len(features) != number_of_points:
+            show_error(
+                "The nuclei features table does not contain one row "
+                f"per point. Points: {number_of_points}; "
+                f"features: {len(features)}."
+            )
+            return
+
+        if not self._validate_nuclei_features(features):
+            return
+
+        self._nuclei_centers_layer.features = features
+
+    def _validate_nuclei_features(self, features: pd.DataFrame) -> bool:
+        required_headers = set(self._nuclei_features_headers.values())
+        missing_headers = required_headers.difference(features.columns)
+
+        if missing_headers:
+            show_error(
+                "The nuclei features table is missing required headers: "
+                + ", ".join(sorted(missing_headers))
+            )
+            return False
+
+        return True
+
+    def _load_nuclei_file_paths(self, project_path: Path) -> None:
+        pick_nuclei_directory = (
+            project_path / PROJECT_FILE_DIR_NAME / PICK_NUCLEI_DIR_NAME
+        )
+
+        nuclei_paths = (
+            pick_nuclei_directory / NUCLEI_POINTS_LAYER_FILE_NAME,
+            pick_nuclei_directory / NUCLEI_POINTS_SQUARES_LAYER_FILE_NAME,
+            pick_nuclei_directory / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
+        )
+
+        (
+            self._nuclei_points_path,
+            self._nuclei_squares_path,
+            self._nuclei_features_path,
+        ) = tuple(path if path.is_file() else None for path in nuclei_paths)
+
+    @staticmethod
+    def _resolve_project_path(starting_path: Path) -> Path | None:
+        if starting_path.name.endswith(CLSP_PROJECT_SUFFIX):
+            return starting_path
+
+        project_paths = [
+            path
+            for path in starting_path.iterdir()
+            if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
+        ]
+        return project_paths[0] if project_paths else None
 
     def _load_stitched_contrasts(
         self,
