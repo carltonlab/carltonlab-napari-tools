@@ -31,7 +31,6 @@ TILE_CONTRASTS_FILE_NAME_SUFFIX = "_contrasts.config"
 
 PICK_NUCLEI_DIR_NAME = "pick_nuclei"
 NUCLEI_POINTS_LAYER_FILE_NAME = "nuclei_points_layer.csv"
-NUCLEI_POINTS_SQUARES_LAYER_FILE_NAME = "nuclei_points_squares_layer.csv"
 NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME = "nuclei_points_features_table.csv"
 POINTS_SUMMARY_FILE_NAME = "points_summary.csv"
 REGION_ROOT_NAME = "region-"

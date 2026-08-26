@@ -25,7 +25,6 @@ from carltonlab_napari_tools._shared_variables import (
     IMAGE_CONTRASTS_FILE_NAME,
     NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
     NUCLEI_POINTS_LAYER_FILE_NAME,
-    NUCLEI_POINTS_SQUARES_LAYER_FILE_NAME,
     PICK_NUCLEI_DIR_NAME,
     PROJECT_FILE_DIR_NAME,
     STITCHED_IMAGE_DIR_NAME,
@@ -58,19 +57,24 @@ class CLTPickNucleiWidget(QWidget):
         self._nuclei_squares_layer: Shapes | None = None
         self._nuclei_segmentation_layer: Labels | None = None
         self._nuclei_points_path: Path | None = None
-        self._nuclei_squares_path: Path | None = None
         self._nuclei_features_path: Path | None = None
         self._nuclei_features_headers: dict[str, str] = {
             "x_coord": "x_coord",
             "y_coord": "y_coord",
             "z_coord": "z_coord",
             "sbs_number": "sbs_number",
+            "square_width": "square_width",
+            "square_height": "square_height",
+            "square_z_sections": "square_z_sections",
         }
         self._current_nuclei_features: dict[str, np.ndarray] = {
             self._nuclei_features_headers["x_coord"]: np.array([0.0]),
             self._nuclei_features_headers["y_coord"]: np.array([0.0]),
             self._nuclei_features_headers["z_coord"]: np.array([0.0]),
             self._nuclei_features_headers["sbs_number"]: np.array([1]),
+            self._nuclei_features_headers["square_width"]: np.array([100]),
+            self._nuclei_features_headers["square_height"]: np.array([100]),
+            self._nuclei_features_headers["square_z_sections"]: np.array([27]),
         }
 
         self._layout = QVBoxLayout()
@@ -122,6 +126,9 @@ class CLTPickNucleiWidget(QWidget):
         self._show_squares_checkbox.setSizePolicy(
             QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Preferred,
+        )
+        self._show_squares_checkbox.toggled.connect(
+            self._on_show_squares_checkbox_toggled
         )
         self._square_controls_layout.addWidget(self._show_squares_checkbox)
         self._layout.addWidget(self._square_controls_widget)
@@ -180,6 +187,10 @@ class CLTPickNucleiWidget(QWidget):
     def _project_selection_changed(self, *_args: object) -> None:
         self._load_current_stitched_image()
 
+    def _on_show_squares_checkbox_toggled(self, checked: bool) -> None:
+        if self._nuclei_squares_layer is not None:
+            self._nuclei_squares_layer.visible = checked
+
     def _on_save_nuclei_features_button_pressed(self) -> None:
         if self._nuclei_centers_layer is None:
             show_error("No nuclei points layer is available to save.")
@@ -224,7 +235,6 @@ class CLTPickNucleiWidget(QWidget):
         self._nuclei_squares_layer = None
         self._nuclei_segmentation_layer = None
         self._nuclei_points_path = None
-        self._nuclei_squares_path = None
         self._nuclei_features_path = None
 
         self._napari_viewer.layers.clear()
@@ -262,7 +272,10 @@ class CLTPickNucleiWidget(QWidget):
 
         image_ndim = self._image_layer.ndim
 
-        if self._nuclei_points_path is not None:
+        if (
+            self._nuclei_points_path is not None
+            and self._nuclei_points_path.is_file()
+        ):
             opened_points = self._napari_viewer.open(
                 str(self._nuclei_points_path)
             )
@@ -290,32 +303,27 @@ class CLTPickNucleiWidget(QWidget):
             self._nuclei_centers_layer.text = "sbs_number"
             self._nuclei_centers_layer.text.color = "cyan"
 
-        if self._nuclei_squares_path is not None:
-            opened_squares = self._napari_viewer.open(
-                str(self._nuclei_squares_path)
-            )
-            square_layers = (
-                opened_squares
-                if isinstance(opened_squares, list)
-                else [opened_squares]
-            )
-            self._nuclei_squares_layer = next(
-                (
-                    layer
-                    for layer in square_layers
-                    if isinstance(layer, Shapes)
-                ),
-                None,
-            )
-        else:
-            self._nuclei_squares_layer = self._napari_viewer.add_shapes(
-                name="nuclei_squares",
-                ndim=image_ndim,
-            )
+        self._nuclei_squares_layer = self._napari_viewer.add_shapes(
+            name="nuclei_squares",
+            ndim=image_ndim,
+        )
+        self._nuclei_squares_layer.edge_color = "yellow"
+        self._nuclei_squares_layer.face_color = "yellow"
+        self._nuclei_squares_layer.opacity = 0.6
+        self._on_show_squares_checkbox_toggled(
+            self._show_squares_checkbox.isChecked()
+        )
 
         if self._nuclei_centers_layer is not None:
             self._nuclei_centers_layer.events.data.connect(
                 self._on_nuclei_points_added
+            )
+            self._napari_viewer.layers.move(
+                self._napari_viewer.layers.index(self._nuclei_centers_layer),
+                len(self._napari_viewer.layers) - 1,
+            )
+            self._napari_viewer.layers.selection.active = (
+                self._nuclei_centers_layer
             )
 
     def _on_nuclei_points_added(self, event: object) -> None:
@@ -363,11 +371,25 @@ class CLTPickNucleiWidget(QWidget):
             self._nuclei_features_headers["z_coord"],
         ] = z_coord
         features.loc[feature_index, sbs_header] = sbs_number
+        features.loc[
+            feature_index,
+            self._nuclei_features_headers["square_width"],
+        ] = self._square_size_spinbox.value()
+        features.loc[
+            feature_index,
+            self._nuclei_features_headers["square_height"],
+        ] = self._square_size_spinbox.value()
+        features.loc[
+            feature_index,
+            self._nuclei_features_headers["square_z_sections"],
+        ] = self._z_sections_spinbox.value()
         self._nuclei_centers_layer.features = features
+        self._rebuild_nuclei_squares()
 
     def _load_nuclei_features(self) -> None:
         if (
             self._nuclei_features_path is None
+            or not self._nuclei_features_path.is_file()
             or self._nuclei_centers_layer is None
         ):
             return
@@ -395,6 +417,7 @@ class CLTPickNucleiWidget(QWidget):
             return
 
         self._nuclei_centers_layer.features = features
+        self._rebuild_nuclei_squares()
 
         maximum_sbs_number = (
             int(features["sbs_number"].max()) if not features.empty else 1
@@ -425,6 +448,46 @@ class CLTPickNucleiWidget(QWidget):
 
         return True
 
+    def _rebuild_nuclei_squares(self) -> None:
+        if (
+            self._nuclei_centers_layer is None
+            or self._nuclei_squares_layer is None
+        ):
+            return
+
+        points = np.asarray(self._nuclei_centers_layer.data, dtype=float)
+        features = self._nuclei_centers_layer.features
+        width_header = self._nuclei_features_headers["square_width"]
+        height_header = self._nuclei_features_headers["square_height"]
+
+        if len(points) != len(features):
+            return
+
+        squares = []
+        for point, feature in zip(
+            points,
+            features.itertuples(index=False),
+            strict=True,
+        ):
+            feature_values = feature._asdict()
+            half_width = float(feature_values[width_header]) / 2
+            half_height = float(feature_values[height_header]) / 2
+            center = point[-2:]
+            offsets = np.array(
+                [
+                    [-half_height, -half_width],
+                    [half_height, -half_width],
+                    [half_height, half_width],
+                    [-half_height, half_width],
+                ]
+            )
+            xy_vertices = center + offsets
+            prefix = np.repeat(point[:-2][None, :], 4, axis=0)
+            squares.append(np.concatenate((prefix, xy_vertices), axis=1))
+
+        self._nuclei_squares_layer.data = squares
+        self._nuclei_squares_layer.refresh()
+
     def _load_nuclei_file_paths(self, project_path: Path) -> None:
         pick_nuclei_directory = (
             project_path / PROJECT_FILE_DIR_NAME / PICK_NUCLEI_DIR_NAME
@@ -432,15 +495,13 @@ class CLTPickNucleiWidget(QWidget):
 
         nuclei_paths = (
             pick_nuclei_directory / NUCLEI_POINTS_LAYER_FILE_NAME,
-            pick_nuclei_directory / NUCLEI_POINTS_SQUARES_LAYER_FILE_NAME,
             pick_nuclei_directory / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
         )
 
         (
             self._nuclei_points_path,
-            self._nuclei_squares_path,
             self._nuclei_features_path,
-        ) = tuple(path if path.is_file() else None for path in nuclei_paths)
+        ) = nuclei_paths
 
     @staticmethod
     def _resolve_project_path(starting_path: Path) -> Path | None:
