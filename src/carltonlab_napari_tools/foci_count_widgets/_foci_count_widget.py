@@ -174,6 +174,12 @@ class IntegrationProjectRow(QWidget):
             status.stitching_color,
             status.stitching_tooltip,
         )
+        self._set_status_button(
+            self._contrast_button,
+            "Co",
+            status.contrast_color,
+            status.contrast_tooltip,
+        )
 
 
 class IntegrationWidget(QWidget):
@@ -421,8 +427,21 @@ class IntegrationWidget(QWidget):
             total,
         )
 
+        contrast_count = sum(
+            StitchOmeZarrWidget.get_project_status(
+                project_path,
+                requested_channels,
+            ).contrast_color
+            == "green"
+            for project_path in project_paths
+        )
+        self._set_process_status_label(
+            self._process_status_labels["contrast"],
+            contrast_count,
+            total,
+        )
+
         for process_name in (
-            "contrast",
             "nuclei",
             "scoring",
             "regions",
@@ -462,6 +481,7 @@ class IntegrationWidget(QWidget):
             napari_viewer=self._napari_viewer,
             parent=self,
             project_list_widget=self._project_directories_list,
+            status_update_callback=self._update_process_status_labels,
         )
         self._set_current_widget(contrast_widget)
 

@@ -1,10 +1,11 @@
 import configparser
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from napari.layers import Image
 from napari.utils.notifications import show_error
-from qtpy.QtCore import Qt
+from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -49,11 +50,13 @@ class CLTContrastLimitWidget(QWidget):
         self,
         channel_index: int,
         display_name: str,
+        image_layer: Image,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
 
         self._channel_index = channel_index
+        self._image_layer = image_layer
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -66,6 +69,9 @@ class CLTContrastLimitWidget(QWidget):
         self._layout.addWidget(self._title_label)
 
         self._set_from_viewer_button = QPushButton("Set from viewer contrast")
+        self._set_from_viewer_button.clicked.connect(
+            self._set_from_viewer_contrast
+        )
         self._layout.addWidget(self._set_from_viewer_button)
 
         self._slider_controls_container = QWidget()
@@ -95,10 +101,22 @@ class CLTContrastLimitWidget(QWidget):
         ):
             self._slider_controls_layout.addWidget(button)
 
+        self._set_min_zero_button.clicked.connect(self._set_min_zero)
+        self._set_min_button.clicked.connect(self._set_min)
+        self._decrease_min_button.clicked.connect(self._decrease_min)
+        self._reset_range_button.clicked.connect(self._reset_range)
+        self._set_current_button.clicked.connect(self._set_current)
+        self._increase_max_button.clicked.connect(self._increase_max)
+        self._set_max_button.clicked.connect(self._set_max)
+        self._set_max_full_button.clicked.connect(self._set_max_full)
+
         self._contrast_slider = QRangeSlider(Qt.Orientation.Horizontal)
         self._contrast_slider.setRange(0, 65535)
         self._contrast_slider.setSingleStep(1)
         self._contrast_slider.setValue((1, 65535))
+        self._contrast_slider.valueChanged.connect(
+            self._on_slider_value_changed
+        )
         self._layout.addWidget(self._contrast_slider)
 
         self._spin_boxes_container = QWidget()
@@ -118,6 +136,9 @@ class CLTContrastLimitWidget(QWidget):
         self._min_spin_box.setKeyboardTracking(False)
         self._min_spin_box.setRange(0, 65535)
         self._min_spin_box.setValue(1)
+        self._min_spin_box.editingFinished.connect(
+            self._on_min_editing_finished
+        )
         self._spin_boxes_layout.addWidget(self._min_spin_box)
 
         self._max_label = QLabel("Max")
@@ -131,16 +152,117 @@ class CLTContrastLimitWidget(QWidget):
         self._max_spin_box.setKeyboardTracking(False)
         self._max_spin_box.setRange(0, 65535)
         self._max_spin_box.setValue(65535)
+        self._max_spin_box.editingFinished.connect(
+            self._on_max_editing_finished
+        )
         self._spin_boxes_layout.addWidget(self._max_spin_box)
+
+        self._set_from_viewer_contrast()
+
+    def _set_current_limits(self, minimum: int, maximum: int) -> None:
+        minimum = max(0, min(minimum, 65535))
+        maximum = max(minimum, min(maximum, 65535))
+
+        with QSignalBlocker(self._contrast_slider):
+            self._contrast_slider.setValue((minimum, maximum))
+        with QSignalBlocker(self._min_spin_box):
+            self._min_spin_box.setValue(minimum)
+        with QSignalBlocker(self._max_spin_box):
+            self._max_spin_box.setValue(maximum)
+
+        self._image_layer.contrast_limits = (
+            float(minimum),
+            float(maximum),
+        )
+        self._image_layer.refresh()
+
+    def _set_slider_bounds(self, slider_min: int, slider_max: int) -> None:
+        slider_min = max(0, min(slider_min, 65535))
+        slider_max = max(slider_min, min(slider_max, 65535))
+
+        lower_value, upper_value = self._contrast_slider.value()
+        lower_value = min(max(lower_value, slider_min), slider_max)
+        upper_value = min(max(upper_value, slider_min), slider_max)
+
+        if lower_value > upper_value:
+            lower_value = upper_value
+
+        with QSignalBlocker(self._contrast_slider):
+            self._contrast_slider.setRange(slider_min, slider_max)
+            self._contrast_slider.setValue((lower_value, upper_value))
+        with QSignalBlocker(self._min_spin_box):
+            self._min_spin_box.setValue(lower_value)
+        with QSignalBlocker(self._max_spin_box):
+            self._max_spin_box.setValue(upper_value)
+
+        self._image_layer.contrast_limits = (
+            float(lower_value),
+            float(upper_value),
+        )
+        self._image_layer.refresh()
+
+    def _on_slider_value_changed(self, values: tuple[int, int]) -> None:
+        minimum, maximum = values
+        self._set_current_limits(minimum, maximum)
+
+    def _on_min_editing_finished(self) -> None:
+        minimum = self._min_spin_box.value()
+        maximum = max(minimum, self._max_spin_box.value())
+        self._set_current_limits(minimum, maximum)
+
+    def _on_max_editing_finished(self) -> None:
+        maximum = self._max_spin_box.value()
+        minimum = min(maximum, self._min_spin_box.value())
+        self._set_current_limits(minimum, maximum)
+
+    def _set_min_zero(self) -> None:
+        self._set_slider_bounds(0, self._contrast_slider.maximum())
+
+    def _set_min(self) -> None:
+        minimum, _ = self._contrast_slider.value()
+        self._set_slider_bounds(minimum, self._contrast_slider.maximum())
+
+    def _decrease_min(self) -> None:
+        self._set_slider_bounds(
+            max(0, self._contrast_slider.minimum() - 10),
+            self._contrast_slider.maximum(),
+        )
+
+    def _reset_range(self) -> None:
+        self._set_slider_bounds(0, 65535)
+
+    def _set_current(self) -> None:
+        minimum, maximum = self._contrast_slider.value()
+        self._set_slider_bounds(minimum, maximum)
+
+    def _increase_max(self) -> None:
+        self._set_slider_bounds(
+            self._contrast_slider.minimum(),
+            min(65535, self._contrast_slider.maximum() + 10),
+        )
+
+    def _set_max(self) -> None:
+        _, maximum = self._contrast_slider.value()
+        self._set_slider_bounds(self._contrast_slider.minimum(), maximum)
+
+    def _set_max_full(self) -> None:
+        self._set_slider_bounds(self._contrast_slider.minimum(), 65535)
+
+    def _set_from_viewer_contrast(self) -> None:
+        minimum, maximum = self._image_layer.contrast_limits
+        minimum = int(minimum)
+        maximum = int(maximum)
+        slider_min = min(self._contrast_slider.minimum(), minimum)
+        slider_max = max(self._contrast_slider.maximum(), maximum)
+        self._set_slider_bounds(slider_min, slider_max)
+        self._set_current_limits(minimum, maximum)
 
     def set_contrast_limits(
         self,
         contrast_limits: tuple[float, float],
     ) -> None:
         min_value, max_value = contrast_limits
-        self._contrast_slider.setValue((int(min_value), int(max_value)))
-        self._min_spin_box.setValue(int(min_value))
-        self._max_spin_box.setValue(int(max_value))
+        self._set_current_limits(int(min_value), int(max_value))
 
     def get_contrast_limits(self) -> tuple[float, float]:
         return (
@@ -175,11 +297,13 @@ class CLTSetContrastWidget(QWidget):
         napari_viewer: "ViewerModel",
         parent: QWidget,
         project_list_widget: CLTProjectListWidget,
+        status_update_callback: Callable[[], None],
     ) -> None:
         super().__init__(parent)
 
         self._napari_viewer = napari_viewer
         self._project_list_widget = project_list_widget
+        self._status_update_callback = status_update_callback
         self._image_layers: list[Image] = []
         self._contrast_widgets: list[CLTContrastLimitWidget] = []
         self._selected_image_path: Path | None = None
@@ -336,6 +460,7 @@ class CLTSetContrastWidget(QWidget):
             contrast_widget = CLTContrastLimitWidget(
                 channel_index=channel_index,
                 display_name=image_layer.name,
+                image_layer=image_layer,
                 parent=self._contrast_container,
             )
             self._contrast_layout.addWidget(contrast_widget)
@@ -467,6 +592,8 @@ class CLTSetContrastWidget(QWidget):
         self._contrast_saved_label.setStyleSheet(
             "color: green; font-weight: bold;"
         )
+        self._project_list_widget.refresh_rows()
+        self._status_update_callback()
 
     def _get_contrast_tile_paths(
         self,

@@ -24,6 +24,7 @@ from carltonlab_napari_tools._shared_variables import (
     EXTRACTED_CHANNELS_FILE_NAME,
     STITCHED_IMAGE_DIR_NAME,
     SUPPORTED_STITCH_EXTENSIONS,
+    TILE_CONTRASTS_FILE_NAME_SUFFIX,
     TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
 )
@@ -54,6 +55,8 @@ if TYPE_CHECKING:
 class ProjectStatus:
     extraction_color: str
     extraction_tooltip: str
+    contrast_color: str
+    contrast_tooltip: str
     stitching_color: str
     stitching_tooltip: str
     stitching_text: str = "St"
@@ -205,8 +208,8 @@ class StitchOmeZarrWidget(QWidget):
 
         return f"{project_base_name}{CLSP_PROJECT_SUFFIX}"
 
+    @staticmethod
     def _get_extracted_tile_path(
-        self,
         tile_path: Path,
         channels: list[int],
     ) -> Path:
@@ -309,6 +312,23 @@ class StitchOmeZarrWidget(QWidget):
             extraction_color = "orange"
             extraction_tooltip = "Incompatible channels"
 
+        contrast_tile_paths = StitchOmeZarrWidget._get_contrast_tile_paths(
+            project_path
+        )
+        contrast_files_exist = bool(contrast_tile_paths) and all(
+            tile_path.with_name(
+                f"{tile_path.name.removesuffix('.ome.zarr')}"
+                f"{TILE_CONTRASTS_FILE_NAME_SUFFIX}"
+            ).exists()
+            for tile_path in contrast_tile_paths
+        )
+        if contrast_files_exist:
+            contrast_color = "green"
+            contrast_tooltip = "Contrasts already set"
+        else:
+            contrast_color = "red"
+            contrast_tooltip = "Contrasts haven't been set"
+
         stitched_image_directory = project_path / STITCHED_IMAGE_DIR_NAME
         stitched_image_exists = stitched_image_directory.is_dir() and any(
             stitched_image_directory.glob("*.ome.zarr")
@@ -341,10 +361,58 @@ class StitchOmeZarrWidget(QWidget):
         return ProjectStatus(
             extraction_color=extraction_color,
             extraction_tooltip=extraction_tooltip,
+            contrast_color=contrast_color,
+            contrast_tooltip=contrast_tooltip,
             stitching_color=stitching_color,
             stitching_tooltip=stitching_tooltip,
             stitching_text=stitching_text,
         )
+
+    @staticmethod
+    def _get_contrast_tile_paths(project_path: Path) -> list[Path]:
+        tiles_directory = project_path / TILES_DIR_NAME
+        tiles_config_path = tiles_directory / TILES_CONFIG_FILE_NAME
+        channels_config_path = tiles_directory / EXTRACTED_CHANNELS_FILE_NAME
+
+        if not tiles_config_path.exists() or not channels_config_path.exists():
+            return []
+
+        tiles_config = configparser.ConfigParser()
+        channels_config = configparser.ConfigParser()
+        try:
+            tiles_config.read(tiles_config_path)
+            channels_config.read(channels_config_path)
+            tile_names = [
+                tile_name for _, tile_name in tiles_config.items("tiles")
+            ]
+            stored_channels = channels_config.get("channels", "kept").strip()
+        except (configparser.Error, OSError):
+            return []
+
+        if stored_channels == "all":
+            kept_channels: list[int] = []
+        else:
+            kept_channels = parse_channel_string(stored_channels)
+            if not kept_channels:
+                return []
+
+        tile_paths: list[Path] = []
+        for tile_name in tile_names:
+            original_tile_path = tiles_directory / tile_name
+            if not kept_channels:
+                if not original_tile_path.name.endswith(".ome.zarr"):
+                    continue
+                tile_path = original_tile_path
+            else:
+                tile_path = StitchOmeZarrWidget._get_extracted_tile_path(
+                    original_tile_path,
+                    kept_channels,
+                )
+
+            if tile_path.is_dir() and tile_path.name.endswith(".ome.zarr"):
+                tile_paths.append(tile_path)
+
+        return tile_paths
 
     def _write_tiles_config(
         self,
