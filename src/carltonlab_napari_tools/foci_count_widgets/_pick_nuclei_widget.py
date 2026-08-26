@@ -2,6 +2,7 @@ import configparser
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
 import pandas as pd
 from napari.layers import Image, Labels, Points, Shapes
 from napari.utils.notifications import show_error
@@ -63,6 +64,12 @@ class CLTPickNucleiWidget(QWidget):
             "y_coord": "y_coord",
             "z_coord": "z_coord",
             "sbs_number": "sbs_number",
+        }
+        self._current_nuclei_features: dict[str, np.ndarray] = {
+            self._nuclei_features_headers["x_coord"]: np.array([0.0]),
+            self._nuclei_features_headers["y_coord"]: np.array([0.0]),
+            self._nuclei_features_headers["z_coord"]: np.array([0.0]),
+            self._nuclei_features_headers["sbs_number"]: np.array([1]),
         }
 
         self._layout = QVBoxLayout()
@@ -202,11 +209,16 @@ class CLTPickNucleiWidget(QWidget):
             return
 
         self._load_stitched_contrasts(project_path, opened_images)
+        self._image_layer = opened_images[0]
         self._load_nuclei_layers()
         self._load_nuclei_features()
-        self._image_layer = opened_images[0]
 
     def _load_nuclei_layers(self) -> None:
+        if self._image_layer is None:
+            return
+
+        image_ndim = self._image_layer.ndim
+
         if self._nuclei_points_path is not None:
             opened_points = self._napari_viewer.open(
                 str(self._nuclei_points_path)
@@ -219,6 +231,14 @@ class CLTPickNucleiWidget(QWidget):
             self._nuclei_centers_layer = next(
                 (layer for layer in point_layers if isinstance(layer, Points)),
                 None,
+            )
+        else:
+            self._nuclei_centers_layer = self._napari_viewer.add_points(
+                name="nuclei_centers",
+                ndim=image_ndim,
+            )
+            self._nuclei_centers_layer.current_properties = (
+                self._current_nuclei_features
             )
 
         if self._nuclei_squares_path is not None:
@@ -237,6 +257,11 @@ class CLTPickNucleiWidget(QWidget):
                     if isinstance(layer, Shapes)
                 ),
                 None,
+            )
+        else:
+            self._nuclei_squares_layer = self._napari_viewer.add_shapes(
+                name="nuclei_squares",
+                ndim=image_ndim,
             )
 
     def _load_nuclei_features(self) -> None:
@@ -269,6 +294,16 @@ class CLTPickNucleiWidget(QWidget):
             return
 
         self._nuclei_centers_layer.features = features
+
+        maximum_sbs_number = (
+            int(features["sbs_number"].max()) if not features.empty else 1
+        )
+        self._current_nuclei_features[
+            self._nuclei_features_headers["sbs_number"]
+        ] = np.array([maximum_sbs_number])
+        self._nuclei_centers_layer.current_properties = (
+            self._current_nuclei_features
+        )
 
     def _validate_nuclei_features(self, features: pd.DataFrame) -> bool:
         required_headers = set(self._nuclei_features_headers.values())
