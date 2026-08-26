@@ -41,6 +41,9 @@ from carltonlab_napari_tools._shared_widgets import (
     get_directory,
     get_file,
 )
+from carltonlab_napari_tools.foci_count_widgets._pick_nuclei_widget import (
+    CLTPickNucleiWidget,
+)
 from carltonlab_napari_tools.foci_count_widgets._stitch_widget import (
     ProjectStatus,
     StitchOmeZarrWidget,
@@ -345,6 +348,7 @@ class IntegrationWidget(QWidget):
             self._show_set_contrast_widget
         )
         self._pick_nuclei_button = QPushButton("3.Pick Nuclei")
+        self._pick_nuclei_button.clicked.connect(self._show_pick_nuclei_widget)
         self._score_nuclei_button = QPushButton("4.Score Nuclei")
         self._define_regions_button = QPushButton("5.Define Regions")
         self._generate_reports_button = QPushButton(
@@ -484,6 +488,13 @@ class IntegrationWidget(QWidget):
             status_update_callback=self._update_process_status_labels,
         )
         self._set_current_widget(contrast_widget)
+
+    def _show_pick_nuclei_widget(self) -> None:
+        pick_nuclei_widget = CLTPickNucleiWidget(
+            parent=self,
+            project_list_widget=self._project_directories_list,
+        )
+        self._set_current_widget(pick_nuclei_widget)
 
     def _save_multigonad_project(self, saving_path: str) -> bool:
         project_paths = self._project_directories_list.get_project_paths()
