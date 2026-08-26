@@ -131,9 +131,9 @@ class IntegrationProjectRow(QWidget):
             self._extraction_button,
             self._stitching_button,
             self._contrast_button,
-            self._regions_button,
             self._nuclei_button,
             self._scoring_button,
+            self._regions_button,
             self._generate_plots_button,
         )
 
@@ -925,11 +925,13 @@ class CarltonLabCountTool(QWidget):
 
         self._process_container_title: QLabel = QLabel("Process gonads")
         self._process_container_title.setStyleSheet("font-weight: bold")
+        self._process_container_title.setVisible(False)
         self._process_container_layout.addWidget(self._process_container_title)
 
         self._process_gonads_control_widget: GonadControlWidget = (
             GonadControlWidget(self._napari_viewer, self)
         )
+        self._process_gonads_control_widget.setVisible(False)
 
         self._process_container_layout.addWidget(
             self._process_gonads_control_widget
