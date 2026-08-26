@@ -491,6 +491,7 @@ class IntegrationWidget(QWidget):
 
     def _show_pick_nuclei_widget(self) -> None:
         pick_nuclei_widget = CLTPickNucleiWidget(
+            napari_viewer=self._napari_viewer,
             parent=self,
             project_list_widget=self._project_directories_list,
         )
