@@ -168,6 +168,10 @@ class CLTPickNucleiWidget(QWidget):
         self._save_nuclei_features_button = QPushButton("Save nuclei features")
         self._layout.addWidget(self._save_nuclei_features_button)
 
+        self._save_nuclei_features_button.clicked.connect(
+            self._on_save_nuclei_features_button_pressed
+        )
+
         self._project_list_widget.currentItemChanged.connect(
             self._project_selection_changed
         )
@@ -175,6 +179,44 @@ class CLTPickNucleiWidget(QWidget):
 
     def _project_selection_changed(self, *_args: object) -> None:
         self._load_current_stitched_image()
+
+    def _on_save_nuclei_features_button_pressed(self) -> None:
+        if self._nuclei_centers_layer is None:
+            show_error("No nuclei points layer is available to save.")
+            return
+
+        if self._nuclei_points_path is None:
+            show_error("No project is selected for saving nuclei points.")
+            return
+
+        try:
+            self._save_nuclei_points_layer()
+            self._save_nuclei_features_table()
+        except (OSError, ValueError) as exc:
+            show_error(f"Could not save nuclei points: {exc}")
+
+    def _save_nuclei_points_layer(self) -> None:
+        if (
+            self._nuclei_centers_layer is None
+            or self._nuclei_points_path is None
+        ):
+            return
+
+        self._nuclei_points_path.parent.mkdir(parents=True, exist_ok=True)
+        self._nuclei_centers_layer.save(str(self._nuclei_points_path))
+
+    def _save_nuclei_features_table(self) -> None:
+        if (
+            self._nuclei_centers_layer is None
+            or self._nuclei_features_path is None
+        ):
+            return
+
+        self._nuclei_features_path.parent.mkdir(parents=True, exist_ok=True)
+        self._nuclei_centers_layer.features.to_csv(
+            self._nuclei_features_path,
+            index=False,
+        )
 
     def _load_current_stitched_image(self) -> None:
         self._image_layer = None
