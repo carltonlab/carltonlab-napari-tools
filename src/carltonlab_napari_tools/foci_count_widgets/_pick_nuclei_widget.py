@@ -329,6 +329,14 @@ class CLTPickNucleiWidget(QWidget):
 
         image_ndim = self._image_layer.ndim
 
+        self._nuclei_squares_layer = self._napari_viewer.add_shapes(
+            name="nuclei_squares",
+            ndim=2,
+        )
+        self._on_show_squares_checkbox_toggled(
+            self._show_squares_checkbox.isChecked()
+        )
+
         if (
             self._nuclei_points_path is not None
             and self._nuclei_points_path.is_file()
@@ -362,21 +370,9 @@ class CLTPickNucleiWidget(QWidget):
             self._nuclei_centers_layer.text = "sbs_number"
             self._nuclei_centers_layer.text.color = "cyan"
 
-        self._nuclei_squares_layer = self._napari_viewer.add_shapes(
-            name="nuclei_squares",
-            ndim=2,
-        )
-        self._on_show_squares_checkbox_toggled(
-            self._show_squares_checkbox.isChecked()
-        )
-
         if self._nuclei_centers_layer is not None:
             self._nuclei_centers_layer.events.data.connect(
                 self._on_nuclei_points_added
-            )
-            self._napari_viewer.layers.move(
-                self._napari_viewer.layers.index(self._nuclei_centers_layer),
-                len(self._napari_viewer.layers) - 1,
             )
             self._napari_viewer.layers.selection.active = (
                 self._nuclei_centers_layer
