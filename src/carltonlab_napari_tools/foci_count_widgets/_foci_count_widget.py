@@ -918,6 +918,7 @@ class CarltonLabCountTool(QWidget):
 
         self._top_scroll_area: QScrollArea = QScrollArea()
         self._top_scroll_area.setWidgetResizable(True)
+        self._top_scroll_area.setVisible(False)
         self._main_layout.addWidget(self._top_scroll_area)
         self._top_scroll_area.setWidget(self._top_container)
 

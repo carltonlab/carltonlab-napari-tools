@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from pathlib import Path
 
-from qtpy.QtCore import Qt
+from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import QListWidget, QListWidgetItem, QWidget
 
 
@@ -57,13 +57,26 @@ class CLTProjectListWidget(QListWidget):
         self._update_rows()
 
     def _update_rows(self) -> None:
-        self.clear()
+        current_project_path = self.get_current_project_path()
 
-        for project_path in self._project_paths:
-            list_item = QListWidgetItem()
-            list_item.setData(Qt.ItemDataRole.UserRole, project_path)
-            self.addItem(list_item)
+        with QSignalBlocker(self):
+            self.clear()
 
-            row_widget = self._row_factory(project_path)
-            list_item.setSizeHint(row_widget.sizeHint())
-            self.setItemWidget(list_item, row_widget)
+            for project_path in self._project_paths:
+                list_item = QListWidgetItem()
+                list_item.setData(Qt.ItemDataRole.UserRole, project_path)
+                self.addItem(list_item)
+
+                row_widget = self._row_factory(project_path)
+                list_item.setSizeHint(row_widget.sizeHint())
+                self.setItemWidget(list_item, row_widget)
+
+            if current_project_path is not None:
+                for index in range(self.count()):
+                    item = self.item(index)
+                    if (
+                        item.data(Qt.ItemDataRole.UserRole)
+                        == current_project_path
+                    ):
+                        self.setCurrentItem(item)
+                        break
