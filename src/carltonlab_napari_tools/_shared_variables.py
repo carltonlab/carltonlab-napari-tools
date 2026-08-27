@@ -30,6 +30,7 @@ IMAGE_CONTRASTS_FILE_NAME = "cl_image_contrasts.config"
 TILE_CONTRASTS_FILE_NAME_SUFFIX = "_contrasts.config"
 
 PICK_NUCLEI_DIR_NAME = "pick_nuclei"
+SBS_FLAGS_FILE_NAME = "sbs_flags.config"
 NUCLEI_POINTS_LAYER_FILE_NAME = "nuclei_points_layer.csv"
 NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME = "nuclei_points_features_table.csv"
 POINTS_SUMMARY_FILE_NAME = "points_summary.csv"
