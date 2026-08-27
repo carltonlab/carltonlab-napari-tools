@@ -13,6 +13,7 @@ from qtpy.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QPushButton,
     QSizePolicy,
     QSpinBox,
@@ -37,6 +38,42 @@ from carltonlab_napari_tools.general_widgets._project_list_widget import (
 
 if TYPE_CHECKING:
     from napari.components import ViewerModel
+
+
+class CLTSBSPointWidget(QWidget):
+    def __init__(
+        self,
+        point_name: str,
+        region_name: str | None,
+        square_size: int,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(4, 2, 4, 2)
+        self.setLayout(layout)
+
+        self._point_name_label = QLabel(point_name)
+        self._region_name_label = QLabel(
+            region_name if region_name is not None else "Region: Not assigned"
+        )
+        self._minus_button = QPushButton("-")
+        self._square_size_label = QLabel(str(square_size))
+        self._plus_button = QPushButton("+")
+
+        for button in (self._minus_button, self._plus_button):
+            button.setFixedSize(24, 24)
+
+        self._square_size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._square_size_label.setMinimumWidth(32)
+
+        layout.addWidget(self._point_name_label)
+        layout.addWidget(self._region_name_label)
+        layout.addStretch()
+        layout.addWidget(self._minus_button)
+        layout.addWidget(self._square_size_label)
+        layout.addWidget(self._plus_button)
 
 
 class CLTPickNucleiWidget(QWidget):
@@ -169,6 +206,9 @@ class CLTPickNucleiWidget(QWidget):
         )
         self._sbs_list_widget.setMaximumHeight(5 * 24 + 2)
         self._layout.addWidget(self._sbs_list_widget)
+        self._add_sbs_list_entry("SBS 1", None, 100)
+        self._add_sbs_list_entry("SBS 2", None, 100)
+        self._add_sbs_list_entry("SBS 3", None, 100)
 
         self._layout.addWidget(FrameSeparator(parent=self))
 
@@ -183,6 +223,23 @@ class CLTPickNucleiWidget(QWidget):
             self._project_selection_changed
         )
         self._load_current_stitched_image()
+
+    def _add_sbs_list_entry(
+        self,
+        point_name: str,
+        region_name: str | None,
+        square_size: int,
+    ) -> None:
+        item = QListWidgetItem()
+        point_widget = CLTSBSPointWidget(
+            point_name,
+            region_name,
+            square_size,
+            parent=self._sbs_list_widget,
+        )
+        item.setSizeHint(point_widget.sizeHint())
+        self._sbs_list_widget.addItem(item)
+        self._sbs_list_widget.setItemWidget(item, point_widget)
 
     def _project_selection_changed(self, *_args: object) -> None:
         self._load_current_stitched_image()
