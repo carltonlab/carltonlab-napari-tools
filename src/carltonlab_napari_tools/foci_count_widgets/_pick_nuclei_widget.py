@@ -7,8 +7,9 @@ import pandas as pd
 from napari.layers import Image, Labels, Points, Shapes
 from napari.layers.base import ActionType
 from napari.utils.notifications import show_error
-from qtpy.QtCore import Qt
+from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QHBoxLayout,
     QLabel,
@@ -45,7 +46,8 @@ class CLTSBSPointWidget(QWidget):
         self,
         point_name: str,
         region_name: str | None,
-        square_size: int,
+        square_width: int,
+        square_height: int,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -58,22 +60,22 @@ class CLTSBSPointWidget(QWidget):
         self._region_name_label = QLabel(
             region_name if region_name is not None else "Region: Not assigned"
         )
-        self._minus_button = QPushButton("-")
-        self._square_size_label = QLabel(str(square_size))
-        self._plus_button = QPushButton("+")
-
-        for button in (self._minus_button, self._plus_button):
-            button.setFixedSize(24, 24)
-
-        self._square_size_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._square_size_label.setMinimumWidth(32)
+        self._square_width_label = QLabel(f"W: {square_width}")
+        self._square_height_label = QLabel(f"H: {square_height}")
 
         layout.addWidget(self._point_name_label)
         layout.addWidget(self._region_name_label)
         layout.addStretch()
-        layout.addWidget(self._minus_button)
-        layout.addWidget(self._square_size_label)
-        layout.addWidget(self._plus_button)
+        layout.addWidget(self._square_width_label)
+        layout.addWidget(self._square_height_label)
+
+    def set_square_dimensions(
+        self,
+        square_width: int,
+        square_height: int,
+    ) -> None:
+        self._square_width_label.setText(f"W: {square_width}")
+        self._square_height_label.setText(f"H: {square_height}")
 
 
 class CLTPickNucleiWidget(QWidget):
@@ -151,7 +153,7 @@ class CLTPickNucleiWidget(QWidget):
         self._square_controls_layout.addWidget(self._square_size_label)
 
         self._square_size_spinbox = QSpinBox()
-        self._square_size_spinbox.setMinimum(1)
+        self._square_size_spinbox.setRange(1, 1_000_000)
         self._square_size_spinbox.setValue(100)
         self._square_size_spinbox.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -183,7 +185,7 @@ class CLTPickNucleiWidget(QWidget):
         self._z_sections_layout.addWidget(self._z_sections_label)
 
         self._z_sections_spinbox = QSpinBox()
-        self._z_sections_spinbox.setMinimum(1)
+        self._z_sections_spinbox.setRange(1, 1_000_000)
         self._z_sections_spinbox.setValue(27)
         self._z_sections_spinbox.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -194,11 +196,49 @@ class CLTPickNucleiWidget(QWidget):
 
         self._layout.addSpacing(6)
 
+        self._sbs_list_header_widget = QWidget()
+        self._sbs_list_header_layout = QHBoxLayout()
+        self._sbs_list_header_layout.setContentsMargins(0, 0, 0, 0)
+        self._sbs_list_header_widget.setLayout(self._sbs_list_header_layout)
+
         self._sbs_list_title_label = QLabel("SBS list")
         self._sbs_list_title_label.setStyleSheet("font-weight: bold")
-        self._layout.addWidget(self._sbs_list_title_label)
+        self._sbs_list_title_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._sbs_list_header_layout.addWidget(self._sbs_list_title_label)
+
+        self._apply_to_all_button = QPushButton("Apply to all")
+        self._apply_to_all_button.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._apply_to_all_button.setVisible(False)
+        self._apply_to_all_button.clicked.connect(
+            self._apply_dimensions_to_selected
+        )
+        self._sbs_list_header_layout.addWidget(self._apply_to_all_button)
+
+        self._width_label = QLabel("W:")
+        self._width_spinbox = QSpinBox()
+        self._width_spinbox.setRange(1, 1_000_000)
+        self._width_spinbox.setValue(100)
+        self._height_label = QLabel("H:")
+        self._height_spinbox = QSpinBox()
+        self._height_spinbox.setRange(1, 1_000_000)
+        self._height_spinbox.setValue(100)
+
+        self._sbs_list_header_layout.addWidget(self._width_label)
+        self._sbs_list_header_layout.addWidget(self._width_spinbox)
+        self._sbs_list_header_layout.addWidget(self._height_label)
+        self._sbs_list_header_layout.addWidget(self._height_spinbox)
+        self._layout.addWidget(self._sbs_list_header_widget)
 
         self._sbs_list_widget = QListWidget()
+        self._sbs_list_widget.setSelectionMode(
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
         self._sbs_list_widget.setUniformItemSizes(True)
         self._sbs_list_widget.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -206,9 +246,15 @@ class CLTPickNucleiWidget(QWidget):
         )
         self._sbs_list_widget.setMaximumHeight(5 * 24 + 2)
         self._layout.addWidget(self._sbs_list_widget)
-        self._add_sbs_list_entry("SBS 1", None, 100)
-        self._add_sbs_list_entry("SBS 2", None, 100)
-        self._add_sbs_list_entry("SBS 3", None, 100)
+        self._sbs_list_widget.itemSelectionChanged.connect(
+            self._on_sbs_selection_changed
+        )
+        self._width_spinbox.valueChanged.connect(
+            self._on_square_dimensions_changed
+        )
+        self._height_spinbox.valueChanged.connect(
+            self._on_square_dimensions_changed
+        )
 
         self._layout.addWidget(FrameSeparator(parent=self))
 
@@ -228,18 +274,135 @@ class CLTPickNucleiWidget(QWidget):
         self,
         point_name: str,
         region_name: str | None,
-        square_size: int,
+        square_width: int,
+        square_height: int,
     ) -> None:
         item = QListWidgetItem()
         point_widget = CLTSBSPointWidget(
             point_name,
             region_name,
-            square_size,
+            square_width,
+            square_height,
             parent=self._sbs_list_widget,
         )
         item.setSizeHint(point_widget.sizeHint())
         self._sbs_list_widget.addItem(item)
         self._sbs_list_widget.setItemWidget(item, point_widget)
+
+    def _update_sbs_list(self) -> None:
+        self._sbs_list_widget.clear()
+
+        if self._nuclei_centers_layer is None:
+            return
+
+        features = self._nuclei_centers_layer.features
+        if len(features) != len(self._nuclei_centers_layer.data):
+            return
+
+        sbs_header = self._nuclei_features_headers["sbs_number"]
+        width_header = self._nuclei_features_headers["square_width"]
+        height_header = self._nuclei_features_headers["square_height"]
+
+        for feature in features.to_dict(orient="records"):
+            self._add_sbs_list_entry(
+                point_name=f"SBS {int(feature[sbs_header])}",
+                region_name=None,
+                square_width=int(feature[width_header]),
+                square_height=int(feature[height_header]),
+            )
+
+    def _on_sbs_selection_changed(self) -> None:
+        selected_rows = [
+            self._sbs_list_widget.row(item)
+            for item in self._sbs_list_widget.selectedItems()
+        ]
+        self._apply_to_all_button.setVisible(len(selected_rows) > 1)
+
+        if self._nuclei_centers_layer is None or not selected_rows:
+            return
+
+        features = self._nuclei_centers_layer.features
+        if any(row >= len(features) for row in selected_rows):
+            return
+
+        selected_features = features.iloc[selected_rows]
+        width_header = self._nuclei_features_headers["square_width"]
+        height_header = self._nuclei_features_headers["square_height"]
+        with (
+            QSignalBlocker(self._width_spinbox),
+            QSignalBlocker(self._height_spinbox),
+        ):
+            self._width_spinbox.setValue(
+                int(selected_features[width_header].max())
+            )
+            self._height_spinbox.setValue(
+                int(selected_features[height_header].max())
+            )
+
+    def _on_square_dimensions_changed(self, _value: int) -> None:
+        if self._nuclei_centers_layer is None:
+            return
+
+        if len(self._sbs_list_widget.selectedItems()) > 1:
+            return
+
+        row = self._sbs_list_widget.currentRow()
+        features = self._nuclei_centers_layer.features.copy()
+        if row < 0 or row >= len(features):
+            return
+
+        feature_index = features.index[row]
+        features.loc[
+            feature_index,
+            self._nuclei_features_headers["square_width"],
+        ] = self._width_spinbox.value()
+        features.loc[
+            feature_index,
+            self._nuclei_features_headers["square_height"],
+        ] = self._height_spinbox.value()
+        self._nuclei_centers_layer.features = features
+        self._rebuild_nuclei_squares()
+
+        item = self._sbs_list_widget.item(row)
+        item_widget = self._sbs_list_widget.itemWidget(item)
+        if isinstance(item_widget, CLTSBSPointWidget):
+            item_widget.set_square_dimensions(
+                self._width_spinbox.value(),
+                self._height_spinbox.value(),
+            )
+
+    def _apply_dimensions_to_selected(self) -> None:
+        if self._nuclei_centers_layer is None:
+            return
+
+        selected_rows = [
+            self._sbs_list_widget.row(item)
+            for item in self._sbs_list_widget.selectedItems()
+        ]
+        if len(selected_rows) < 2:
+            return
+
+        features = self._nuclei_centers_layer.features.copy()
+        feature_indices = features.index[selected_rows]
+        features.loc[
+            feature_indices,
+            self._nuclei_features_headers["square_width"],
+        ] = self._width_spinbox.value()
+        features.loc[
+            feature_indices,
+            self._nuclei_features_headers["square_height"],
+        ] = self._height_spinbox.value()
+        self._nuclei_centers_layer.features = features
+        self._rebuild_nuclei_squares()
+
+        for row in selected_rows:
+            item = self._sbs_list_widget.item(row)
+            item_widget = self._sbs_list_widget.itemWidget(item)
+            if isinstance(item_widget, CLTSBSPointWidget):
+                item_widget.set_square_dimensions(
+                    self._width_spinbox.value(),
+                    self._height_spinbox.value(),
+                )
 
     def _project_selection_changed(self, *_args: object) -> None:
         self._load_current_stitched_image()
@@ -322,6 +485,7 @@ class CLTPickNucleiWidget(QWidget):
         self._image_layer = opened_images[0]
         self._load_nuclei_layers()
         self._load_nuclei_features()
+        self._update_sbs_list()
 
     def _load_nuclei_layers(self) -> None:
         if self._image_layer is None:
@@ -437,6 +601,7 @@ class CLTPickNucleiWidget(QWidget):
         ] = self._z_sections_spinbox.value()
         self._nuclei_centers_layer.features = features
         self._rebuild_nuclei_squares()
+        self._update_sbs_list()
 
     def _load_nuclei_features(self) -> None:
         if (
