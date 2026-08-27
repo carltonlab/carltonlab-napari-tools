@@ -1,4 +1,5 @@
 import configparser
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -90,12 +91,14 @@ class CLTPickNucleiWidget(QWidget):
         napari_viewer: "ViewerModel",
         parent: QWidget,
         project_list_widget: CLTProjectListWidget,
+        status_update_callback: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
 
         self._napari_viewer = napari_viewer
         self._parent_widget = parent
         self._project_list_widget = project_list_widget
+        self._status_update_callback = status_update_callback
         self._sbs_flags_manager: SBSFlagsManager | None = None
 
         self._image_layer: Image | None = None
@@ -542,6 +545,8 @@ class CLTPickNucleiWidget(QWidget):
                 or not self._sbs_flags_manager.save()
             ):
                 raise OSError("Could not save SBS flags.")
+            if self._status_update_callback is not None:
+                self._status_update_callback()
             saved_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self._save_status_label.setText(f"Last saved on: {saved_at}")
             self._save_status_label.setStyleSheet(
@@ -865,6 +870,25 @@ class CLTPickNucleiWidget(QWidget):
             if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
         ]
         return project_paths[0] if project_paths else None
+
+    @staticmethod
+    def is_project_nuclei_complete(project_path: Path) -> bool:
+        resolved_project_path = CLTPickNucleiWidget._resolve_project_path(
+            project_path
+        )
+        if resolved_project_path is None:
+            return False
+
+        pick_nuclei_directory = (
+            resolved_project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+        )
+        return (
+            pick_nuclei_directory / NUCLEI_POINTS_LAYER_FILE_NAME
+        ).is_file() and (
+            pick_nuclei_directory / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        ).is_file()
 
     def _load_stitched_contrasts(
         self,

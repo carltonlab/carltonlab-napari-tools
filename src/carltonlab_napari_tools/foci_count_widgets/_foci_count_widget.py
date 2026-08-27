@@ -184,6 +184,18 @@ class IntegrationProjectRow(QWidget):
             status.contrast_tooltip,
         )
 
+    def apply_nuclei_status(self, saved: bool) -> None:
+        self._set_status_button(
+            self._nuclei_button,
+            "Nu",
+            "green" if saved else "red",
+            (
+                "Nuclei points and features saved"
+                if saved
+                else "Nuclei points and features not saved"
+            ),
+        )
+
 
 class IntegrationWidget(QWidget):
     def __init__(
@@ -445,8 +457,17 @@ class IntegrationWidget(QWidget):
             total,
         )
 
+        nuclei_count = sum(
+            CLTPickNucleiWidget.is_project_nuclei_complete(project_path)
+            for project_path in project_paths
+        )
+        self._set_process_status_label(
+            self._process_status_labels["nuclei"],
+            nuclei_count,
+            total,
+        )
+
         for process_name in (
-            "nuclei",
             "scoring",
             "regions",
             "reports",
@@ -494,8 +515,13 @@ class IntegrationWidget(QWidget):
             napari_viewer=self._napari_viewer,
             parent=self,
             project_list_widget=self._project_directories_list,
+            status_update_callback=self._on_nuclei_saved,
         )
         self._set_current_widget(pick_nuclei_widget)
+
+    def _on_nuclei_saved(self) -> None:
+        self._project_directories_list.refresh_rows()
+        self._update_process_status_labels()
 
     def _save_multigonad_project(self, saving_path: str) -> bool:
         project_paths = self._project_directories_list.get_project_paths()
@@ -520,6 +546,9 @@ class IntegrationWidget(QWidget):
             f"{project_path.parent.name}/{project_path.name}"
         )
         row.apply_project_status(project_status)
+        row.apply_nuclei_status(
+            CLTPickNucleiWidget.is_project_nuclei_complete(project_path)
+        )
         return row
 
     def _on_keep_channels_changed(self, *_args: object) -> None:
