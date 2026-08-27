@@ -1,4 +1,5 @@
 import configparser
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -261,6 +262,12 @@ class CLTPickNucleiWidget(QWidget):
         self._save_nuclei_features_button = QPushButton("Save nuclei features")
         self._layout.addWidget(self._save_nuclei_features_button)
 
+        self._save_status_label = QLabel("Not saved yet")
+        self._save_status_label.setStyleSheet(
+            "color: gray; font-style: italic;"
+        )
+        self._layout.addWidget(self._save_status_label)
+
         self._save_nuclei_features_button.clicked.connect(
             self._on_save_nuclei_features_button_pressed
         )
@@ -413,17 +420,34 @@ class CLTPickNucleiWidget(QWidget):
 
     def _on_save_nuclei_features_button_pressed(self) -> None:
         if self._nuclei_centers_layer is None:
+            self._save_status_label.setText("Couldn't save nuclei features")
+            self._save_status_label.setStyleSheet(
+                "color: #A80000; font-weight: bold; font-style: normal;"
+            )
             show_error("No nuclei points layer is available to save.")
             return
 
         if self._nuclei_points_path is None:
+            self._save_status_label.setText("Couldn't save nuclei features")
+            self._save_status_label.setStyleSheet(
+                "color: #A80000; font-weight: bold; font-style: normal;"
+            )
             show_error("No project is selected for saving nuclei points.")
             return
 
         try:
             self._save_nuclei_points_layer()
             self._save_nuclei_features_table()
+            saved_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self._save_status_label.setText(f"Last saved on: {saved_at}")
+            self._save_status_label.setStyleSheet(
+                "color: #29BA00; font-style: normal;"
+            )
         except (OSError, ValueError) as exc:
+            self._save_status_label.setText("Couldn't save nuclei features")
+            self._save_status_label.setStyleSheet(
+                "color: #A80000; font-weight: bold; font-style: normal;"
+            )
             show_error(f"Could not save nuclei points: {exc}")
 
     def _save_nuclei_points_layer(self) -> None:
