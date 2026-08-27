@@ -17,6 +17,7 @@ class CLTProjectListWidget(QListWidget):
         self._project_paths: list[Path] = []
         self._row_factory = row_factory
         self.setSpacing(6)
+        self.setMaximumHeight(4 * 36 + 2)
 
     def set_project_paths(self, project_paths: list[Path]) -> None:
         self._project_paths = list(project_paths)

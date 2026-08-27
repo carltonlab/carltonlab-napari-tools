@@ -44,6 +44,9 @@ from carltonlab_napari_tools._shared_widgets import (
 from carltonlab_napari_tools.foci_count_widgets._pick_nuclei_widget import (
     CLTPickNucleiWidget,
 )
+from carltonlab_napari_tools.foci_count_widgets._score_nuclei_widget import (
+    CLTScoreNucleiWidget,
+)
 from carltonlab_napari_tools.foci_count_widgets._stitch_widget import (
     ProjectStatus,
     StitchOmeZarrWidget,
@@ -224,6 +227,10 @@ class IntegrationWidget(QWidget):
         self._project_directories_container.setLayout(
             self._project_directories_layout
         )
+        self._project_directories_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
         self._layout.addWidget(self._project_directories_container)
 
         self._project_directories_header = QWidget()
@@ -308,6 +315,10 @@ class IntegrationWidget(QWidget):
             self,
             row_factory=self._create_project_row,
         )
+        self._project_directories_list.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
         self._project_directories_layout.addWidget(
             self._project_directories_list
         )
@@ -362,6 +373,9 @@ class IntegrationWidget(QWidget):
         self._pick_nuclei_button = QPushButton("3.Pick Nuclei")
         self._pick_nuclei_button.clicked.connect(self._show_pick_nuclei_widget)
         self._score_nuclei_button = QPushButton("4.Score Nuclei")
+        self._score_nuclei_button.clicked.connect(
+            self._show_score_nuclei_widget
+        )
         self._define_regions_button = QPushButton("5.Define Regions")
         self._generate_reports_button = QPushButton(
             "6.Generate Project Reports"
@@ -518,6 +532,14 @@ class IntegrationWidget(QWidget):
             status_update_callback=self._on_nuclei_saved,
         )
         self._set_current_widget(pick_nuclei_widget)
+
+    def _show_score_nuclei_widget(self) -> None:
+        score_nuclei_widget = CLTScoreNucleiWidget(
+            napari_viewer=self._napari_viewer,
+            parent=self,
+            project_list_widget=self._project_directories_list,
+        )
+        self._set_current_widget(score_nuclei_widget)
 
     def _on_nuclei_saved(self) -> None:
         self._project_directories_list.refresh_rows()
