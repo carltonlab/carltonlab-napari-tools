@@ -307,9 +307,6 @@ class CLTPickNucleiWidget(QWidget):
             name="nuclei_squares",
             ndim=image_ndim,
         )
-        self._nuclei_squares_layer.edge_color = "yellow"
-        self._nuclei_squares_layer.face_color = "yellow"
-        self._nuclei_squares_layer.opacity = 0.6
         self._on_show_squares_checkbox_toggled(
             self._show_squares_checkbox.isChecked()
         )
@@ -486,6 +483,9 @@ class CLTPickNucleiWidget(QWidget):
             squares.append(np.concatenate((prefix, xy_vertices), axis=1))
 
         self._nuclei_squares_layer.data = squares
+        self._nuclei_squares_layer.edge_color = "yellow"
+        self._nuclei_squares_layer.face_color = "yellow"
+        self._nuclei_squares_layer.opacity = 0.6
         self._nuclei_squares_layer.refresh()
 
     def _load_nuclei_file_paths(self, project_path: Path) -> None:
