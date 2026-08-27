@@ -12,6 +12,7 @@ from carltonlab_napari_tools._shared_variables import (
 class SBSFlag(str, Enum):
     IGNORE = "Ignore"
     APOPTOTIC = "Apoptotic"
+    COORD_RECALC_NEEDED = "COORD_RECALC_NEEDED"
 
 
 class SBSFlagsManager:

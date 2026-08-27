@@ -108,22 +108,37 @@ class CLTPickNucleiWidget(QWidget):
         self._nuclei_points_path: Path | None = None
         self._nuclei_features_path: Path | None = None
         self._nuclei_features_headers: dict[str, str] = {
-            "x_coord": "x_coord",
-            "y_coord": "y_coord",
-            "z_coord": "z_coord",
+            "stitched_x_coord": "stitched_x_coord",
+            "stitched_y_coord": "stitched_y_coord",
+            "stitched_z_coord": "stitched_z_coord",
             "sbs_number": "sbs_number",
             "square_width": "square_width",
             "square_height": "square_height",
             "square_z_sections": "square_z_sections",
+            "region": "region",
+            "scored_foci_number": "scored_foci_number",
+            "stitched_foci_coords": "stitched_foci_coords",
         }
         self._current_nuclei_features: dict[str, np.ndarray] = {
-            self._nuclei_features_headers["x_coord"]: np.array([0.0]),
-            self._nuclei_features_headers["y_coord"]: np.array([0.0]),
-            self._nuclei_features_headers["z_coord"]: np.array([0.0]),
+            self._nuclei_features_headers["stitched_x_coord"]: np.array([0.0]),
+            self._nuclei_features_headers["stitched_y_coord"]: np.array([0.0]),
+            self._nuclei_features_headers["stitched_z_coord"]: np.array([0.0]),
             self._nuclei_features_headers["sbs_number"]: np.array([1]),
             self._nuclei_features_headers["square_width"]: np.array([100]),
             self._nuclei_features_headers["square_height"]: np.array([100]),
             self._nuclei_features_headers["square_z_sections"]: np.array([27]),
+            self._nuclei_features_headers["region"]: np.array(
+                [None],
+                dtype=object,
+            ),
+            self._nuclei_features_headers["scored_foci_number"]: np.array(
+                [None],
+                dtype=object,
+            ),
+            self._nuclei_features_headers["stitched_foci_coords"]: np.array(
+                ["[]"],
+                dtype=object,
+            ),
         }
 
         self._layout = QVBoxLayout()
@@ -404,6 +419,12 @@ class CLTPickNucleiWidget(QWidget):
             return
 
         feature_index = features.index[row]
+        self._mark_coordinate_recalculation_needed(
+            features,
+            [feature_index],
+            self._width_spinbox.value(),
+            self._height_spinbox.value(),
+        )
         features.loc[
             feature_index,
             self._nuclei_features_headers["square_width"],
@@ -436,6 +457,12 @@ class CLTPickNucleiWidget(QWidget):
 
         features = self._nuclei_centers_layer.features.copy()
         feature_indices = features.index[selected_rows]
+        self._mark_coordinate_recalculation_needed(
+            features,
+            feature_indices,
+            self._width_spinbox.value(),
+            self._height_spinbox.value(),
+        )
         features.loc[
             feature_indices,
             self._nuclei_features_headers["square_width"],
@@ -454,6 +481,43 @@ class CLTPickNucleiWidget(QWidget):
                 item_widget.set_square_dimensions(
                     self._width_spinbox.value(),
                     self._height_spinbox.value(),
+                )
+
+    def _mark_coordinate_recalculation_needed(
+        self,
+        features: pd.DataFrame,
+        feature_indices: object,
+        width: int,
+        height: int,
+    ) -> None:
+        if self._sbs_flags_manager is None:
+            return
+
+        sbs_header = self._nuclei_features_headers["sbs_number"]
+        width_header = self._nuclei_features_headers["square_width"]
+        height_header = self._nuclei_features_headers["square_height"]
+        foci_coords_header = self._nuclei_features_headers[
+            "stitched_foci_coords"
+        ]
+
+        for feature_index in feature_indices:
+            feature = features.loc[feature_index]
+            foci_coords = feature[foci_coords_header]
+            if pd.isna(foci_coords) or str(foci_coords).strip() in {
+                "",
+                "[]",
+            }:
+                continue
+
+            dimensions_changed = (
+                int(feature[width_header]) != width
+                or int(feature[height_header]) != height
+            )
+            if dimensions_changed:
+                sbs_name = f"sbs{int(feature[sbs_header])}"
+                self._sbs_flags_manager.add_flag(
+                    sbs_name,
+                    SBSFlag.COORD_RECALC_NEEDED,
                 )
 
     def _selected_sbs_names(self) -> list[str]:
@@ -694,9 +758,9 @@ class CLTPickNucleiWidget(QWidget):
         feature_index = features.index[-1]
         point = np.asarray(self._nuclei_centers_layer.data[-1], dtype=float)
 
-        x_coord = float(point[-1])
-        y_coord = float(point[-2]) if len(point) >= 2 else 0.0
-        z_coord = float(point[-3]) if len(point) >= 3 else 0.0
+        stitched_x_coord = float(point[-1])
+        stitched_y_coord = float(point[-2]) if len(point) >= 2 else 0.0
+        stitched_z_coord = float(point[-3]) if len(point) >= 3 else 0.0
 
         sbs_header = self._nuclei_features_headers["sbs_number"]
         existing_sbs_values = pd.to_numeric(
@@ -711,16 +775,16 @@ class CLTPickNucleiWidget(QWidget):
 
         features.loc[
             feature_index,
-            self._nuclei_features_headers["x_coord"],
-        ] = x_coord
+            self._nuclei_features_headers["stitched_x_coord"],
+        ] = stitched_x_coord
         features.loc[
             feature_index,
-            self._nuclei_features_headers["y_coord"],
-        ] = y_coord
+            self._nuclei_features_headers["stitched_y_coord"],
+        ] = stitched_y_coord
         features.loc[
             feature_index,
-            self._nuclei_features_headers["z_coord"],
-        ] = z_coord
+            self._nuclei_features_headers["stitched_z_coord"],
+        ] = stitched_z_coord
         features.loc[feature_index, sbs_header] = sbs_number
         features.loc[
             feature_index,
