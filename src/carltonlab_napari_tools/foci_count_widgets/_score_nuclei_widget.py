@@ -1,6 +1,8 @@
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pandas as pd
 from napari.layers import Image, Points
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
@@ -17,6 +19,12 @@ from qtpy.QtWidgets import (
 )
 from superqt import QToggleSwitch
 
+from carltonlab_napari_tools._shared_variables import (
+    CUT_SBS_DIR_NAME,
+    PICK_NUCLEI_DIR_NAME,
+    PROJECT_FILE_DIR_NAME,
+    SBS_FILE_NAME_EXTENSION,
+)
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
 from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
     SBSFlag,
@@ -28,6 +36,42 @@ from carltonlab_napari_tools.general_widgets._project_list_widget import (
 
 if TYPE_CHECKING:
     from napari.components import ViewerModel
+
+
+@dataclass
+class ProjectScoringData:
+    project_path: Path
+    features: pd.DataFrame
+    flags_manager: SBSFlagsManager
+    tile_bounding_boxes: dict[int, dict[str, int]]
+
+    def get_sbs_images_needing_crop(self) -> list[Path]:
+        cut_sbs_directory = (
+            self.project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / CUT_SBS_DIR_NAME
+        )
+
+        sbs_number_header = "sbs_number"
+        region_header = "region"
+        missing_sbs_paths: list[Path] = []
+
+        for feature in self.features.to_dict(orient="records"):
+            region = feature[region_header]
+            if pd.isna(region):
+                continue
+
+            sbs_name = (
+                f"region-{int(region)}_"
+                f"sbs{int(feature[sbs_number_header])}"
+                f"{SBS_FILE_NAME_EXTENSION}"
+            )
+            sbs_path = cut_sbs_directory / sbs_name
+            if not sbs_path.is_file():
+                missing_sbs_paths.append(sbs_path)
+
+        return missing_sbs_paths
 
 
 class CLTScoreSBSRow(QWidget):
