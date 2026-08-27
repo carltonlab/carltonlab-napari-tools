@@ -298,6 +298,8 @@ class CLTPickNucleiWidget(QWidget):
             )
             self._nuclei_centers_layer.face_color = "#999999"
             self._nuclei_centers_layer.current_face_color = "#999999"
+            self._nuclei_centers_layer.size = 40
+            self._nuclei_centers_layer.current_size = 40
             self._nuclei_centers_layer.border_color = "black"
             self._nuclei_centers_layer.current_border_color = "black"
             self._nuclei_centers_layer.text = "sbs_number"
@@ -305,7 +307,7 @@ class CLTPickNucleiWidget(QWidget):
 
         self._nuclei_squares_layer = self._napari_viewer.add_shapes(
             name="nuclei_squares",
-            ndim=image_ndim,
+            ndim=2,
         )
         self._on_show_squares_checkbox_toggled(
             self._show_squares_checkbox.isChecked()
@@ -427,6 +429,8 @@ class CLTPickNucleiWidget(QWidget):
         )
         self._nuclei_centers_layer.face_color = "#999999"
         self._nuclei_centers_layer.current_face_color = "#999999"
+        self._nuclei_centers_layer.size = 40
+        self._nuclei_centers_layer.current_size = 40
         self._nuclei_centers_layer.border_color = "black"
         self._nuclei_centers_layer.current_border_color = "black"
         self._nuclei_centers_layer.text = "sbs_number"
@@ -479,8 +483,7 @@ class CLTPickNucleiWidget(QWidget):
                 ]
             )
             xy_vertices = center + offsets
-            prefix = np.repeat(point[:-2][None, :], 4, axis=0)
-            squares.append(np.concatenate((prefix, xy_vertices), axis=1))
+            squares.append(xy_vertices)
 
         self._nuclei_squares_layer.data = squares
         self._nuclei_squares_layer.edge_color = "yellow"
