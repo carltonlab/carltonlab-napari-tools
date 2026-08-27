@@ -12,6 +12,7 @@ from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -34,6 +35,10 @@ from carltonlab_napari_tools._shared_variables import (
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
 from carltonlab_napari_tools._viewer_utils import open_ome_zarr_layers
+from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
+    SBSFlag,
+    SBSFlagsManager,
+)
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
@@ -91,6 +96,7 @@ class CLTPickNucleiWidget(QWidget):
         self._napari_viewer = napari_viewer
         self._parent_widget = parent
         self._project_list_widget = project_list_widget
+        self._sbs_flags_manager: SBSFlagsManager | None = None
 
         self._image_layer: Image | None = None
         self._nuclei_centers_layer: Points | None = None
@@ -247,6 +253,39 @@ class CLTPickNucleiWidget(QWidget):
         )
         self._sbs_list_widget.setMaximumHeight(5 * 24 + 2)
         self._layout.addWidget(self._sbs_list_widget)
+
+        self._sbs_flags_container = QWidget()
+        self._sbs_flags_layout = QVBoxLayout()
+        self._sbs_flags_layout.setContentsMargins(0, 0, 0, 0)
+        self._sbs_flags_container.setLayout(self._sbs_flags_layout)
+
+        self._sbs_flags_summary_layout = QHBoxLayout()
+        self._sbs_count_label = QLabel("SBS count: 0")
+        self._flags_summary_label = QLabel("Flags: None")
+        self._sbs_flags_summary_layout.addWidget(self._sbs_count_label)
+        self._sbs_flags_summary_layout.addWidget(self._flags_summary_label)
+        self._sbs_flags_layout.addLayout(self._sbs_flags_summary_layout)
+
+        self._add_flags_button = QPushButton("Add flags")
+        self._add_flags_combo = QComboBox()
+        self._add_flags_combo.addItems([flag.value for flag in SBSFlag])
+        self._add_flags_button.clicked.connect(self._add_selected_sbs_flag)
+        self._sbs_flags_add_layout = QHBoxLayout()
+        self._sbs_flags_add_layout.addWidget(self._add_flags_button)
+        self._sbs_flags_add_layout.addWidget(self._add_flags_combo)
+        self._sbs_flags_layout.addLayout(self._sbs_flags_add_layout)
+
+        self._remove_flags_button = QPushButton("Remove flags")
+        self._remove_flags_combo = QComboBox()
+        self._remove_flags_button.clicked.connect(
+            self._remove_selected_sbs_flag
+        )
+        self._sbs_flags_remove_layout = QHBoxLayout()
+        self._sbs_flags_remove_layout.addWidget(self._remove_flags_button)
+        self._sbs_flags_remove_layout.addWidget(self._remove_flags_combo)
+        self._sbs_flags_layout.addLayout(self._sbs_flags_remove_layout)
+        self._layout.addWidget(self._sbs_flags_container)
+
         self._sbs_list_widget.itemSelectionChanged.connect(
             self._on_sbs_selection_changed
         )
@@ -259,7 +298,9 @@ class CLTPickNucleiWidget(QWidget):
 
         self._layout.addWidget(FrameSeparator(parent=self))
 
-        self._save_nuclei_features_button = QPushButton("Save nuclei features")
+        self._save_nuclei_features_button = QPushButton(
+            "Save nuclei features and flags"
+        )
         self._layout.addWidget(self._save_nuclei_features_button)
 
         self._save_status_label = QLabel("Not saved yet")
@@ -345,6 +386,7 @@ class CLTPickNucleiWidget(QWidget):
             self._height_spinbox.setValue(
                 int(selected_features[height_header].max())
             )
+        self._update_sbs_flags_controls()
 
     def _on_square_dimensions_changed(self, _value: int) -> None:
         if self._nuclei_centers_layer is None:
@@ -411,6 +453,63 @@ class CLTPickNucleiWidget(QWidget):
                     self._height_spinbox.value(),
                 )
 
+    def _selected_sbs_names(self) -> list[str]:
+        if self._nuclei_centers_layer is None:
+            return []
+
+        features = self._nuclei_centers_layer.features
+        sbs_header = self._nuclei_features_headers["sbs_number"]
+        selected_rows = [
+            self._sbs_list_widget.row(item)
+            for item in self._sbs_list_widget.selectedItems()
+        ]
+        return [
+            f"sbs{int(features.iloc[row][sbs_header])}"
+            for row in selected_rows
+            if row < len(features)
+        ]
+
+    def _update_sbs_flags_controls(self) -> None:
+        sbs_names = self._selected_sbs_names()
+        self._sbs_count_label.setText(f"SBS count: {len(sbs_names)}")
+        self._remove_flags_combo.clear()
+
+        if self._sbs_flags_manager is None or not sbs_names:
+            self._flags_summary_label.setText("Flags: None")
+            return
+
+        selected_flags = {
+            flag
+            for sbs_name in sbs_names
+            for flag in self._sbs_flags_manager.get_flags(sbs_name)
+        }
+        self._flags_summary_label.setText(
+            "Flags: "
+            + (", ".join(sorted(selected_flags)) if selected_flags else "None")
+        )
+        self._remove_flags_combo.addItems(sorted(selected_flags))
+
+    def _add_selected_sbs_flag(self) -> None:
+        if self._sbs_flags_manager is None:
+            return
+
+        flag = self._add_flags_combo.currentText()
+        for sbs_name in self._selected_sbs_names():
+            self._sbs_flags_manager.add_flag(sbs_name, flag)
+        self._update_sbs_flags_controls()
+
+    def _remove_selected_sbs_flag(self) -> None:
+        if self._sbs_flags_manager is None:
+            return
+
+        flag = self._remove_flags_combo.currentText()
+        if not flag:
+            return
+
+        for sbs_name in self._selected_sbs_names():
+            self._sbs_flags_manager.remove_flag(sbs_name, flag)
+        self._update_sbs_flags_controls()
+
     def _project_selection_changed(self, *_args: object) -> None:
         self._load_current_stitched_image()
 
@@ -438,6 +537,11 @@ class CLTPickNucleiWidget(QWidget):
         try:
             self._save_nuclei_points_layer()
             self._save_nuclei_features_table()
+            if (
+                self._sbs_flags_manager is None
+                or not self._sbs_flags_manager.save()
+            ):
+                raise OSError("Could not save SBS flags.")
             saved_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             self._save_status_label.setText(f"Last saved on: {saved_at}")
             self._save_status_label.setStyleSheet(
@@ -491,6 +595,8 @@ class CLTPickNucleiWidget(QWidget):
         if project_path is None:
             return
 
+        self._sbs_flags_manager = SBSFlagsManager(project_path)
+        self._sbs_flags_manager.load()
         self._load_nuclei_file_paths(project_path)
 
         stitched_directory = project_path / STITCHED_IMAGE_DIR_NAME
