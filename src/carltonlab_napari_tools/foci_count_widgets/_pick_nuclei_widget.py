@@ -668,9 +668,7 @@ class CLTPickNucleiWidget(QWidget):
         self._sbs_flags_manager.load()
         self._load_nuclei_file_paths(project_path)
 
-        stitched_directory = (
-            project_path / PROJECT_FILE_DIR_NAME / STITCHED_IMAGE_DIR_NAME
-        )
+        stitched_directory = project_path / STITCHED_IMAGE_DIR_NAME
         stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
         if not stitched_paths:
             return

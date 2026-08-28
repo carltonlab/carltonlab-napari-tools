@@ -28,8 +28,16 @@ from carltonlab_napari_tools._shared_variables import (
     PICK_NUCLEI_DIR_NAME,
     PROJECT_FILE_DIR_NAME,
     SBS_FILE_NAME_EXTENSION,
+    STITCHED_IMAGE_DIR_NAME,
+    TILES_DIR_NAME,
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
+from carltonlab_napari_tools._tile_utils import (
+    TileBoundingBox,
+    find_tile_for_sbs,
+    load_tile_bounding_boxes,
+    load_tile_contrasts,
+)
 from carltonlab_napari_tools._utils import get_project_stitched_image_path
 from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
     SBSFlag,
@@ -51,7 +59,7 @@ class ProjectScoringData:
     project_name: str
     features: pd.DataFrame
     flags_manager: SBSFlagsManager
-    tile_bounding_boxes: dict[int, dict[str, int]]
+    tile_bounding_boxes: dict[Path, TileBoundingBox]
 
     def get_sbs_image_path(self, sbs_name: str) -> Path | None:
         if not sbs_name.startswith("sbs"):
@@ -178,7 +186,7 @@ class CLTScoreNucleiWidget(QWidget):
         self._napari_viewer = napari_viewer
         self._project_list_widget = project_list_widget
 
-        self._sbs_image: Image | None = None
+        self._sbs_images: list[Image] = []
         self._foci_points: Points | None = None
         self._project_scoring_data: dict[Path, ProjectScoringData] = {}
 
@@ -361,6 +369,18 @@ class CLTScoreNucleiWidget(QWidget):
             features = pd.read_csv(features_path)
             flags_manager = SBSFlagsManager(project_path)
             flags_manager.load()
+
+            stitched_directory = project_path / STITCHED_IMAGE_DIR_NAME
+            stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
+            tile_bounding_boxes = (
+                load_tile_bounding_boxes(
+                    stitched_paths[0],
+                    project_path / TILES_DIR_NAME,
+                )
+                if stitched_paths
+                else {}
+            )
+
             self._project_scoring_data[project_path] = ProjectScoringData(
                 project_path=project_path,
                 project_name=project_path.name.removesuffix(
@@ -368,7 +388,7 @@ class CLTScoreNucleiWidget(QWidget):
                 ),
                 features=features,
                 flags_manager=flags_manager,
-                tile_bounding_boxes={},
+                tile_bounding_boxes=tile_bounding_boxes,
             )
 
         has_missing_sbs = False
@@ -386,7 +406,7 @@ class CLTScoreNucleiWidget(QWidget):
         _previous_item: QListWidgetItem | None,
     ) -> None:
         self._napari_viewer.layers.clear()
-        self._sbs_image = None
+        self._sbs_images = []
         self._foci_points = None
 
         if current_item is None:
@@ -408,16 +428,35 @@ class CLTScoreNucleiWidget(QWidget):
         if sbs_path is None:
             return
 
-        opened_layers = self._napari_viewer.open(str(sbs_path))
-        image_layers = (
-            opened_layers
-            if isinstance(opened_layers, list)
-            else [opened_layers]
+        image_data = tifffile.imread(sbs_path)
+        opened_images = self._napari_viewer.add_image(
+            image_data,
+            channel_axis=0,
         )
-        self._sbs_image = next(
-            (layer for layer in image_layers if isinstance(layer, Image)),
-            None,
+        self._sbs_images = (
+            opened_images
+            if isinstance(opened_images, list)
+            else [opened_images]
         )
+
+        feature_matches = project_data.features[
+            project_data.features["sbs_number"] == sbs_number
+        ]
+        if feature_matches.empty:
+            return
+
+        tile_path = find_tile_for_sbs(
+            feature_matches.iloc[0].to_dict(),
+            project_data.tile_bounding_boxes,
+        )
+        if tile_path is None:
+            return
+
+        tile_contrasts = load_tile_contrasts(tile_path)
+        for channel_index, image_layer in enumerate(self._sbs_images):
+            contrast_limits = tile_contrasts.get(channel_index)
+            if contrast_limits is not None:
+                image_layer.contrast_limits = contrast_limits
 
     def _on_peek_toggled(self, checked: bool) -> None:
         if not checked:
