@@ -1,13 +1,16 @@
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from random import shuffle
+from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING
 
 import pandas as pd
 import tifffile
 import xarray as xr
 from napari.layers import Image, Points, Shapes
+from napari.utils.notifications import show_error
 from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import (
     QCheckBox,
@@ -25,6 +28,7 @@ from qtpy.QtWidgets import (
 )
 from superqt import QToggleSwitch
 
+from carltonlab_napari_tools._sbs_lock_manager import SBSLockManager
 from carltonlab_napari_tools._shared_variables import (
     CLSP_PROJECT_SUFFIX,
     CUT_SBS_DIR_NAME,
@@ -32,6 +36,7 @@ from carltonlab_napari_tools._shared_variables import (
     PICK_NUCLEI_DIR_NAME,
     PROJECT_FILE_DIR_NAME,
     SBS_FILE_NAME_EXTENSION,
+    SCORING_SAVE_LOCK_NAME,
     STITCHED_IMAGE_DIR_NAME,
     TILES_DIR_NAME,
 )
@@ -69,6 +74,67 @@ class ProjectScoringData:
     flags_manager: SBSFlagsManager
     tile_bounding_boxes: dict[Path, TileBoundingBox]
     sbs_crop_bounds: dict[int, SBSCropBounds]
+    lock_manager: SBSLockManager
+
+    @property
+    def features_path(self) -> Path:
+        return (
+            self.project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        )
+
+    def merge_sbs_scoring(
+        self,
+        sbs_number: int,
+        stitched_foci_coords: list[list[float]],
+    ) -> bool:
+        sbs_name = f"sbs{sbs_number}"
+        if not self.lock_manager.owns(sbs_name):
+            return False
+        if not self.lock_manager.acquire(SCORING_SAVE_LOCK_NAME):
+            return False
+
+        temporary_path: Path | None = None
+        try:
+            latest_features = pd.read_csv(self.features_path)
+            matching_rows = latest_features.index[
+                latest_features["sbs_number"] == sbs_number
+            ]
+            if len(matching_rows) != 1:
+                return False
+
+            feature_index = matching_rows[0]
+            latest_features.loc[feature_index, "stitched_foci_coords"] = (
+                json.dumps(stitched_foci_coords)
+            )
+            latest_features.loc[feature_index, "scored_foci_number"] = len(
+                stitched_foci_coords
+            )
+
+            with NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.features_path.parent,
+                prefix=f".{self.features_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary_file:
+                temporary_path = Path(temporary_file.name)
+                latest_features.to_csv(temporary_file, index=False)
+
+            os.replace(temporary_path, self.features_path)
+            temporary_path = None
+            self.features = latest_features
+        except (OSError, ValueError, pd.errors.ParserError):
+            return False
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+            self.lock_manager.release(SCORING_SAVE_LOCK_NAME)
+
+        return True
 
     def update_sbs_crop_bounds(self, image_data: xr.DataArray) -> None:
         self.sbs_crop_bounds.clear()
@@ -584,6 +650,7 @@ class CLTScoreNucleiWidget(QWidget):
                 flags_manager=flags_manager,
                 tile_bounding_boxes=tile_bounding_boxes,
                 sbs_crop_bounds={},
+                lock_manager=SBSLockManager(project_path),
             )
 
         self._update_cut_sbs_status()
@@ -860,33 +927,21 @@ class CLTScoreNucleiWidget(QWidget):
             if len(point) == 3
         ]
 
-        matching_rows = project_data.features.index[
-            project_data.features["sbs_number"] == sbs_number
-        ]
-        if len(matching_rows) == 0:
+        if not project_data.merge_sbs_scoring(
+            sbs_number,
+            stitched_foci_coords,
+        ):
+            show_error(
+                "Could not save foci. The SBS or project save file is locked."
+            )
             return
 
-        feature_index = matching_rows[0]
-        project_data.features.loc[feature_index, "stitched_foci_coords"] = (
-            json.dumps(stitched_foci_coords)
-        )
-        project_data.features.loc[feature_index, "scored_foci_number"] = len(
-            stitched_foci_coords
-        )
         current_item.entry.foci_count = len(stitched_foci_coords)
         current_item.entry.scored = True
 
         row_widget = self._sbs_list_widget.itemWidget(current_item)
         if isinstance(row_widget, CLTScoreSBSRow):
             row_widget.set_foci_count(len(stitched_foci_coords))
-
-        features_path = (
-            project_data.project_path
-            / PROJECT_FILE_DIR_NAME
-            / PICK_NUCLEI_DIR_NAME
-            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
-        )
-        project_data.features.to_csv(features_path, index=False)
 
     def _get_selected_sbs_context(
         self,
