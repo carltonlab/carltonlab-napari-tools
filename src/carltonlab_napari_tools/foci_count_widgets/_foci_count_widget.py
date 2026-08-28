@@ -61,6 +61,9 @@ from carltonlab_napari_tools.general_widgets._project_list_widget import (
 from carltonlab_napari_tools.general_widgets._set_contrast_widget import (
     CLTSetContrastWidget,
 )
+from carltonlab_napari_tools.stitched_regions_widgets._stitched_regions_widget import (
+    CLTStitchedRegionsWidget,
+)
 
 if TYPE_CHECKING:
     import napari
@@ -197,6 +200,18 @@ class IntegrationProjectRow(QWidget):
                 "Nuclei points and features saved"
                 if saved
                 else "Nuclei points and features not saved"
+            ),
+        )
+
+    def apply_scoring_status(self, complete: bool) -> None:
+        self._set_status_button(
+            self._scoring_button,
+            "Sc",
+            "green" if complete else "red",
+            (
+                "All SBS nuclei scored"
+                if complete
+                else "SBS nuclei scoring is incomplete"
             ),
         )
 
@@ -417,6 +432,9 @@ class IntegrationWidget(QWidget):
             self._show_score_nuclei_widget
         )
         self._define_regions_button = QPushButton("5.Define Regions")
+        self._define_regions_button.clicked.connect(
+            self._show_stitched_regions_widget
+        )
         self._generate_reports_button = QPushButton(
             "6.Generate Project Reports"
         )
@@ -536,11 +554,17 @@ class IntegrationWidget(QWidget):
             total,
         )
 
-        for process_name in (
-            "scoring",
-            "regions",
-            "reports",
-        ):
+        scoring_count = sum(
+            CLTScoreNucleiWidget.is_project_scoring_complete(project_path)
+            for project_path in project_paths
+        )
+        self._set_process_status_label(
+            self._process_status_labels["scoring"],
+            scoring_count,
+            total,
+        )
+
+        for process_name in ("regions", "reports"):
             self._set_process_status_label(
                 self._process_status_labels[process_name],
                 0,
@@ -596,6 +620,7 @@ class IntegrationWidget(QWidget):
             napari_viewer=self._napari_viewer,
             parent=self,
             project_list_widget=self._project_directories_list,
+            status_update_callback=self._on_scoring_saved,
         )
         self._set_current_widget(score_nuclei_widget)
         self._napari_viewer.bind_key(
@@ -603,6 +628,14 @@ class IntegrationWidget(QWidget):
             self._save_score_nuclei_from_key,
             overwrite=True,
         )
+
+    def _show_stitched_regions_widget(self) -> None:
+        stitched_regions_widget = CLTStitchedRegionsWidget(
+            napari_viewer=self._napari_viewer,
+            parent=self,
+            project_list_widget=self._project_directories_list,
+        )
+        self._set_current_widget(stitched_regions_widget)
 
     def _save_score_nuclei_from_key(self, _event=None) -> None:
         if not isinstance(self._current_widget, CLTScoreNucleiWidget):
@@ -613,6 +646,10 @@ class IntegrationWidget(QWidget):
         self._current_widget._on_save_foci_points_button_pressed()
 
     def _on_nuclei_saved(self) -> None:
+        self._project_directories_list.refresh_rows()
+        self._update_process_status_labels()
+
+    def _on_scoring_saved(self) -> None:
         self._project_directories_list.refresh_rows()
         self._update_process_status_labels()
 
@@ -645,6 +682,9 @@ class IntegrationWidget(QWidget):
         row.apply_project_status(project_status)
         row.apply_nuclei_status(
             CLTPickNucleiWidget.is_project_nuclei_complete(project_path)
+        )
+        row.apply_scoring_status(
+            CLTScoreNucleiWidget.is_project_scoring_complete(project_path)
         )
         return row
 

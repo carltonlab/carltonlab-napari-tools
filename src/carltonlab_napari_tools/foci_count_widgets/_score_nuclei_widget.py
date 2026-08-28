@@ -1,5 +1,6 @@
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from random import shuffle
@@ -331,11 +332,13 @@ class CLTScoreNucleiWidget(QWidget):
         napari_viewer: "ViewerModel",
         parent: QWidget,
         project_list_widget: CLTProjectListWidget,
+        status_update_callback: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
 
         self._napari_viewer = napari_viewer
         self._project_list_widget = project_list_widget
+        self._status_update_callback = status_update_callback
 
         self._sbs_images: list[Image] = []
         self._foci_points: Points | None = None
@@ -654,6 +657,37 @@ class CLTScoreNucleiWidget(QWidget):
         self._layout.addStretch()
 
         self._load_project_scoring_data()
+
+    @staticmethod
+    def is_project_scoring_complete(project_path: Path) -> bool:
+        resolved_project_path = CLTScoreNucleiWidget._resolve_project_path(
+            project_path
+        )
+        if resolved_project_path is None:
+            return False
+
+        features_path = (
+            resolved_project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        )
+        try:
+            features = pd.read_csv(features_path)
+        except (
+            OSError,
+            KeyError,
+            pd.errors.EmptyDataError,
+            pd.errors.ParserError,
+        ):
+            return False
+
+        if "scored_foci_number" not in features:
+            return False
+
+        return not features.empty and bool(
+            features["scored_foci_number"].notna().all()
+        )
 
     def refresh_project_data(self) -> None:
         self._load_project_scoring_data()
@@ -1081,6 +1115,8 @@ class CLTScoreNucleiWidget(QWidget):
             row_widget.set_foci_count(len(stitched_foci_coords))
 
         self._select_next_unscored_sbs(current_item)
+        if self._status_update_callback is not None:
+            self._status_update_callback()
 
     def _select_next_unscored_sbs(
         self,
