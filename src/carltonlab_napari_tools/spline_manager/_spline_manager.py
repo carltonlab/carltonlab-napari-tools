@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 from napari.layers import Shapes
 from napari.layers.shapes._shapes_models import Shape
@@ -5,9 +7,52 @@ from napari.layers.shapes._shapes_models.shape import (
     remove_path_duplicates,
 )
 from napari.utils.notifications import show_info
+from napari.viewer import ViewerModel
 from scipy.interpolate import splev, splprep
 
-SPLINE_DEFAULT_EDGE_WIDTH = 3
+SPLINE_DEFAULT_EDGE_WIDTH = 8
+SPLINE_EDGE_COLOR = "#eb3434"
+
+
+def configure_spline_layer(spline_layer: Shapes) -> None:
+    spline_layer.mode = "add_polyline"
+    spline_layer.edge_color = SPLINE_EDGE_COLOR
+    spline_layer.current_edge_color = SPLINE_EDGE_COLOR
+    spline_layer.edge_width = SPLINE_DEFAULT_EDGE_WIDTH
+    spline_layer.current_edge_width = SPLINE_DEFAULT_EDGE_WIDTH
+    spline_layer.current_face_color = "transparent"
+
+
+def load_spline_layer(
+    napari_viewer: ViewerModel,
+    spline_path: Path,
+) -> Shapes | None:
+    if not spline_path.is_file():
+        return None
+
+    opened_layers = napari_viewer.open(str(spline_path))
+    if not isinstance(opened_layers, list):
+        opened_layers = [opened_layers]
+
+    for layer in opened_layers:
+        if isinstance(layer, Shapes):
+            configure_spline_layer(layer)
+            napari_viewer.layers.selection.active = layer
+            return layer
+
+    return None
+
+
+def save_spline_layer(
+    spline_layer: Shapes,
+    saving_path: Path,
+) -> bool:
+    if len(spline_layer._data_view.shapes) != 1:
+        return False
+
+    saving_path.parent.mkdir(parents=True, exist_ok=True)
+    spline_layer.save(str(saving_path))
+    return True
 
 
 def verify_spline_interpolation(

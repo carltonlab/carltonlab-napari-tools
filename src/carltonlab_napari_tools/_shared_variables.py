@@ -63,6 +63,7 @@ PICK_NUCLEI_REPORT_PLOT_NORM_FILE_NAME = (
 
 
 REGIONS_DIR_NAME = "regions"
+SPLINE_LAYER_FILE_NAME = "clt_spline_layer.csv"
 CLSA_SPLINE_LAYER_FILE_NAME_SUFFIX = "_clsa_spline_layer.csv"
 CLSA_RAW_SPLINE_LAYER_FILE_NAME_SUFFIX = "_clsa_raw_spline_layer.csv"
 CLSA_SPLINE_PREVIEW_FILE_NAME_SUFFIX = "_clsa_spline_preview.tif"

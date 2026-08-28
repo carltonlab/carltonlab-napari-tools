@@ -16,6 +16,8 @@ from qtpy.QtWidgets import (
 from carltonlab_napari_tools._shared_variables import (
     IMAGE_CONTRASTS_FILE_NAME,
     PROJECT_FILE_DIR_NAME,
+    REGIONS_DIR_NAME,
+    SPLINE_LAYER_FILE_NAME,
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
 from carltonlab_napari_tools._utils import (
@@ -28,6 +30,12 @@ from carltonlab_napari_tools._viewer_utils import (
 )
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
+)
+from carltonlab_napari_tools.spline_manager._spline_manager import (
+    configure_spline_layer,
+    display_splines,
+    load_spline_layer,
+    save_spline_layer,
 )
 
 if TYPE_CHECKING:
@@ -114,13 +122,20 @@ class CLTStitchedRegionsWidget(QWidget):
         self._container_layout.addWidget(self._interpolation_order_widget)
 
         self._display_spline_button = QPushButton("Display spline")
+        self._display_spline_button.clicked.connect(
+            self._display_spline_button_pressed
+        )
         self._container_layout.addWidget(self._display_spline_button)
 
         self._save_spline_button = QPushButton("Save spline")
+        self._save_spline_button.clicked.connect(
+            self._save_spline_button_pressed
+        )
         self._container_layout.addWidget(self._save_spline_button)
 
         self._spline_status_label = QLabel("Spline not saved")
         self._container_layout.addWidget(self._spline_status_label)
+        self._set_spline_saved_state(False)
 
         self._container_layout.addWidget(FrameSeparator(parent=self))
 
@@ -169,6 +184,13 @@ class CLTStitchedRegionsWidget(QWidget):
         )
         self._container_layout.addWidget(self._expanded_regions_status_label)
 
+        self._display_spline_button.clicked.connect(
+            self._display_spline_button_pressed
+        )
+        self._interpolation_order_spinbox.valueChanged.connect(
+            self._display_spline_button_pressed
+        )
+
         self._container_layout.addStretch()
 
         self.setSizePolicy(
@@ -183,6 +205,10 @@ class CLTStitchedRegionsWidget(QWidget):
 
     def _load_selected_project_image(self) -> None:
         self._image_layer = None
+        self._spline_layer = None
+        self._regions_layer = None
+        self._expanded_regions_layer = None
+        self._set_spline_saved_state(False)
         self._napari_viewer.layers.clear()
 
         gonad_path = self._project_list_widget.get_current_project_path()
@@ -213,4 +239,76 @@ class CLTStitchedRegionsWidget(QWidget):
             project_path / PROJECT_FILE_DIR_NAME / IMAGE_CONTRASTS_FILE_NAME
         )
         apply_image_contrasts(opened_images, contrast_path)
+
+        spline_path = (
+            project_path
+            / PROJECT_FILE_DIR_NAME
+            / REGIONS_DIR_NAME
+            / SPLINE_LAYER_FILE_NAME
+        )
+        self._spline_layer = load_spline_layer(
+            self._napari_viewer,
+            spline_path,
+        )
+        if self._spline_layer is None:
+            self._spline_layer = self._napari_viewer.add_shapes(
+                name="clt_spline_layer",
+                ndim=2,
+            )
+            configure_spline_layer(self._spline_layer)
+            self._napari_viewer.layers.selection.active = self._spline_layer
+        else:
+            self._set_spline_saved_state(True)
+
         self._image_status_label.setText(f"Loaded: {stitched_path.name}")
+
+    def _display_spline_button_pressed(self) -> None:
+        if self._spline_layer is None:
+            return
+
+        display_splines(
+            self._spline_layer,
+            self._interpolation_order_spinbox.value(),
+        )
+
+    def _save_spline_button_pressed(self) -> None:
+        if self._spline_layer is None:
+            self._spline_status_label.setText("No spline layer")
+            return
+
+        gonad_path = self._project_list_widget.get_current_project_path()
+        project_path = (
+            resolve_clsp_project_path(gonad_path)
+            if gonad_path is not None
+            else None
+        )
+        if project_path is None:
+            self._spline_status_label.setText("No project selected")
+            return
+
+        spline_path = (
+            project_path
+            / PROJECT_FILE_DIR_NAME
+            / REGIONS_DIR_NAME
+            / SPLINE_LAYER_FILE_NAME
+        )
+        if not save_spline_layer(self._spline_layer, spline_path):
+            self._spline_status_label.setText(
+                "Exactly one spline must be created"
+            )
+            self._set_spline_saved_state(False)
+            return
+
+        self._set_spline_saved_state(True)
+
+    def _set_spline_saved_state(self, saved: bool) -> None:
+        if saved:
+            self._spline_status_label.setText("Spline saved")
+            self._spline_status_label.setStyleSheet(
+                "color: #29BA00; font-weight: bold;"
+            )
+        else:
+            self._spline_status_label.setText("Spline not saved")
+            self._spline_status_label.setStyleSheet(
+                "color: gray; font-style: italic;"
+            )
