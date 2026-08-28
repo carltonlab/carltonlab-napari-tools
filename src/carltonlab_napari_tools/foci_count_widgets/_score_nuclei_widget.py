@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
+import tifffile
 from napari.layers import Image, Points
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
@@ -28,6 +29,7 @@ from carltonlab_napari_tools._shared_variables import (
     SBS_FILE_NAME_EXTENSION,
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
+from carltonlab_napari_tools._utils import get_project_stitched_image_path
 from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
     SBSFlag,
     SBSFlagsManager,
@@ -35,6 +37,8 @@ from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
+from carltonlab_napari_tools.image_processing import crop_sbs_data
+from carltonlab_napari_tools.image_resolver import resolve_lazy_image_data
 
 if TYPE_CHECKING:
     from napari.components import ViewerModel
@@ -218,6 +222,7 @@ class CLTScoreNucleiWidget(QWidget):
             QSizePolicy.Policy.Maximum,
             QSizePolicy.Policy.Preferred,
         )
+        self._cut_sbs_button.clicked.connect(self._on_cut_sbs_button_pressed)
         self._sbs_status_layout.addWidget(self._cut_sbs_button)
         self._sbs_status_layout.addStretch()
         self._control_layout.addWidget(self._sbs_status_widget)
@@ -344,6 +349,72 @@ class CLTScoreNucleiWidget(QWidget):
     def _project_selection_changed(self, *_args: object) -> None:
         if self._mode_combo.currentText() == "Single":
             self._load_project_scoring_data()
+
+    def _on_cut_sbs_button_pressed(self) -> None:
+        for project_data in self._project_scoring_data.values():
+            self._cut_project_sbs(project_data)
+
+        self._load_project_scoring_data()
+
+    def _cut_project_sbs(
+        self,
+        project_data: ProjectScoringData,
+    ) -> None:
+        stitched_path = get_project_stitched_image_path(
+            project_data.project_path
+        )
+        if stitched_path is None:
+            return
+
+        stitched_data = resolve_lazy_image_data(stitched_path)
+        if stitched_data is None:
+            return
+
+        flags_changed = False
+        cut_sbs_directory = (
+            project_data.project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / CUT_SBS_DIR_NAME
+        )
+        cut_sbs_directory.mkdir(parents=True, exist_ok=True)
+
+        for feature in project_data.features.to_dict(orient="records"):
+            sbs_number = int(feature["sbs_number"])
+            sbs_name = f"sbs{sbs_number}"
+            sbs_flags = project_data.flags_manager.get_flags(sbs_name)
+            needs_recalculation = (
+                SBSFlag.COORD_RECALC_NEEDED.value in sbs_flags
+            )
+            output_path = cut_sbs_directory / (
+                f"{project_data.project_name}_{sbs_name}"
+                f"{SBS_FILE_NAME_EXTENSION}"
+            )
+
+            if output_path.is_file() and not needs_recalculation:
+                continue
+
+            cropped_data = crop_sbs_data(stitched_data, feature)
+            if cropped_data is None:
+                continue
+
+            try:
+                tifffile.imwrite(
+                    output_path,
+                    cropped_data.compute().values,
+                )
+            except (OSError, ValueError):
+                continue
+
+            if needs_recalculation:
+                project_data.flags_manager.remove_flag(
+                    sbs_name,
+                    SBSFlag.COORD_RECALC_NEEDED,
+                )
+                flags_changed = True
+
+        if flags_changed:
+            project_data.flags_manager.save()
 
     def _update_sbs_list(self) -> None:
         self._sbs_list_widget.clear()
