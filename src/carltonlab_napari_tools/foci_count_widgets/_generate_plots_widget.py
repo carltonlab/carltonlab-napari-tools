@@ -12,6 +12,9 @@ from qtpy.QtWidgets import (
 )
 
 from carltonlab_napari_tools._shared_widgets import get_directory
+from carltonlab_napari_tools.foci_count_widgets._plot_manager import (
+    generate_foci_count_plots,
+)
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
@@ -86,3 +89,8 @@ class CLTGeneratePlotsWidget(QWidget):
     def _generate_plots_button_pressed(self) -> None:
         if self._output_directory is None:
             return
+
+        generate_foci_count_plots(
+            self._project_list_widget.get_project_paths(),
+            self._output_directory,
+        )
