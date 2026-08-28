@@ -85,10 +85,10 @@ class ProjectScoringData:
             / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
         )
 
-    def merge_sbs_scoring(
+    def merge_sbs_features(
         self,
         sbs_number: int,
-        stitched_foci_coords: list[list[float]],
+        updates: dict[str, object],
     ) -> bool:
         sbs_name = f"sbs{sbs_number}"
         if not self.lock_manager.owns(sbs_name):
@@ -106,12 +106,12 @@ class ProjectScoringData:
                 return False
 
             feature_index = matching_rows[0]
-            latest_features.loc[feature_index, "stitched_foci_coords"] = (
-                json.dumps(stitched_foci_coords)
-            )
-            latest_features.loc[feature_index, "scored_foci_number"] = len(
-                stitched_foci_coords
-            )
+            if any(
+                column not in latest_features.columns for column in updates
+            ):
+                return False
+            for column, value in updates.items():
+                latest_features.loc[feature_index, column] = value
 
             with NamedTemporaryFile(
                 mode="w",
@@ -132,6 +132,50 @@ class ProjectScoringData:
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
+            self.lock_manager.release(SCORING_SAVE_LOCK_NAME)
+
+        return True
+
+    def merge_sbs_scoring(
+        self,
+        sbs_number: int,
+        stitched_foci_coords: list[list[float]],
+    ) -> bool:
+        return self.merge_sbs_features(
+            sbs_number,
+            {
+                "stitched_foci_coords": json.dumps(stitched_foci_coords),
+                "scored_foci_number": len(stitched_foci_coords),
+            },
+        )
+
+    def merge_sbs_flag(
+        self,
+        sbs_name: str,
+        flag: SBSFlag | str,
+        *,
+        add: bool,
+    ) -> bool:
+        if not self.lock_manager.owns(sbs_name):
+            return False
+        if not self.lock_manager.acquire(SCORING_SAVE_LOCK_NAME):
+            return False
+
+        try:
+            latest_flags = SBSFlagsManager(self.project_path)
+            if not latest_flags.load():
+                return False
+
+            if add:
+                latest_flags.add_flag(sbs_name, flag)
+            else:
+                latest_flags.remove_flag(sbs_name, flag)
+
+            if not latest_flags.save():
+                return False
+
+            self.flags_manager = latest_flags
+        finally:
             self.lock_manager.release(SCORING_SAVE_LOCK_NAME)
 
         return True
@@ -191,6 +235,7 @@ class ScoreSBSEntry:
     foci_count: int | None
     scored: bool
     flags: list[str]
+    locked: bool
 
 
 class CLTScoreSBSRow(QWidget):
@@ -201,6 +246,7 @@ class CLTScoreSBSRow(QWidget):
         *,
         scored: bool = False,
         flags: list[SBSFlag | str] | None = None,
+        locked: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -231,6 +277,11 @@ class CLTScoreSBSRow(QWidget):
         )
         layout.addWidget(self._foci_label)
 
+        self._lock_label = QLabel("Locked")
+        self._lock_label.setStyleSheet("color: #D97706; font-weight: bold;")
+        self._lock_label.setVisible(locked)
+        layout.addWidget(self._lock_label)
+
         self._scored = scored
         self._flags = list(flags or [])
         self._set_flag_style(flags)
@@ -260,6 +311,9 @@ class CLTScoreSBSRow(QWidget):
         self._foci_label.setText(f"foci: {foci_count}")
         self._set_flag_style(self._flags)
 
+    def set_locked(self, locked: bool) -> None:
+        self._lock_label.setVisible(locked)
+
 
 class CLTScoreSBSListItem(QListWidgetItem):
     def __init__(
@@ -287,6 +341,8 @@ class CLTScoreNucleiWidget(QWidget):
         self._foci_points: Points | None = None
         self._area_indicator: Shapes | None = None
         self._project_scoring_data: dict[Path, ProjectScoringData] = {}
+        self._current_sbs_lock: tuple[Path, str] | None = None
+        self.destroyed.connect(self._release_all_project_locks)
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -609,7 +665,35 @@ class CLTScoreNucleiWidget(QWidget):
         ]
         return project_paths[0] if project_paths else None
 
+    def _release_current_sbs_lock(self) -> None:
+        if self._current_sbs_lock is None:
+            return
+
+        project_path, sbs_name = self._current_sbs_lock
+        project_data = self._project_scoring_data.get(project_path)
+        if project_data is not None:
+            project_data.lock_manager.release(sbs_name)
+        self._current_sbs_lock = None
+
+    def _release_all_project_locks(self, *_args: object) -> None:
+        for project_data in self._project_scoring_data.values():
+            project_data.lock_manager.release_all()
+        self._current_sbs_lock = None
+
+    def _set_item_locked(
+        self,
+        item: QListWidgetItem | None,
+        locked: bool,
+    ) -> None:
+        if not isinstance(item, CLTScoreSBSListItem):
+            return
+        item.entry.locked = locked
+        row_widget = self._sbs_list_widget.itemWidget(item)
+        if isinstance(row_widget, CLTScoreSBSRow):
+            row_widget.set_locked(locked)
+
     def _load_project_scoring_data(self, *_args: object) -> None:
+        self._release_all_project_locks()
         self._project_scoring_data.clear()
 
         for starting_path in self._get_scoring_project_paths():
@@ -688,8 +772,10 @@ class CLTScoreNucleiWidget(QWidget):
     def _sbs_selection_changed(
         self,
         current_item: QListWidgetItem | None,
-        _previous_item: QListWidgetItem | None,
+        previous_item: QListWidgetItem | None,
     ) -> None:
+        self._release_current_sbs_lock()
+        self._set_item_locked(previous_item, False)
         self._napari_viewer.layers.clear()
         self._sbs_images = []
         self._foci_points = None
@@ -708,10 +794,19 @@ class CLTScoreNucleiWidget(QWidget):
         if project_data is None:
             return
 
+        sbs_name = f"sbs{sbs_number}"
+        if not project_data.lock_manager.acquire(sbs_name):
+            self._set_item_locked(current_item, True)
+            show_error(f"{sbs_name} is currently locked by another user.")
+            return
+
+        self._current_sbs_lock = (project_path, sbs_name)
+        self._set_item_locked(current_item, False)
+
         if self._peek_toggle.isChecked():
             self._update_peek_details()
 
-        sbs_path = project_data.get_sbs_image_path(f"sbs{sbs_number}")
+        sbs_path = project_data.get_sbs_image_path(sbs_name)
         if sbs_path is None:
             return
 
@@ -989,22 +1084,27 @@ class CLTScoreNucleiWidget(QWidget):
         if not dimensions_changed:
             return
 
-        for column, value in new_dimensions.items():
-            project_data.features.loc[feature_index, column] = value
+        if not project_data.merge_sbs_features(
+            sbs_number,
+            new_dimensions,
+        ):
+            show_error(
+                "Could not update SBS dimensions. "
+                "The SBS or project save file is locked."
+            )
+            return
 
-        project_data.flags_manager.add_flag(
+        if not project_data.merge_sbs_flag(
             f"sbs{sbs_number}",
             SBSFlag.COORD_RECALC_NEEDED,
-        )
+            add=True,
+        ):
+            show_error(
+                "Could not mark the SBS for recalculation. "
+                "The SBS or project save file is locked."
+            )
+            return
 
-        features_path = (
-            project_data.project_path
-            / PROJECT_FILE_DIR_NAME
-            / PICK_NUCLEI_DIR_NAME
-            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
-        )
-        project_data.features.to_csv(features_path, index=False)
-        project_data.flags_manager.save()
         self._cut_project_sbs(project_data)
         self._update_cut_sbs_status()
         self._sbs_selection_changed(current_item, None)
@@ -1037,8 +1137,13 @@ class CLTScoreNucleiWidget(QWidget):
             return
 
         project_data, sbs_name = context
-        project_data.flags_manager.add_flag(sbs_name, flag)
-        project_data.flags_manager.save()
+        if not project_data.merge_sbs_flag(sbs_name, flag, add=True):
+            show_error(
+                "Could not add the flag. "
+                "The SBS or project save file is locked."
+            )
+            return
+
         self._update_cut_sbs_status()
         self._update_sbs_flags_controls()
 
@@ -1049,8 +1154,13 @@ class CLTScoreNucleiWidget(QWidget):
             return
 
         project_data, sbs_name = context
-        project_data.flags_manager.remove_flag(sbs_name, flag)
-        project_data.flags_manager.save()
+        if not project_data.merge_sbs_flag(sbs_name, flag, add=False):
+            show_error(
+                "Could not remove the flag. "
+                "The SBS or project save file is locked."
+            )
+            return
+
         self._update_cut_sbs_status()
         self._update_sbs_flags_controls()
 
@@ -1123,7 +1233,6 @@ class CLTScoreNucleiWidget(QWidget):
             return
 
         project_data.update_sbs_crop_bounds(stitched_data)
-        flags_changed = False
         cut_sbs_directory = (
             project_data.project_path
             / PROJECT_FILE_DIR_NAME
@@ -1135,44 +1244,67 @@ class CLTScoreNucleiWidget(QWidget):
         for feature in project_data.features.to_dict(orient="records"):
             sbs_number = int(feature["sbs_number"])
             sbs_name = f"sbs{sbs_number}"
-            sbs_flags = project_data.flags_manager.get_flags(sbs_name)
-            needs_recalculation = (
-                SBSFlag.COORD_RECALC_NEEDED.value in sbs_flags
-            )
-            output_path = cut_sbs_directory / (
-                f"{project_data.project_name}_{sbs_name}"
-                f"{SBS_FILE_NAME_EXTENSION}"
-            )
-
-            if output_path.is_file() and not needs_recalculation:
-                continue
-
-            crop_bounds = project_data.sbs_crop_bounds.get(sbs_number)
-            cropped_data = crop_sbs_data(
-                stitched_data,
-                feature,
-                crop_bounds,
-            )
-            if cropped_data is None:
-                continue
+            acquired_sbs_lock = False
+            if not project_data.lock_manager.owns(sbs_name):
+                if not project_data.lock_manager.acquire(sbs_name):
+                    continue
+                acquired_sbs_lock = True
 
             try:
-                tifffile.imwrite(
-                    output_path,
-                    cropped_data.compute().values,
-                )
-            except (OSError, ValueError):
-                continue
-
-            if needs_recalculation:
-                project_data.flags_manager.remove_flag(
+                self._cut_single_project_sbs(
+                    project_data,
+                    stitched_data,
+                    cut_sbs_directory,
+                    feature,
+                    sbs_number,
                     sbs_name,
-                    SBSFlag.COORD_RECALC_NEEDED,
                 )
-                flags_changed = True
+            finally:
+                if acquired_sbs_lock:
+                    project_data.lock_manager.release(sbs_name)
 
-        if flags_changed:
-            project_data.flags_manager.save()
+    def _cut_single_project_sbs(
+        self,
+        project_data: ProjectScoringData,
+        stitched_data: xr.DataArray,
+        cut_sbs_directory: Path,
+        feature: dict[str, object],
+        sbs_number: int,
+        sbs_name: str,
+    ) -> None:
+        sbs_flags = project_data.flags_manager.get_flags(sbs_name)
+        needs_recalculation = SBSFlag.COORD_RECALC_NEEDED.value in sbs_flags
+        output_path = cut_sbs_directory / (
+            f"{project_data.project_name}_{sbs_name}"
+            f"{SBS_FILE_NAME_EXTENSION}"
+        )
+
+        if output_path.is_file() and not needs_recalculation:
+            return
+
+        crop_bounds = project_data.sbs_crop_bounds.get(sbs_number)
+        cropped_data = crop_sbs_data(
+            stitched_data,
+            feature,
+            crop_bounds,
+        )
+        if cropped_data is None:
+            return
+
+        try:
+            tifffile.imwrite(
+                output_path,
+                cropped_data.compute().values,
+            )
+        except (OSError, ValueError):
+            return
+
+        if needs_recalculation:
+            project_data.merge_sbs_flag(
+                sbs_name,
+                SBSFlag.COORD_RECALC_NEEDED,
+                add=False,
+            )
 
     def _update_sbs_list(self) -> None:
         self._sbs_list_widget.clear()
@@ -1186,6 +1318,9 @@ class CLTScoreNucleiWidget(QWidget):
                 foci_count = None if pd.isna(foci_value) else int(foci_value)
                 flag_key = f"sbs{sbs_number}"
                 flags = project_data.flags_manager.get_flags(flag_key)
+                locked = project_data.lock_manager.is_locked(
+                    flag_key
+                ) and not project_data.lock_manager.owns(flag_key)
 
                 sbs_entries.append(
                     ScoreSBSEntry(
@@ -1194,6 +1329,7 @@ class CLTScoreNucleiWidget(QWidget):
                         foci_count=foci_count,
                         scored=foci_count is not None,
                         flags=flags,
+                        locked=locked,
                     )
                 )
 
@@ -1214,6 +1350,7 @@ class CLTScoreNucleiWidget(QWidget):
                 foci_count=entry.foci_count,
                 scored=entry.scored,
                 flags=entry.flags,
+                locked=entry.locked,
             )
             list_item = CLTScoreSBSListItem(entry)
             list_item.setSizeHint(row_widget.sizeHint())

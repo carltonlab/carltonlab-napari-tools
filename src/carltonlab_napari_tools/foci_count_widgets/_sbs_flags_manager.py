@@ -1,6 +1,8 @@
+import os
 from configparser import ConfigParser
 from enum import Enum
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from carltonlab_napari_tools._shared_variables import (
     PICK_NUCLEI_DIR_NAME,
@@ -85,12 +87,27 @@ class SBSFlagsManager:
             for sbs_name, sbs_flags in self._flags.items()
         }
 
+        temporary_path: Path | None = None
         try:
             flags_path = self._get_flags_path()
             flags_path.parent.mkdir(parents=True, exist_ok=True)
-            with flags_path.open("w", encoding="utf-8") as config_file:
-                config.write(config_file)
+            with NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=flags_path.parent,
+                prefix=f".{flags_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary_file:
+                temporary_path = Path(temporary_file.name)
+                config.write(temporary_file)
+
+            os.replace(temporary_path, flags_path)
+            temporary_path = None
         except OSError:
             return False
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
         return True

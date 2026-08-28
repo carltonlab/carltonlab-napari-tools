@@ -31,7 +31,25 @@ class SBSLockManager:
         )
 
     def owns(self, lock_name: str) -> bool:
-        return lock_name in self._owned_sbs_names
+        if lock_name not in self._owned_sbs_names:
+            return False
+
+        lock_path = self._lock_path(lock_name)
+        try:
+            with lock_path.open(encoding="utf-8") as lock_file:
+                lock_data = json.load(lock_file)
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            self._owned_sbs_names.discard(lock_name)
+            return False
+
+        if self._is_stale(lock_path):
+            self._owned_sbs_names.discard(lock_name)
+            return False
+
+        owns_lock = lock_data.get("owner_token") == self._owner_token
+        if not owns_lock:
+            self._owned_sbs_names.discard(lock_name)
+        return owns_lock
 
     def is_locked(self, lock_name: str) -> bool:
         lock_path = self._lock_path(lock_name)
