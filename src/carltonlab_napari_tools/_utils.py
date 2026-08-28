@@ -7,9 +7,26 @@ from pathlib import Path
 from napari.utils.notifications import show_error
 
 from carltonlab_napari_tools._shared_variables import (
+    CLSP_PROJECT_SUFFIX,
     PROJECT_TYPES,
     STITCHED_IMAGE_DIR_NAME,
 )
+
+
+def resolve_clsp_project_path(starting_path: Path) -> Path | None:
+    if starting_path.name.endswith(CLSP_PROJECT_SUFFIX):
+        return starting_path
+
+    try:
+        project_paths = sorted(
+            path
+            for path in starting_path.iterdir()
+            if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
+        )
+    except OSError:
+        return None
+
+    return project_paths[0] if project_paths else None
 
 
 def get_project_stitched_image_path(

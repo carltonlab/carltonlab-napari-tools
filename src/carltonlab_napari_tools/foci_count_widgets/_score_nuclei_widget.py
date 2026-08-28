@@ -48,7 +48,10 @@ from carltonlab_napari_tools._tile_utils import (
     load_tile_bounding_boxes,
     load_tile_contrasts,
 )
-from carltonlab_napari_tools._utils import get_project_stitched_image_path
+from carltonlab_napari_tools._utils import (
+    get_project_stitched_image_path,
+    resolve_clsp_project_path,
+)
 from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
     SBSFlag,
     SBSFlagsManager,
@@ -660,9 +663,7 @@ class CLTScoreNucleiWidget(QWidget):
 
     @staticmethod
     def is_project_scoring_complete(project_path: Path) -> bool:
-        resolved_project_path = CLTScoreNucleiWidget._resolve_project_path(
-            project_path
-        )
+        resolved_project_path = resolve_clsp_project_path(project_path)
         if resolved_project_path is None:
             return False
 
@@ -703,18 +704,6 @@ class CLTScoreNucleiWidget(QWidget):
 
         return self._project_list_widget.get_project_paths()
 
-    @staticmethod
-    def _resolve_project_path(starting_path: Path) -> Path | None:
-        if starting_path.name.endswith(CLSP_PROJECT_SUFFIX):
-            return starting_path
-
-        project_paths = [
-            path
-            for path in starting_path.iterdir()
-            if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
-        ]
-        return project_paths[0] if project_paths else None
-
     def _release_current_sbs_lock(self) -> None:
         if self._current_sbs_lock is None:
             return
@@ -747,7 +736,7 @@ class CLTScoreNucleiWidget(QWidget):
         self._project_scoring_data.clear()
 
         for starting_path in self._get_scoring_project_paths():
-            project_path = self._resolve_project_path(starting_path)
+            project_path = resolve_clsp_project_path(starting_path)
             if project_path is None:
                 continue
 

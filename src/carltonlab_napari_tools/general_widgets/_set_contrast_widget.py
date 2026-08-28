@@ -21,7 +21,6 @@ from qtpy.QtWidgets import (
 from superqt import QRangeSlider
 
 from carltonlab_napari_tools._shared_variables import (
-    CLSP_PROJECT_SUFFIX,
     EXTRACTED_CHANNELS_FILE_NAME,
     IMAGE_CONTRASTS_FILE_NAME,
     PROJECT_FILE_DIR_NAME,
@@ -32,7 +31,10 @@ from carltonlab_napari_tools._shared_variables import (
     TILES_DIR_NAME,
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
-from carltonlab_napari_tools._utils import parse_channel_string
+from carltonlab_napari_tools._utils import (
+    parse_channel_string,
+    resolve_clsp_project_path,
+)
 from carltonlab_napari_tools._viewer_utils import open_ome_zarr_layers
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
@@ -369,20 +371,6 @@ class CLTSetContrastWidget(QWidget):
 
         self._on_project_selection_changed()
 
-    def _resolve_project_path(
-        self,
-        starting_path: Path,
-    ) -> Path | None:
-        if starting_path.name.endswith(CLSP_PROJECT_SUFFIX):
-            return starting_path
-
-        project_paths = [
-            path
-            for path in starting_path.iterdir()
-            if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
-        ]
-        return project_paths[0] if project_paths else None
-
     def _on_project_selection_changed(self) -> None:
         self._clear_open_image()
         self._clear_contrast_widgets()
@@ -393,7 +381,7 @@ class CLTSetContrastWidget(QWidget):
             self._project_label.setText("Current project")
             return
 
-        project_path = self._resolve_project_path(starting_path)
+        project_path = resolve_clsp_project_path(starting_path)
         if project_path is None:
             self._project_label.setText("Current project")
             return
@@ -486,7 +474,7 @@ class CLTSetContrastWidget(QWidget):
             )
 
         starting_path = self._project_list_widget.get_current_project_path()
-        project_path = self._resolve_project_path(
+        project_path = resolve_clsp_project_path(
             starting_path or image_path.parent
         )
         if project_path is None:

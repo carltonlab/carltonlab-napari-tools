@@ -14,6 +14,11 @@ from qtpy.QtWidgets import (
 )
 
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
+from carltonlab_napari_tools._utils import (
+    get_project_stitched_image_path,
+    resolve_clsp_project_path,
+)
+from carltonlab_napari_tools._viewer_utils import open_ome_zarr_layers
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
@@ -33,6 +38,9 @@ class CLTStitchedRegionsWidget(QWidget):
 
         self._napari_viewer = napari_viewer
         self._project_list_widget = project_list_widget
+        self._project_list_widget.itemSelectionChanged.connect(
+            self._on_project_selection_changed
+        )
 
         self._image_layer: Image | None = None
         self._spline_layer: Shapes | None = None
@@ -160,3 +168,38 @@ class CLTStitchedRegionsWidget(QWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
+
+        self._load_selected_project_image()
+
+    def _on_project_selection_changed(self) -> None:
+        self._load_selected_project_image()
+
+    def _load_selected_project_image(self) -> None:
+        self._image_layer = None
+        self._napari_viewer.layers.clear()
+
+        gonad_path = self._project_list_widget.get_current_project_path()
+        if gonad_path is None:
+            self._image_status_label.setText("No project selected")
+            return
+
+        project_path = resolve_clsp_project_path(gonad_path)
+        if project_path is None:
+            self._image_status_label.setText("No CLSP project found")
+            return
+
+        stitched_path = get_project_stitched_image_path(project_path)
+        if stitched_path is None:
+            self._image_status_label.setText("No stitched image found")
+            return
+
+        opened_images = open_ome_zarr_layers(
+            self._napari_viewer,
+            str(stitched_path),
+        )
+        if not opened_images:
+            self._image_status_label.setText("Could not open stitched image")
+            return
+
+        self._image_layer = opened_images[0]
+        self._image_status_label.setText(f"Loaded: {stitched_path.name}")

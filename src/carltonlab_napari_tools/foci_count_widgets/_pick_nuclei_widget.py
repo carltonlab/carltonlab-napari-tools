@@ -26,7 +26,6 @@ from qtpy.QtWidgets import (
 )
 
 from carltonlab_napari_tools._shared_variables import (
-    CLSP_PROJECT_SUFFIX,
     IMAGE_CONTRASTS_FILE_NAME,
     NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
     NUCLEI_POINTS_LAYER_FILE_NAME,
@@ -35,6 +34,7 @@ from carltonlab_napari_tools._shared_variables import (
     STITCHED_IMAGE_DIR_NAME,
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
+from carltonlab_napari_tools._utils import resolve_clsp_project_path
 from carltonlab_napari_tools._viewer_utils import open_ome_zarr_layers
 from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
     SBSFlag,
@@ -698,7 +698,7 @@ class CLTPickNucleiWidget(QWidget):
         if project_path is None:
             return
 
-        project_path = self._resolve_project_path(project_path)
+        project_path = resolve_clsp_project_path(project_path)
         if project_path is None:
             return
 
@@ -962,22 +962,8 @@ class CLTPickNucleiWidget(QWidget):
         ) = nuclei_paths
 
     @staticmethod
-    def _resolve_project_path(starting_path: Path) -> Path | None:
-        if starting_path.name.endswith(CLSP_PROJECT_SUFFIX):
-            return starting_path
-
-        project_paths = [
-            path
-            for path in starting_path.iterdir()
-            if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
-        ]
-        return project_paths[0] if project_paths else None
-
-    @staticmethod
     def is_project_nuclei_complete(project_path: Path) -> bool:
-        resolved_project_path = CLTPickNucleiWidget._resolve_project_path(
-            project_path
-        )
+        resolved_project_path = resolve_clsp_project_path(project_path)
         if resolved_project_path is None:
             return False
 
