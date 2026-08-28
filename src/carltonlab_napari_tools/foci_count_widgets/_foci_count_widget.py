@@ -37,6 +37,7 @@ from carltonlab_napari_tools._shared_variables import (
 from carltonlab_napari_tools._shared_widgets import (
     FrameSeparator,
     KeepChannelsWidget,
+    ToggleVisibilityButton,
     get_directories,
     get_directory,
     get_file,
@@ -323,6 +324,17 @@ class IntegrationWidget(QWidget):
             self._project_directories_list
         )
 
+        self._project_directories_visibility_button = ToggleVisibilityButton(
+            self._project_directories_list,
+            parent=self,
+        )
+        self._project_directories_header_layout.insertWidget(
+            1,
+            self._project_directories_visibility_button,
+        )
+
+        self._layout.addWidget(FrameSeparator(parent=self))
+
         self._keep_channels_widget = KeepChannelsWidget(parent=self)
         self._keep_channels_widget._keep_channels_cb.toggled.connect(
             self._on_keep_channels_changed
@@ -330,7 +342,7 @@ class IntegrationWidget(QWidget):
         self._keep_channels_widget._keep_channels_line_edit.editingFinished.connect(
             self._on_keep_channels_changed
         )
-        self._project_directories_layout.addWidget(self._keep_channels_widget)
+        self._layout.addWidget(self._keep_channels_widget)
 
         self._layout.addWidget(FrameSeparator(parent=self))
 
@@ -350,10 +362,6 @@ class IntegrationWidget(QWidget):
 
         self._layout.addSpacing(6)
 
-        self._process_workflow_title = QLabel("Process workflow")
-        self._process_workflow_title.setStyleSheet("font-weight: bold")
-        self._layout.addWidget(self._process_workflow_title)
-
         self._process_workflow_container = QWidget()
         self._process_workflow_layout = QVBoxLayout()
         self._process_workflow_layout.setContentsMargins(0, 0, 0, 0)
@@ -361,6 +369,38 @@ class IntegrationWidget(QWidget):
         self._process_workflow_container.setLayout(
             self._process_workflow_layout
         )
+
+        self._process_workflow_title_row = QWidget()
+        self._process_workflow_title_layout = QHBoxLayout()
+        self._process_workflow_title_layout.setContentsMargins(
+            0,
+            0,
+            0,
+            0,
+        )
+        self._process_workflow_title_row.setLayout(
+            self._process_workflow_title_layout
+        )
+
+        self._process_workflow_title = QLabel("Process workflow")
+        self._process_workflow_title.setStyleSheet("font-weight: bold")
+        self._process_workflow_title.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._process_workflow_title_layout.addWidget(
+            self._process_workflow_title
+        )
+
+        self._process_workflow_visibility_button = ToggleVisibilityButton(
+            self._process_workflow_container,
+            parent=self,
+        )
+        self._process_workflow_title_layout.addWidget(
+            self._process_workflow_visibility_button
+        )
+
+        self._layout.addWidget(self._process_workflow_title_row)
         self._layout.addWidget(self._process_workflow_container)
 
         self._stitch_gonads_button = QPushButton("1.Stitch gonads")
@@ -399,7 +439,11 @@ class IntegrationWidget(QWidget):
         self._workflow_widget_layout = QVBoxLayout()
         self._workflow_widget_layout.setContentsMargins(0, 0, 0, 0)
         self._workflow_widget_container.setLayout(self._workflow_widget_layout)
-        self._layout.addWidget(self._workflow_widget_container)
+        self._workflow_widget_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        self._layout.addWidget(self._workflow_widget_container, 1)
 
         self._current_widget: QWidget | None = None
 

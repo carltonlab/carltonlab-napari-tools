@@ -1,7 +1,10 @@
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from qtpy.QtCore import QSize
+from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
+    QWIDGETSIZE_MAX,
     QAbstractItemView,
     QCheckBox,
     QFileDialog,
@@ -12,6 +15,7 @@ from qtpy.QtWidgets import (
     QLineEdit,
     QListView,
     QMessageBox,
+    QPushButton,
     QSizePolicy,
     QTreeView,
     QVBoxLayout,
@@ -54,6 +58,45 @@ class FrameSeparator(QWidget):
         layout.addSpacing(spacing_width[1])
 
 
+class ToggleVisibilityButton(QPushButton):
+    def __init__(
+        self,
+        content_widget: QWidget | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+
+        self._content_widget = content_widget
+        self._expanded = True
+
+        icons_directory = Path(__file__).resolve().parent / "assets" / "icons"
+        self._collapse_icon = QIcon(str(icons_directory / "collapse.svg"))
+        self._expand_icon = QIcon(str(icons_directory / "expand.svg"))
+
+        self.setFixedSize(30, 30)
+        self.setIcon(self._collapse_icon)
+        self.setIconSize(QSize(24, 24))
+        self.clicked.connect(self._toggle_widgets)
+
+    def set_content_widget(self, content_widget: QWidget) -> None:
+        self._content_widget = content_widget
+        self._update_content_height()
+
+    def _update_content_height(self) -> None:
+        if self._content_widget is None:
+            return
+        self._content_widget.setMaximumHeight(
+            QWIDGETSIZE_MAX if self._expanded else 0
+        )
+
+    def _toggle_widgets(self) -> None:
+        self._expanded = not self._expanded
+        self._update_content_height()
+        self.setIcon(
+            self._collapse_icon if self._expanded else self._expand_icon
+        )
+
+
 class KeepChannelsWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -65,14 +108,31 @@ class KeepChannelsWidget(QWidget):
         self.setLayout(self._layout)
 
         self._keep_channels_cb = QCheckBox("Keep channels")
+        self._keep_channels_cb.setStyleSheet("font-weight: bold")
         self._keep_channels_cb.toggled.connect(self._on_keep_channels_toggled)
-        self._layout.addWidget(self._keep_channels_cb)
+
+        self._keep_channels_title_row = QWidget()
+        self._keep_channels_title_layout = QHBoxLayout()
+        self._keep_channels_title_layout.setContentsMargins(0, 0, 0, 0)
+        self._keep_channels_title_row.setLayout(
+            self._keep_channels_title_layout
+        )
+        self._keep_channels_title_layout.addWidget(self._keep_channels_cb)
+        self._layout.addWidget(self._keep_channels_title_row)
 
         self._keep_channels_row = QWidget()
         self._keep_channels_row_layout = QHBoxLayout()
         self._keep_channels_row_layout.setContentsMargins(0, 0, 0, 0)
         self._keep_channels_row.setLayout(self._keep_channels_row_layout)
-        self._layout.addWidget(self._keep_channels_row)
+
+        self._keep_channels_content = QWidget()
+        self._keep_channels_content_layout = QVBoxLayout()
+        self._keep_channels_content_layout.setContentsMargins(0, 0, 0, 0)
+        self._keep_channels_content.setLayout(
+            self._keep_channels_content_layout
+        )
+        self._layout.addWidget(self._keep_channels_content)
+        self._keep_channels_content_layout.addWidget(self._keep_channels_row)
 
         self._keep_channels_label = QLabel("Keep channels")
         self._keep_channels_label.setSizePolicy(
@@ -95,7 +155,7 @@ class KeepChannelsWidget(QWidget):
         self._output_channel_row_layout = QHBoxLayout()
         self._output_channel_row_layout.setContentsMargins(0, 0, 0, 0)
         self._output_channel_row.setLayout(self._output_channel_row_layout)
-        self._layout.addWidget(self._output_channel_row)
+        self._keep_channels_content_layout.addWidget(self._output_channel_row)
 
         self._output_channel_label = QLabel("Channel order: ")
         self._output_channel_row_layout.addWidget(self._output_channel_label)
@@ -105,6 +165,14 @@ class KeepChannelsWidget(QWidget):
             self._output_channel_result_label
         )
         self._output_channel_row_layout.addStretch()
+
+        self._keep_channels_visibility_button = ToggleVisibilityButton(
+            self._keep_channels_content,
+            parent=self,
+        )
+        self._keep_channels_title_layout.addWidget(
+            self._keep_channels_visibility_button
+        )
 
         self._on_keep_channels_toggled(False)
 

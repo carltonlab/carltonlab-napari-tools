@@ -14,6 +14,8 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from carltonlab_napari_tools._shared_widgets import ToggleVisibilityButton
+
 
 class CLToggleSavePathWidget(QWidget):
     def __init__(
@@ -39,13 +41,25 @@ class CLToggleSavePathWidget(QWidget):
         self._title_cb = QCheckBox(title)
         self._title_cb.setStyleSheet("font-weight: bold")
         self._title_cb.toggled.connect(self._on_title_toggled)
-        self._layout.addWidget(self._title_cb)
+
+        self._title_row = QWidget()
+        self._title_row_layout = QHBoxLayout()
+        self._title_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._title_row.setLayout(self._title_row_layout)
+        self._title_row_layout.addWidget(self._title_cb)
+        self._layout.addWidget(self._title_row)
+
+        self._content_widget = QWidget()
+        self._content_layout = QVBoxLayout()
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_widget.setLayout(self._content_layout)
+        self._layout.addWidget(self._content_widget)
 
         self._path_c = QWidget()
         self._path_layout = QHBoxLayout()
         self._path_layout.setContentsMargins(0, 0, 0, 0)
         self._path_c.setLayout(self._path_layout)
-        self._layout.addWidget(self._path_c)
+        self._content_layout.addWidget(self._path_c)
 
         self._path_title_lb = QLabel("Path")
         self._path_title_lb.setSizePolicy(
@@ -67,11 +81,17 @@ class CLToggleSavePathWidget(QWidget):
         self._path_layout.addWidget(self._browse_button)
 
         self._status_lb = QLabel("")
-        self._layout.addWidget(self._status_lb)
+        self._content_layout.addWidget(self._status_lb)
 
         self._save_button = QPushButton("Save")
         self._save_button.clicked.connect(self._on_save_button_pressed)
-        self._layout.addWidget(self._save_button)
+        self._content_layout.addWidget(self._save_button)
+
+        self._visibility_button = ToggleVisibilityButton(
+            self._content_widget,
+            parent=self,
+        )
+        self._title_row_layout.addWidget(self._visibility_button)
 
         self._on_title_toggled(toggled)
         self._update_status_label()
