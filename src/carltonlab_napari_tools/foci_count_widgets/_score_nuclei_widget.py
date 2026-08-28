@@ -276,6 +276,9 @@ class CLTScoreNucleiWidget(QWidget):
 
         self._sbs_list_widget = QListWidget()
         self._layout.addWidget(self._sbs_list_widget)
+        self._sbs_list_widget.currentItemChanged.connect(
+            self._sbs_selection_changed
+        )
         self._mode_combo.currentTextChanged.connect(
             self._load_project_scoring_data
         )
@@ -345,6 +348,47 @@ class CLTScoreNucleiWidget(QWidget):
 
         self._cut_sbs_button.setEnabled(has_missing_sbs)
         self._update_sbs_list()
+
+    def _sbs_selection_changed(
+        self,
+        current_item: QListWidgetItem | None,
+        _previous_item: QListWidgetItem | None,
+    ) -> None:
+        self._napari_viewer.layers.clear()
+        self._sbs_image = None
+        self._foci_points = None
+
+        if current_item is None:
+            return
+
+        item_data = current_item.data(Qt.ItemDataRole.UserRole)
+        if (
+            not isinstance(item_data, tuple)
+            or len(item_data) != 2
+            or not isinstance(item_data[0], Path)
+            or not isinstance(item_data[1], int)
+        ):
+            return
+
+        project_path, sbs_number = item_data
+        project_data = self._project_scoring_data.get(project_path)
+        if project_data is None:
+            return
+
+        sbs_path = project_data.get_sbs_image_path(f"sbs{sbs_number}")
+        if sbs_path is None:
+            return
+
+        opened_layers = self._napari_viewer.open(str(sbs_path))
+        image_layers = (
+            opened_layers
+            if isinstance(opened_layers, list)
+            else [opened_layers]
+        )
+        self._sbs_image = next(
+            (layer for layer in image_layers if isinstance(layer, Image)),
+            None,
+        )
 
     def _project_selection_changed(self, *_args: object) -> None:
         if self._mode_combo.currentText() == "Single":
