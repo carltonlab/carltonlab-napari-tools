@@ -274,13 +274,14 @@ class CLTScoreNucleiWidget(QWidget):
         self._peek_layout.addWidget(self._peek_label)
 
         self._peek_toggle = QToggleSwitch()
+        self._peek_toggle.toggled.connect(self._on_peek_toggled)
         self._peek_layout.addWidget(self._peek_toggle)
         self._peek_layout.addStretch()
         self._control_layout.addWidget(self._peek_widget)
 
         self._peek_details_widget = QWidget()
         self._peek_details_layout = QVBoxLayout()
-        self._peek_details_layout.setContentsMargins(0, 0, 0, 0)
+        self._peek_details_layout.setContentsMargins(12, 0, 0, 0)
         self._peek_details_widget.setLayout(self._peek_details_layout)
         self._peek_details_widget.setVisible(False)
 
@@ -296,6 +297,7 @@ class CLTScoreNucleiWidget(QWidget):
                 QSizePolicy.Policy.Maximum,
                 QSizePolicy.Policy.Preferred,
             )
+            label.setStyleSheet("font-style: italic;")
         self._peek_details_layout.addWidget(self._sbs_name_label)
         self._peek_details_layout.addWidget(self._flags_label)
         self._peek_details_layout.addWidget(self._region_label)
@@ -399,6 +401,9 @@ class CLTScoreNucleiWidget(QWidget):
         if project_data is None:
             return
 
+        if self._peek_toggle.isChecked():
+            self._update_peek_details()
+
         sbs_path = project_data.get_sbs_image_path(f"sbs{sbs_number}")
         if sbs_path is None:
             return
@@ -413,6 +418,47 @@ class CLTScoreNucleiWidget(QWidget):
             (layer for layer in image_layers if isinstance(layer, Image)),
             None,
         )
+
+    def _on_peek_toggled(self, checked: bool) -> None:
+        if not checked:
+            self._peek_details_widget.setVisible(False)
+            return
+
+        self._update_peek_details()
+
+    def _update_peek_details(self) -> None:
+        current_item = self._sbs_list_widget.currentItem()
+        if not isinstance(current_item, CLTScoreSBSListItem):
+            self._peek_details_widget.setVisible(False)
+            return
+
+        entry = current_item.entry
+        project_data = self._project_scoring_data.get(entry.project_path)
+        if project_data is None:
+            self._peek_details_widget.setVisible(False)
+            return
+
+        matching_features = project_data.features[
+            project_data.features["sbs_number"] == entry.sbs_number
+        ]
+        if matching_features.empty:
+            self._peek_details_widget.setVisible(False)
+            return
+
+        feature = matching_features.iloc[0]
+        sbs_name = f"sbs{entry.sbs_number}"
+        sbs_path = project_data.get_sbs_image_path(sbs_name)
+        sbs_filename = sbs_path.name if sbs_path is not None else "Not cut"
+        flags = project_data.flags_manager.get_flags(sbs_name)
+        flags_text = ", ".join(flags) if flags else "None"
+
+        region = feature.get("region")
+        region_text = "None" if pd.isna(region) else str(region)
+
+        self._sbs_name_label.setText(f"SBS name: {sbs_filename}")
+        self._flags_label.setText(f"Flags: {flags_text}")
+        self._region_label.setText(f"Region: {region_text}")
+        self._peek_details_widget.setVisible(True)
 
     def _project_selection_changed(self, *_args: object) -> None:
         if self._mode_combo.currentText() == "Single":
