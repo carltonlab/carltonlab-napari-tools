@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from random import shuffle
@@ -5,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 import tifffile
+import xarray as xr
 from napari.layers import Image, Points, Shapes
 from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import (
@@ -16,6 +18,7 @@ from qtpy.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -47,7 +50,11 @@ from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
-from carltonlab_napari_tools.image_processing import crop_sbs_data
+from carltonlab_napari_tools.image_processing import (
+    SBSCropBounds,
+    crop_sbs_data,
+    get_sbs_crop_bounds,
+)
 from carltonlab_napari_tools.image_resolver import resolve_lazy_image_data
 
 if TYPE_CHECKING:
@@ -61,6 +68,15 @@ class ProjectScoringData:
     features: pd.DataFrame
     flags_manager: SBSFlagsManager
     tile_bounding_boxes: dict[Path, TileBoundingBox]
+    sbs_crop_bounds: dict[int, SBSCropBounds]
+
+    def update_sbs_crop_bounds(self, image_data: xr.DataArray) -> None:
+        self.sbs_crop_bounds.clear()
+        for feature in self.features.to_dict(orient="records"):
+            sbs_number = int(feature["sbs_number"])
+            bounds = get_sbs_crop_bounds(feature, image_data)
+            if bounds is not None:
+                self.sbs_crop_bounds[sbs_number] = bounds
 
     def get_sbs_image_path(self, sbs_name: str) -> Path | None:
         if not sbs_name.startswith("sbs"):
@@ -142,14 +158,15 @@ class CLTScoreSBSRow(QWidget):
         )
         layout.addWidget(separator_label)
 
-        foci_label = QLabel(f"foci: {foci_count}")
-        foci_label.setSizePolicy(
+        self._foci_label = QLabel(f"foci: {foci_count}")
+        self._foci_label.setSizePolicy(
             QSizePolicy.Policy.Maximum,
             QSizePolicy.Policy.Preferred,
         )
-        layout.addWidget(foci_label)
+        layout.addWidget(self._foci_label)
 
         self._scored = scored
+        self._flags = list(flags or [])
         self._set_flag_style(flags)
 
     def _set_flag_style(self, flags: list[SBSFlag | str] | None) -> None:
@@ -169,7 +186,13 @@ class CLTScoreSBSRow(QWidget):
             self.showing_label.setStyleSheet("color: black;")
 
     def set_flags(self, flags: list[SBSFlag | str]) -> None:
+        self._flags = list(flags)
         self._set_flag_style(flags)
+
+    def set_foci_count(self, foci_count: int) -> None:
+        self._scored = True
+        self._foci_label.setText(f"foci: {foci_count}")
+        self._set_flag_style(self._flags)
 
 
 class CLTScoreSBSListItem(QListWidgetItem):
@@ -376,15 +399,49 @@ class CLTScoreNucleiWidget(QWidget):
         )
         self._width_spinbox.valueChanged.connect(self._update_area_indicator)
         self._height_spinbox.valueChanged.connect(self._update_area_indicator)
+        self._point_size_spinbox = QSpinBox()
+        self._point_size_spinbox.setRange(1, 1_000_000)
+        self._point_size_spinbox.setValue(10)
+        self._point_size_spinbox.valueChanged.connect(
+            self._on_point_size_changed
+        )
+
+        self._point_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._point_opacity_slider.setRange(0, 100)
+        self._point_opacity_slider.setValue(60)
+        self._point_opacity_slider.valueChanged.connect(
+            self._on_point_opacity_changed
+        )
+
         self._sbs_dimensions_layout.addWidget(self._apply_dimensions_button)
         self._sbs_dimensions_layout.addStretch()
         self._layout.addWidget(self._sbs_dimensions_widget)
+
+        self._point_controls_widget = QWidget()
+        self._point_controls_layout = QHBoxLayout()
+        self._point_controls_layout.setContentsMargins(0, 0, 0, 0)
+        self._point_controls_widget.setLayout(self._point_controls_layout)
+        self._point_size_label = QLabel("Point size:")
+        self._point_opacity_label = QLabel("Opacity:")
+        self._point_controls_layout.addWidget(self._point_size_label)
+        self._point_controls_layout.addWidget(self._point_size_spinbox)
+        self._point_controls_layout.addWidget(self._point_opacity_label)
+        self._point_controls_layout.addWidget(self._point_opacity_slider)
+        self._layout.addWidget(self._point_controls_widget)
 
         self._sbs_list_widget = QListWidget()
         self._layout.addWidget(self._sbs_list_widget)
         self._sbs_list_widget.currentItemChanged.connect(
             self._sbs_selection_changed
         )
+
+        self._layout.addWidget(FrameSeparator(parent=self))
+        self._save_foci_button = QPushButton("Save foci points")
+        self._save_foci_button.clicked.connect(
+            self._on_save_foci_points_button_pressed
+        )
+        self._layout.addWidget(self._save_foci_button)
+
         self._mode_combo.currentTextChanged.connect(
             self._load_project_scoring_data
         )
@@ -526,6 +583,7 @@ class CLTScoreNucleiWidget(QWidget):
                 features=features,
                 flags_manager=flags_manager,
                 tile_bounding_boxes=tile_bounding_boxes,
+                sbs_crop_bounds={},
             )
 
         self._update_cut_sbs_status()
@@ -623,6 +681,18 @@ class CLTScoreNucleiWidget(QWidget):
                     spinbox.setValue(int(value))
 
         self._update_area_indicator()
+        self._load_foci_points(project_data, sbs_number, feature)
+        if self._foci_points is not None:
+            with (
+                QSignalBlocker(self._point_size_spinbox),
+                QSignalBlocker(self._point_opacity_slider),
+            ):
+                self._point_size_spinbox.setValue(
+                    int(round(float(self._foci_points.current_size)))
+                )
+                self._point_opacity_slider.setValue(
+                    int(round(self._foci_points.opacity * 100))
+                )
 
         tile_path = find_tile_for_sbs(
             feature.to_dict(),
@@ -694,6 +764,129 @@ class CLTScoreNucleiWidget(QWidget):
             )
         else:
             self._area_indicator.data = [rectangle]
+
+    def _ensure_project_crop_bounds(
+        self,
+        project_data: ProjectScoringData,
+    ) -> None:
+        if project_data.sbs_crop_bounds:
+            return
+
+        stitched_path = get_project_stitched_image_path(
+            project_data.project_path
+        )
+        if stitched_path is None:
+            return
+
+        stitched_data = resolve_lazy_image_data(stitched_path)
+        if stitched_data is not None:
+            project_data.update_sbs_crop_bounds(stitched_data)
+
+    def _load_foci_points(
+        self,
+        project_data: ProjectScoringData,
+        sbs_number: int,
+        feature: pd.Series,
+    ) -> None:
+        self._ensure_project_crop_bounds(project_data)
+        crop_bounds = project_data.sbs_crop_bounds.get(sbs_number)
+        if crop_bounds is None:
+            self._foci_points = self._napari_viewer.add_points(
+                [],
+                ndim=3,
+                name="Foci points",
+                size=self._point_size_spinbox.value(),
+                opacity=self._point_opacity_slider.value() / 100,
+            )
+            return
+
+        raw_coordinates = feature.get("stitched_foci_coords", "[]")
+        try:
+            stitched_coordinates = json.loads(str(raw_coordinates))
+        except (TypeError, json.JSONDecodeError):
+            stitched_coordinates = []
+
+        local_coordinates = [
+            crop_bounds.stitched_to_local(
+                tuple(float(value) for value in coordinates)
+            )
+            for coordinates in stitched_coordinates
+            if len(coordinates) == 3
+        ]
+        self._foci_points = self._napari_viewer.add_points(
+            local_coordinates,
+            ndim=3,
+            name="Foci points",
+            size=self._point_size_spinbox.value(),
+            opacity=self._point_opacity_slider.value() / 100,
+        )
+
+    def _on_point_size_changed(self, value: int) -> None:
+        if self._foci_points is not None:
+            self._foci_points.size = value
+            self._foci_points.current_size = value
+
+    def _on_point_opacity_changed(self, value: int) -> None:
+        if self._foci_points is not None:
+            self._foci_points.opacity = value / 100
+
+    def _on_save_foci_points_button_pressed(self) -> None:
+        if self._foci_points is None:
+            return
+
+        current_item = self._sbs_list_widget.currentItem()
+        if not isinstance(current_item, CLTScoreSBSListItem):
+            return
+
+        project_data = self._project_scoring_data.get(
+            current_item.entry.project_path
+        )
+        if project_data is None:
+            return
+
+        sbs_number = current_item.entry.sbs_number
+        self._ensure_project_crop_bounds(project_data)
+        crop_bounds = project_data.sbs_crop_bounds.get(sbs_number)
+        if crop_bounds is None:
+            return
+
+        stitched_foci_coords = [
+            list(
+                crop_bounds.local_to_stitched(
+                    tuple(float(value) for value in point)
+                )
+            )
+            for point in self._foci_points.data
+            if len(point) == 3
+        ]
+
+        matching_rows = project_data.features.index[
+            project_data.features["sbs_number"] == sbs_number
+        ]
+        if len(matching_rows) == 0:
+            return
+
+        feature_index = matching_rows[0]
+        project_data.features.loc[feature_index, "stitched_foci_coords"] = (
+            json.dumps(stitched_foci_coords)
+        )
+        project_data.features.loc[feature_index, "scored_foci_number"] = len(
+            stitched_foci_coords
+        )
+        current_item.entry.foci_count = len(stitched_foci_coords)
+        current_item.entry.scored = True
+
+        row_widget = self._sbs_list_widget.itemWidget(current_item)
+        if isinstance(row_widget, CLTScoreSBSRow):
+            row_widget.set_foci_count(len(stitched_foci_coords))
+
+        features_path = (
+            project_data.project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        )
+        project_data.features.to_csv(features_path, index=False)
 
     def _get_selected_sbs_context(
         self,
@@ -874,6 +1067,7 @@ class CLTScoreNucleiWidget(QWidget):
         if stitched_data is None:
             return
 
+        project_data.update_sbs_crop_bounds(stitched_data)
         flags_changed = False
         cut_sbs_directory = (
             project_data.project_path
@@ -898,7 +1092,12 @@ class CLTScoreNucleiWidget(QWidget):
             if output_path.is_file() and not needs_recalculation:
                 continue
 
-            cropped_data = crop_sbs_data(stitched_data, feature)
+            crop_bounds = project_data.sbs_crop_bounds.get(sbs_number)
+            cropped_data = crop_sbs_data(
+                stitched_data,
+                feature,
+                crop_bounds,
+            )
             if cropped_data is None:
                 continue
 

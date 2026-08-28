@@ -1,12 +1,53 @@
+from dataclasses import dataclass
 from typing import Any
 
 import xarray as xr
 
 
-def get_clamped_sbs_slices(
+@dataclass(frozen=True)
+class SBSCropBounds:
+    z_start: int
+    z_stop: int
+    y_start: int
+    y_stop: int
+    x_start: int
+    x_stop: int
+
+    @property
+    def slices(self) -> tuple[slice, slice, slice]:
+        return (
+            slice(self.z_start, self.z_stop),
+            slice(self.y_start, self.y_stop),
+            slice(self.x_start, self.x_stop),
+        )
+
+    def stitched_to_local(
+        self,
+        coordinates: tuple[float, float, float],
+    ) -> tuple[float, float, float]:
+        z, y, x = coordinates
+        return (
+            z - self.z_start,
+            y - self.y_start,
+            x - self.x_start,
+        )
+
+    def local_to_stitched(
+        self,
+        coordinates: tuple[float, float, float],
+    ) -> tuple[float, float, float]:
+        z, y, x = coordinates
+        return (
+            z + self.z_start,
+            y + self.y_start,
+            x + self.x_start,
+        )
+
+
+def get_sbs_crop_bounds(
     feature: dict[str, Any],
     image_data: xr.DataArray,
-) -> tuple[slice, slice, slice] | None:
+) -> SBSCropBounds | None:
     center_x = float(feature["stitched_x_coord"])
     center_y = float(feature["stitched_y_coord"])
     center_z = int(float(feature["stitched_z_coord"]))
@@ -27,22 +68,34 @@ def get_clamped_sbs_slices(
     if z_start >= z_stop or y_start >= y_stop or x_start >= x_stop:
         return None
 
-    return (
-        slice(z_start, z_stop),
-        slice(y_start, y_stop),
-        slice(x_start, x_stop),
+    return SBSCropBounds(
+        z_start=z_start,
+        z_stop=z_stop,
+        y_start=y_start,
+        y_stop=y_stop,
+        x_start=x_start,
+        x_stop=x_stop,
     )
+
+
+def get_clamped_sbs_slices(
+    feature: dict[str, Any],
+    image_data: xr.DataArray,
+) -> tuple[slice, slice, slice] | None:
+    bounds = get_sbs_crop_bounds(feature, image_data)
+    return None if bounds is None else bounds.slices
 
 
 def crop_sbs_data(
     image_data: xr.DataArray,
     feature: dict[str, Any],
+    bounds: SBSCropBounds | None = None,
 ) -> xr.DataArray | None:
-    slices = get_clamped_sbs_slices(feature, image_data)
-    if slices is None:
+    crop_bounds = bounds or get_sbs_crop_bounds(feature, image_data)
+    if crop_bounds is None:
         return None
 
-    z_slice, y_slice, x_slice = slices
+    z_slice, y_slice, x_slice = crop_bounds.slices
     return image_data.isel(
         z=z_slice,
         y=y_slice,
