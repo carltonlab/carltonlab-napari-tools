@@ -1,5 +1,8 @@
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+import numpy as np
+import pandas as pd
 from napari.layers import Image, Shapes
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
@@ -15,9 +18,11 @@ from qtpy.QtWidgets import (
 
 from carltonlab_napari_tools._shared_variables import (
     IMAGE_CONTRASTS_FILE_NAME,
+    NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
+    PICK_NUCLEI_DIR_NAME,
     PROJECT_FILE_DIR_NAME,
+    REGIONS_CONFIGURATION_FILE_NAME,
     REGIONS_DIR_NAME,
-    REGIONS_LAYER_FILE_NAME,
     SPLINE_LAYER_FILE_NAME,
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
@@ -34,10 +39,15 @@ from carltonlab_napari_tools.general_widgets._project_list_widget import (
 )
 from carltonlab_napari_tools.spline_manager._spline_manager import (
     SPLINE_DEFAULT_EDGE_WIDTH,
+    assign_points_to_spline_regions,
     configure_spline_layer,
+    create_expanded_regions_layer,
     display_splines,
+    expand_shape,
     get_spline_equal_segments,
+    load_regions_configuration,
     load_spline_layer,
+    save_regions_configuration,
     save_spline_layer,
     verify_spline_interpolation,
 )
@@ -47,13 +57,9 @@ if TYPE_CHECKING:
 
 
 REGION_COLOR_PALETTE = (
-    "#1f77b4",
-    "#ff7f0e",
-    "#2ca02c",
-    "#d62728",
-    "#9467bd",
-    "#8c564b",
-    "#e377c2",
+    "#ff0000",
+    "#00ffff",
+    "#ffff00",
 )
 
 
@@ -76,6 +82,10 @@ class CLTStitchedRegionsWidget(QWidget):
         self._spline_layer: Shapes | None = None
         self._regions_layer: Shapes | None = None
         self._expanded_regions_layer: Shapes | None = None
+        self._nuclei_connections_layer: Shapes | None = None
+        self._nuclei_features: pd.DataFrame | None = None
+        self._expanded_regions_spinboxes: list[QSpinBox] = []
+        self._current_project_path: Path | None = None
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -152,18 +162,12 @@ class CLTStitchedRegionsWidget(QWidget):
         self._container_layout.addWidget(self._spline_status_label)
         self._set_spline_saved_state(False)
 
-        self._container_layout.addWidget(FrameSeparator(parent=self))
-
-        self._regions_title_label = QLabel("Regions")
-        self._regions_title_label.setStyleSheet("font-weight: bold;")
-        self._container_layout.addWidget(self._regions_title_label)
-
         self._number_regions_widget = QWidget()
         self._number_regions_layout = QHBoxLayout()
         self._number_regions_layout.setContentsMargins(0, 0, 0, 0)
         self._number_regions_widget.setLayout(self._number_regions_layout)
 
-        self._number_regions_label = QLabel("Number of regions")
+        self._number_regions_label = QLabel("Set number of regions")
         self._number_regions_layout.addWidget(self._number_regions_label)
 
         self._number_regions_spinbox = QSpinBox()
@@ -174,33 +178,59 @@ class CLTStitchedRegionsWidget(QWidget):
             QSizePolicy.Policy.Preferred,
         )
         self._number_regions_layout.addWidget(self._number_regions_spinbox)
-        self._number_regions_layout.addStretch()
+
+        self._current_regions_label = QLabel("Current number of regions: None")
+        self._number_regions_layout.addWidget(self._current_regions_label)
+
+        self._apply_regions_button = QPushButton("Apply")
+        self._apply_regions_button.clicked.connect(
+            self._apply_regions_button_pressed
+        )
+        self._number_regions_layout.addWidget(self._apply_regions_button)
         self._container_layout.addWidget(self._number_regions_widget)
-
-        self._create_regions_button = QPushButton("Create regions")
-        self._create_regions_button.clicked.connect(
-            self._create_regions_button_pressed
-        )
-        self._container_layout.addWidget(self._create_regions_button)
-
-        self._save_regions_button = QPushButton("Save regions")
-        self._save_regions_button.clicked.connect(
-            self._save_regions_button_pressed
-        )
-        self._container_layout.addWidget(self._save_regions_button)
 
         self._regions_status_label = QLabel("Regions not created")
         self._container_layout.addWidget(self._regions_status_label)
         self._set_regions_saved_state(False)
 
-        self._container_layout.addWidget(FrameSeparator(parent=self))
-
         self._expanded_regions_title_label = QLabel("Expand regions")
         self._expanded_regions_title_label.setStyleSheet("font-weight: bold;")
         self._container_layout.addWidget(self._expanded_regions_title_label)
 
+        self._set_all_expanded_widget = QWidget()
+        self._set_all_expanded_layout = QHBoxLayout()
+        self._set_all_expanded_layout.setContentsMargins(0, 0, 0, 0)
+        self._set_all_expanded_widget.setLayout(self._set_all_expanded_layout)
+        self._set_all_expanded_layout.addWidget(QLabel("Set all to:"))
+
+        self._set_all_expanded_spinbox = QSpinBox()
+        self._set_all_expanded_spinbox.setRange(0, 1_000_000)
+        self._set_all_expanded_spinbox.setValue(500)
+        self._set_all_expanded_layout.addWidget(self._set_all_expanded_spinbox)
+
+        self._apply_all_expanded_button = QPushButton("Apply")
+        self._apply_all_expanded_button.clicked.connect(
+            self._apply_all_expanded_button_pressed
+        )
+        self._set_all_expanded_layout.addWidget(
+            self._apply_all_expanded_button
+        )
+        self._set_all_expanded_layout.addStretch()
+        self._container_layout.addWidget(self._set_all_expanded_widget)
+
+        self._expanded_regions_container = QWidget()
+        self._expanded_regions_layout = QVBoxLayout()
+        self._expanded_regions_layout.setContentsMargins(0, 0, 0, 0)
+        self._expanded_regions_container.setLayout(
+            self._expanded_regions_layout
+        )
+        self._container_layout.addWidget(self._expanded_regions_container)
+
         self._save_expanded_regions_button = QPushButton(
             "Save expanded regions"
+        )
+        self._save_expanded_regions_button.clicked.connect(
+            self._save_expanded_regions_button_pressed
         )
         self._container_layout.addWidget(self._save_expanded_regions_button)
 
@@ -234,6 +264,8 @@ class CLTStitchedRegionsWidget(QWidget):
         self._spline_layer = None
         self._regions_layer = None
         self._expanded_regions_layer = None
+        self._current_project_path = None
+        self._clear_expanded_regions_controls()
         self._set_spline_saved_state(False)
         self._set_regions_saved_state(False)
         self._set_expanded_regions_saved_state(False)
@@ -248,6 +280,7 @@ class CLTStitchedRegionsWidget(QWidget):
         if project_path is None:
             self._image_status_label.setText("No CLSP project found")
             return
+        self._current_project_path = project_path
 
         stitched_path = get_project_stitched_image_path(project_path)
         if stitched_path is None:
@@ -288,19 +321,104 @@ class CLTStitchedRegionsWidget(QWidget):
         else:
             self._set_spline_saved_state(True)
 
-        regions_path = (
+        regions_configuration_path = (
             project_path
             / PROJECT_FILE_DIR_NAME
             / REGIONS_DIR_NAME
-            / REGIONS_LAYER_FILE_NAME
+            / REGIONS_CONFIGURATION_FILE_NAME
         )
-        self._regions_layer = self._load_regions_layer(regions_path)
-        if self._regions_layer is not None:
-            self._apply_region_colors(self._regions_layer)
-            self._set_regions_saved_state(True)
-            self._napari_viewer.layers.selection.active = self._regions_layer
+        regions_configuration = load_regions_configuration(
+            regions_configuration_path
+        )
+        if regions_configuration is not None:
+            interpolation_order, number_of_regions, _ = regions_configuration
+            if interpolation_order is not None:
+                self._interpolation_order_spinbox.setValue(interpolation_order)
+            if number_of_regions is not None:
+                self._number_regions_spinbox.setValue(number_of_regions)
+
+        self._display_spline_button_pressed()
+        self._create_regions_button_pressed()
+        self._evaluate_nuclei_regions()
+        if regions_configuration is not None:
+            _, saved_number_of_regions, _ = regions_configuration
+            if saved_number_of_regions is not None:
+                self._current_regions_label.setText(
+                    f"Current number of regions: {saved_number_of_regions}"
+                )
+                self._set_regions_saved_state(True)
 
         self._image_status_label.setText(f"Loaded: {stitched_path.name}")
+
+    def _load_nuclei_features(self, project_path: Path) -> None:
+        features_path = (
+            project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        )
+        if not features_path.is_file():
+            self._nuclei_features = None
+            return
+        self._nuclei_features = pd.read_csv(features_path)
+
+    def _evaluate_nuclei_regions(self) -> None:
+        if self._spline_layer is None or self._regions_layer is None:
+            return
+        if self._current_project_path is None:
+            return
+
+        self._load_nuclei_features(self._current_project_path)
+        if self._nuclei_features is None:
+            return
+
+        required_columns = {
+            "stitched_x_coord",
+            "stitched_y_coord",
+            "region",
+        }
+        if not required_columns.issubset(self._nuclei_features.columns):
+            return
+
+        points_yx = self._nuclei_features[
+            ["stitched_y_coord", "stitched_x_coord"]
+        ].to_numpy(dtype=np.float32)
+        if len(points_yx) == 0:
+            return
+
+        spline_shape = self._spline_layer._data_view.shapes[0]
+        projected_points, region_numbers = assign_points_to_spline_regions(
+            points_yx,
+            spline_shape,
+            len(self._regions_layer._data_view.shapes),
+        )
+
+        self._nuclei_features["region"] = region_numbers
+        features_path = (
+            self._current_project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        )
+        self._nuclei_features.to_csv(features_path, index=False)
+
+        line_data = np.stack(
+            [points_yx, projected_points],
+            axis=1,
+        )
+
+        line_colors = [
+            REGION_COLOR_PALETTE[(region - 1) % len(REGION_COLOR_PALETTE)]
+            for region in region_numbers
+        ]
+        self._nuclei_connections_layer = self._napari_viewer.add_shapes(
+            name="clt_nuclei_spline_connections",
+            ndim=2,
+            edge_width=4,
+        )
+        self._nuclei_connections_layer.add_lines(line_data)
+        self._nuclei_connections_layer.edge_color = line_colors
+        self._nuclei_connections_layer.refresh()
 
     def _display_spline_button_pressed(self) -> None:
         if self._spline_layer is None:
@@ -311,10 +429,49 @@ class CLTStitchedRegionsWidget(QWidget):
             self._interpolation_order_spinbox.value(),
         )
 
-    def _create_regions_button_pressed(self) -> None:
-        if self._regions_layer is not None:
-            self._regions_status_label.setText("Regions already created")
+    def _apply_regions_button_pressed(self) -> None:
+        self._remove_region_layers()
+        self._create_regions_button_pressed()
+        if self._regions_layer is None:
             return
+
+        if self._current_project_path is None:
+            return
+
+        configuration_path = (
+            self._current_project_path
+            / PROJECT_FILE_DIR_NAME
+            / REGIONS_DIR_NAME
+            / REGIONS_CONFIGURATION_FILE_NAME
+        )
+        save_regions_configuration(
+            configuration_path,
+            number_of_regions=self._number_regions_spinbox.value(),
+        )
+        self._current_regions_label.setText(
+            "Current number of regions: "
+            f"{len(self._regions_layer._data_view.shapes)}"
+        )
+        self._set_regions_saved_state(True)
+        self._evaluate_nuclei_regions()
+
+    def _remove_region_layers(self) -> None:
+        for layer in (
+            self._nuclei_connections_layer,
+            self._expanded_regions_layer,
+            self._regions_layer,
+        ):
+            if layer is not None and layer in self._napari_viewer.layers:
+                self._napari_viewer.layers.remove(layer)
+
+        self._nuclei_connections_layer = None
+        self._expanded_regions_layer = None
+        self._regions_layer = None
+        self._clear_expanded_regions_controls()
+        if self._spline_layer is not None:
+            self._spline_layer.visible = True
+
+    def _create_regions_button_pressed(self) -> None:
 
         if self._spline_layer is None:
             self._regions_status_label.setText("No spline layer")
@@ -334,12 +491,17 @@ class CLTStitchedRegionsWidget(QWidget):
             return
 
         shape_object = self._spline_layer._data_view.shapes[0]
+        if shape_object.interpolation_order < 2:
+            self._regions_status_label.setText(
+                "Display the spline before creating regions"
+            )
+            return
+
         region_paths = get_spline_equal_segments(
             shape_object,
             number_of_segments=self._number_regions_spinbox.value(),
             points_per_segment=10,
         )
-
         self._regions_layer = self._napari_viewer.add_shapes(
             name="clt_regions_layer",
             ndim=2,
@@ -350,6 +512,13 @@ class CLTStitchedRegionsWidget(QWidget):
         self._spline_layer.visible = False
         self._napari_viewer.layers.selection.active = self._regions_layer
         self._set_regions_saved_state(False)
+        if self._current_project_path is not None:
+            self._initialize_expanded_regions(self._current_project_path)
+
+    def _apply_all_expanded_button_pressed(self) -> None:
+        value = self._set_all_expanded_spinbox.value()
+        for spinbox in self._expanded_regions_spinboxes:
+            spinbox.setValue(value)
 
     @staticmethod
     def _apply_region_colors(regions_layer: Shapes) -> None:
@@ -377,31 +546,139 @@ class CLTStitchedRegionsWidget(QWidget):
 
         return None
 
-    def _save_regions_button_pressed(self) -> None:
+    def _clear_expanded_regions_controls(self) -> None:
+        self._expanded_regions_spinboxes = []
+        while self._expanded_regions_layout.count():
+            item = self._expanded_regions_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _initialize_expanded_regions(self, project_path: Path) -> None:
         if self._regions_layer is None:
-            self._set_regions_saved_state(False)
-            self._regions_status_label.setText("No regions created")
+            self._expanded_regions_layer = None
+            self._clear_expanded_regions_controls()
+            self._set_expanded_regions_saved_state(False)
             return
 
-        gonad_path = self._project_list_widget.get_current_project_path()
-        project_path = (
-            resolve_clsp_project_path(gonad_path)
-            if gonad_path is not None
-            else None
+        regions_directory = (
+            project_path / PROJECT_FILE_DIR_NAME / REGIONS_DIR_NAME
         )
-        if project_path is None:
-            self._regions_status_label.setText("No project selected")
+        configuration_path = (
+            regions_directory / REGIONS_CONFIGURATION_FILE_NAME
+        )
+
+        if self._expanded_regions_layer is not None:
+            self._napari_viewer.layers.remove(self._expanded_regions_layer)
+
+        self._expanded_regions_layer = create_expanded_regions_layer(
+            self._napari_viewer,
+            self._regions_layer,
+        )
+        self._expanded_regions_layer.opacity = 0.1
+        expanded_colors = [
+            REGION_COLOR_PALETTE[index % len(REGION_COLOR_PALETTE)]
+            for index in range(len(self._regions_layer._data_view.shapes))
+        ]
+        self._expanded_regions_layer.face_color = expanded_colors
+        self._expanded_regions_layer.edge_color = expanded_colors
+        self._expanded_regions_layer.refresh()
+
+        expanded_index = self._napari_viewer.layers.index(
+            self._expanded_regions_layer
+        )
+        regions_index = self._napari_viewer.layers.index(self._regions_layer)
+        self._napari_viewer.layers.move(expanded_index, regions_index)
+
+        number_of_regions = len(self._regions_layer._data_view.shapes)
+        configuration = load_regions_configuration(configuration_path)
+        saved_values = configuration[2] if configuration is not None else None
+        has_saved_values = (
+            saved_values is not None
+            and len(saved_values) == number_of_regions
+            and all(value is not None for value in saved_values)
+        )
+        values = (
+            tuple(value for value in saved_values if value is not None)
+            if has_saved_values and saved_values is not None
+            else (500,) * number_of_regions
+        )
+
+        self._clear_expanded_regions_controls()
+        for region_index, expansion_value in enumerate(values):
+            row = QWidget()
+            row_layout = QHBoxLayout()
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row.setLayout(row_layout)
+
+            row_layout.addWidget(QLabel(f"Region {region_index + 1}"))
+            spinbox = QSpinBox()
+            spinbox.setRange(0, 1_000_000)
+            spinbox.setValue(expansion_value)
+            spinbox.valueChanged.connect(
+                lambda value, index=region_index: (
+                    self._expanded_region_value_changed(index, value)
+                )
+            )
+            row_layout.addWidget(spinbox)
+            row_layout.addStretch()
+            self._expanded_regions_layout.addWidget(row)
+            self._expanded_regions_spinboxes.append(spinbox)
+
+            expand_shape(
+                self._regions_layer,
+                self._expanded_regions_layer,
+                region_index,
+                expansion_value,
+            )
+
+        self._regions_layer.visible = True
+        self._expanded_regions_layer.visible = True
+        self._napari_viewer.layers.selection.active = (
+            self._expanded_regions_layer
+        )
+        self._set_expanded_regions_saved_state(
+            has_saved_values and configuration_path.is_file()
+        )
+
+    def _expanded_region_value_changed(
+        self,
+        region_index: int,
+        expanding_factor: int,
+    ) -> None:
+        if self._regions_layer is None or self._expanded_regions_layer is None:
             return
 
-        regions_path = (
-            project_path
+        expand_shape(
+            self._regions_layer,
+            self._expanded_regions_layer,
+            region_index,
+            expanding_factor,
+        )
+        self._set_expanded_regions_saved_state(False)
+
+    def _save_expanded_regions_button_pressed(self) -> None:
+        if self._expanded_regions_layer is None:
+            self._set_expanded_regions_saved_state(False)
+            return
+
+        if self._current_project_path is None:
+            self._set_expanded_regions_saved_state(False)
+            return
+
+        configuration_path = (
+            self._current_project_path
             / PROJECT_FILE_DIR_NAME
             / REGIONS_DIR_NAME
-            / REGIONS_LAYER_FILE_NAME
+            / REGIONS_CONFIGURATION_FILE_NAME
         )
-        regions_path.parent.mkdir(parents=True, exist_ok=True)
-        self._regions_layer.save(str(regions_path))
-        self._set_regions_saved_state(True)
+        save_regions_configuration(
+            configuration_path,
+            expansion_values=[
+                spinbox.value() for spinbox in self._expanded_regions_spinboxes
+            ],
+        )
+        self._set_expanded_regions_saved_state(True)
 
     def _set_regions_saved_state(self, saved: bool) -> None:
         if saved:
