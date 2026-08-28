@@ -179,6 +179,7 @@ class CLTStitchedRegionsWidget(QWidget):
 
         self._regions_status_label = QLabel("Regions not created")
         self._container_layout.addWidget(self._regions_status_label)
+        self._set_regions_saved_state(False)
 
         self._container_layout.addWidget(FrameSeparator(parent=self))
 
@@ -195,6 +196,7 @@ class CLTStitchedRegionsWidget(QWidget):
             "Expanded regions not saved"
         )
         self._container_layout.addWidget(self._expanded_regions_status_label)
+        self._set_expanded_regions_saved_state(False)
 
         self._display_spline_button.clicked.connect(
             self._display_spline_button_pressed
@@ -221,6 +223,8 @@ class CLTStitchedRegionsWidget(QWidget):
         self._regions_layer = None
         self._expanded_regions_layer = None
         self._set_spline_saved_state(False)
+        self._set_regions_saved_state(False)
+        self._set_expanded_regions_saved_state(False)
         self._napari_viewer.layers.clear()
 
         gonad_path = self._project_list_widget.get_current_project_path()
@@ -280,7 +284,7 @@ class CLTStitchedRegionsWidget(QWidget):
         )
         self._regions_layer = self._load_regions_layer(regions_path)
         if self._regions_layer is not None:
-            self._regions_status_label.setText("Regions loaded")
+            self._set_regions_saved_state(True)
             self._napari_viewer.layers.selection.active = self._regions_layer
 
         self._image_status_label.setText(f"Loaded: {stitched_path.name}")
@@ -332,7 +336,7 @@ class CLTStitchedRegionsWidget(QWidget):
         self._regions_layer.add_paths(region_paths)
         self._spline_layer.visible = False
         self._napari_viewer.layers.selection.active = self._regions_layer
-        self._regions_status_label.setText("Regions not saved")
+        self._set_regions_saved_state(False)
 
     def _load_regions_layer(self, regions_path):
         if not regions_path.is_file():
@@ -350,6 +354,7 @@ class CLTStitchedRegionsWidget(QWidget):
 
     def _save_regions_button_pressed(self) -> None:
         if self._regions_layer is None:
+            self._set_regions_saved_state(False)
             self._regions_status_label.setText("No regions created")
             return
 
@@ -371,7 +376,35 @@ class CLTStitchedRegionsWidget(QWidget):
         )
         regions_path.parent.mkdir(parents=True, exist_ok=True)
         self._regions_layer.save(str(regions_path))
-        self._regions_status_label.setText("Regions saved")
+        self._set_regions_saved_state(True)
+
+    def _set_regions_saved_state(self, saved: bool) -> None:
+        if saved:
+            self._regions_status_label.setText("Regions saved")
+            self._regions_status_label.setStyleSheet(
+                "color: #29BA00; font-weight: bold;"
+            )
+        else:
+            self._regions_status_label.setText("Regions not saved")
+            self._regions_status_label.setStyleSheet(
+                "color: gray; font-style: italic;"
+            )
+
+    def _set_expanded_regions_saved_state(self, saved: bool) -> None:
+        if saved:
+            self._expanded_regions_status_label.setText(
+                "Expanded regions saved"
+            )
+            self._expanded_regions_status_label.setStyleSheet(
+                "color: #29BA00; font-weight: bold;"
+            )
+        else:
+            self._expanded_regions_status_label.setText(
+                "Expanded regions not saved"
+            )
+            self._expanded_regions_status_label.setStyleSheet(
+                "color: gray; font-style: italic;"
+            )
 
     def _save_spline_button_pressed(self) -> None:
         if self._spline_layer is None:
