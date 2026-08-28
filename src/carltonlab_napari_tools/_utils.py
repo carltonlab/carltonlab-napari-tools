@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import configparser
 import json
 import os
 from pathlib import Path
@@ -35,6 +36,37 @@ def get_project_stitched_image_path(
     stitched_directory = project_path / STITCHED_IMAGE_DIR_NAME
     stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
     return stitched_paths[0] if stitched_paths else None
+
+
+def load_image_contrasts(
+    contrast_path: Path,
+) -> dict[int, tuple[float, float]]:
+    if not contrast_path.is_file():
+        return {}
+
+    config = configparser.ConfigParser()
+    config.read(contrast_path)
+
+    if not config.has_section("ImageContrasts"):
+        return {}
+
+    number_of_channels = config.getint(
+        "ImageContrasts",
+        "NumberOfChannels",
+    )
+    contrasts: dict[int, tuple[float, float]] = {}
+
+    for channel_index in range(number_of_channels):
+        values = config.get(
+            "ImageContrasts",
+            f"channel-{channel_index + 1}",
+        )
+        minimum, maximum = (
+            float(value.strip()) for value in values.split(",", maxsplit=1)
+        )
+        contrasts[channel_index] = (minimum, maximum)
+
+    return contrasts
 
 
 SUPPORTED_IMAGE_EXTENSIONS: tuple[str, ...] = (

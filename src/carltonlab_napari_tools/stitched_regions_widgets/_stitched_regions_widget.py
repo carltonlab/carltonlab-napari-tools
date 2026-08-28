@@ -13,12 +13,19 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
+from carltonlab_napari_tools._shared_variables import (
+    IMAGE_CONTRASTS_FILE_NAME,
+    PROJECT_FILE_DIR_NAME,
+)
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
 from carltonlab_napari_tools._utils import (
     get_project_stitched_image_path,
     resolve_clsp_project_path,
 )
-from carltonlab_napari_tools._viewer_utils import open_ome_zarr_layers
+from carltonlab_napari_tools._viewer_utils import (
+    apply_image_contrasts,
+    open_ome_zarr_layers,
+)
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
@@ -202,4 +209,8 @@ class CLTStitchedRegionsWidget(QWidget):
             return
 
         self._image_layer = opened_images[0]
+        contrast_path = (
+            project_path / PROJECT_FILE_DIR_NAME / IMAGE_CONTRASTS_FILE_NAME
+        )
+        apply_image_contrasts(opened_images, contrast_path)
         self._image_status_label.setText(f"Loaded: {stitched_path.name}")

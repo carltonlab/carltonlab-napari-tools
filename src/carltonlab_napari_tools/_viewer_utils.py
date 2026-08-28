@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import cast
 
 from napari.layers import Image
@@ -5,6 +6,19 @@ from napari.utils.notifications import show_info
 from napari.viewer import ViewerModel
 
 from carltonlab_napari_tools._shared_widgets import confirm_dialog
+from carltonlab_napari_tools._utils import load_image_contrasts
+
+
+def apply_image_contrasts(
+    image_layers: list[Image],
+    contrast_path: Path,
+) -> None:
+    contrasts = load_image_contrasts(contrast_path)
+
+    for channel_index, contrast_limits in contrasts.items():
+        if channel_index >= len(image_layers):
+            continue
+        image_layers[channel_index].contrast_limits = contrast_limits
 
 
 def close_image_layers(
