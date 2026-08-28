@@ -50,7 +50,6 @@ AUTO_COUNT_BINARY_MASK_FILE_NAME_SUFFIX_TEMPLATE = (
 )
 SBS_FILE_NAME_EXTENSION = "_cut_nuclei.tif"
 CUT_SBS_DIR_NAME = "cut_sbs"
-SBS_FILE_NAME_EXTENSION = "_cut_sbs.tif"
 SBS_METADATA_FILE_NAME = "sbs_metadata.csv"
 PICK_NUCLEI_REPORT_FILE_NAME = "pick_nuclei_spline_intensity_report.csv"
 PICK_NUCLEI_REPORT_PLOT_FILE_NAME = "pick_nuclei_spline_intensity_report.pdf"

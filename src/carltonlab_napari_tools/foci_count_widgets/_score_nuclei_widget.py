@@ -20,7 +20,9 @@ from qtpy.QtWidgets import (
 from superqt import QToggleSwitch
 
 from carltonlab_napari_tools._shared_variables import (
+    CLSP_PROJECT_SUFFIX,
     CUT_SBS_DIR_NAME,
+    NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
     PICK_NUCLEI_DIR_NAME,
     PROJECT_FILE_DIR_NAME,
     SBS_FILE_NAME_EXTENSION,
@@ -41,9 +43,26 @@ if TYPE_CHECKING:
 @dataclass
 class ProjectScoringData:
     project_path: Path
+    project_name: str
     features: pd.DataFrame
     flags_manager: SBSFlagsManager
     tile_bounding_boxes: dict[int, dict[str, int]]
+
+    def get_sbs_image_path(self, sbs_name: str) -> Path | None:
+        if not sbs_name.startswith("sbs"):
+            return None
+
+        cut_sbs_directory = (
+            self.project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / CUT_SBS_DIR_NAME
+        )
+        sbs_path = cut_sbs_directory / (
+            f"{self.project_name}_{sbs_name}{SBS_FILE_NAME_EXTENSION}"
+        )
+
+        return sbs_path if sbs_path.is_file() else None
 
     def get_sbs_images_needing_crop(self) -> list[Path]:
         cut_sbs_directory = (
@@ -52,23 +71,18 @@ class ProjectScoringData:
             / PICK_NUCLEI_DIR_NAME
             / CUT_SBS_DIR_NAME
         )
-
-        sbs_number_header = "sbs_number"
-        region_header = "region"
         missing_sbs_paths: list[Path] = []
 
-        for feature in self.features.to_dict(orient="records"):
-            region = feature[region_header]
-            if pd.isna(region):
-                continue
-
-            sbs_name = (
-                f"region-{int(region)}_"
-                f"sbs{int(feature[sbs_number_header])}"
-                f"{SBS_FILE_NAME_EXTENSION}"
+        for sbs_number in self.features["sbs_number"]:
+            sbs_name = f"sbs{int(sbs_number)}"
+            sbs_path = cut_sbs_directory / (
+                f"{self.project_name}_{sbs_name}{SBS_FILE_NAME_EXTENSION}"
             )
-            sbs_path = cut_sbs_directory / sbs_name
-            if not sbs_path.is_file():
+            sbs_flags = self.flags_manager.get_flags(sbs_name)
+            needs_coordinate_recalculation = (
+                SBSFlag.COORD_RECALC_NEEDED.value in sbs_flags
+            )
+            if not sbs_path.is_file() or needs_coordinate_recalculation:
                 missing_sbs_paths.append(sbs_path)
 
         return missing_sbs_paths
@@ -143,7 +157,7 @@ class CLTScoreNucleiWidget(QWidget):
 
         self._sbs_image: Image | None = None
         self._foci_points: Points | None = None
-        self._sbs_flags_managers: dict[Path, SBSFlagsManager] = {}
+        self._project_scoring_data: dict[Path, ProjectScoringData] = {}
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -257,31 +271,105 @@ class CLTScoreNucleiWidget(QWidget):
 
         self._sbs_list_widget = QListWidget()
         self._layout.addWidget(self._sbs_list_widget)
-
-        sample_rows = (
-            CLTScoreSBSRow("SBS 1", 0),
-            CLTScoreSBSRow("SBS 2", 12, scored=True),
-            CLTScoreSBSRow(
-                "SBS 3",
-                4,
-                flags=[SBSFlag.IGNORE],
-            ),
+        self._mode_combo.currentTextChanged.connect(
+            self._load_project_scoring_data
         )
+        self._project_list_widget.currentItemChanged.connect(
+            self._project_selection_changed
+        )
+        self._load_project_scoring_data()
 
-        for row_widget in sample_rows:
-            list_item = QListWidgetItem()
-            list_item.setSizeHint(row_widget.sizeHint())
-            self._sbs_list_widget.addItem(list_item)
-            self._sbs_list_widget.setItemWidget(list_item, row_widget)
+    def _get_scoring_project_paths(self) -> list[Path]:
+        if self._mode_combo.currentText() == "Single":
+            current_project_path = (
+                self._project_list_widget.get_current_project_path()
+            )
+            return (
+                [] if current_project_path is None else [current_project_path]
+            )
 
-    def _get_flags_manager(
-        self,
-        project_path: Path,
-    ) -> SBSFlagsManager:
-        flags_manager = self._sbs_flags_managers.get(project_path)
+        return self._project_list_widget.get_project_paths()
 
-        if flags_manager is None:
+    @staticmethod
+    def _resolve_project_path(starting_path: Path) -> Path | None:
+        if starting_path.name.endswith(CLSP_PROJECT_SUFFIX):
+            return starting_path
+
+        project_paths = [
+            path
+            for path in starting_path.iterdir()
+            if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
+        ]
+        return project_paths[0] if project_paths else None
+
+    def _load_project_scoring_data(self, *_args: object) -> None:
+        self._project_scoring_data.clear()
+
+        for starting_path in self._get_scoring_project_paths():
+            project_path = self._resolve_project_path(starting_path)
+            if project_path is None:
+                continue
+
+            features_path = (
+                project_path
+                / PROJECT_FILE_DIR_NAME
+                / PICK_NUCLEI_DIR_NAME
+                / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+            )
+            if not features_path.is_file():
+                continue
+
+            features = pd.read_csv(features_path)
             flags_manager = SBSFlagsManager(project_path)
-            self._sbs_flags_managers[project_path] = flags_manager
+            flags_manager.load()
+            self._project_scoring_data[project_path] = ProjectScoringData(
+                project_path=project_path,
+                project_name=project_path.name.removesuffix(
+                    CLSP_PROJECT_SUFFIX
+                ),
+                features=features,
+                flags_manager=flags_manager,
+                tile_bounding_boxes={},
+            )
 
-        return flags_manager
+        has_missing_sbs = False
+        for project_data in self._project_scoring_data.values():
+            missing_sbs_paths = project_data.get_sbs_images_needing_crop()
+            if missing_sbs_paths:
+                has_missing_sbs = True
+
+        self._cut_sbs_button.setEnabled(has_missing_sbs)
+        self._update_sbs_list()
+
+    def _project_selection_changed(self, *_args: object) -> None:
+        if self._mode_combo.currentText() == "Single":
+            self._load_project_scoring_data()
+
+    def _update_sbs_list(self) -> None:
+        self._sbs_list_widget.clear()
+
+        for project_path, project_data in self._project_scoring_data.items():
+            for feature in project_data.features.to_dict(orient="records"):
+                sbs_number = int(feature["sbs_number"])
+                foci_value = feature["scored_foci_number"]
+                foci_count = None if pd.isna(foci_value) else int(foci_value)
+                sbs_name = f"sbs{sbs_number} - {project_path.name}"
+                flag_key = f"sbs{sbs_number}"
+
+                row_widget = CLTScoreSBSRow(
+                    sbs_name=sbs_name,
+                    foci_count=foci_count,
+                    scored=foci_count is not None,
+                    flags=project_data.flags_manager.get_flags(flag_key),
+                )
+                list_item = QListWidgetItem()
+                list_item.setData(
+                    Qt.ItemDataRole.UserRole,
+                    (project_path, sbs_number),
+                )
+                list_item.setSizeHint(row_widget.sizeHint())
+                self._sbs_list_widget.addItem(list_item)
+                self._sbs_list_widget.setItemWidget(
+                    list_item,
+                    row_widget,
+                )
