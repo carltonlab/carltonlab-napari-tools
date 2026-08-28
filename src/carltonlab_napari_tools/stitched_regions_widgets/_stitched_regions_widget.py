@@ -17,6 +17,7 @@ from carltonlab_napari_tools._shared_variables import (
     IMAGE_CONTRASTS_FILE_NAME,
     PROJECT_FILE_DIR_NAME,
     REGIONS_DIR_NAME,
+    REGIONS_LAYER_FILE_NAME,
     SPLINE_LAYER_FILE_NAME,
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
@@ -34,8 +35,10 @@ from carltonlab_napari_tools.general_widgets._project_list_widget import (
 from carltonlab_napari_tools.spline_manager._spline_manager import (
     configure_spline_layer,
     display_splines,
+    get_spline_equal_segments,
     load_spline_layer,
     save_spline_layer,
+    verify_spline_interpolation,
 )
 
 if TYPE_CHECKING:
@@ -163,7 +166,16 @@ class CLTStitchedRegionsWidget(QWidget):
         self._container_layout.addWidget(self._number_regions_widget)
 
         self._create_regions_button = QPushButton("Create regions")
+        self._create_regions_button.clicked.connect(
+            self._create_regions_button_pressed
+        )
         self._container_layout.addWidget(self._create_regions_button)
+
+        self._save_regions_button = QPushButton("Save regions")
+        self._save_regions_button.clicked.connect(
+            self._save_regions_button_pressed
+        )
+        self._container_layout.addWidget(self._save_regions_button)
 
         self._regions_status_label = QLabel("Regions not created")
         self._container_layout.addWidget(self._regions_status_label)
@@ -260,6 +272,17 @@ class CLTStitchedRegionsWidget(QWidget):
         else:
             self._set_spline_saved_state(True)
 
+        regions_path = (
+            project_path
+            / PROJECT_FILE_DIR_NAME
+            / REGIONS_DIR_NAME
+            / REGIONS_LAYER_FILE_NAME
+        )
+        self._regions_layer = self._load_regions_layer(regions_path)
+        if self._regions_layer is not None:
+            self._regions_status_label.setText("Regions loaded")
+            self._napari_viewer.layers.selection.active = self._regions_layer
+
         self._image_status_label.setText(f"Loaded: {stitched_path.name}")
 
     def _display_spline_button_pressed(self) -> None:
@@ -270,6 +293,85 @@ class CLTStitchedRegionsWidget(QWidget):
             self._spline_layer,
             self._interpolation_order_spinbox.value(),
         )
+
+    def _create_regions_button_pressed(self) -> None:
+        if self._regions_layer is not None:
+            self._regions_status_label.setText("Regions already created")
+            return
+
+        if self._spline_layer is None:
+            self._regions_status_label.setText("No spline layer")
+            return
+
+        if len(self._spline_layer._data_view.shapes) != 1:
+            self._regions_status_label.setText(
+                "Create exactly one spline first"
+            )
+            return
+
+        interpolation_order = self._interpolation_order_spinbox.value()
+        if not verify_spline_interpolation(
+            self._spline_layer,
+            interpolation_order,
+        ):
+            return
+
+        shape_object = self._spline_layer._data_view.shapes[0]
+        region_paths = get_spline_equal_segments(
+            shape_object,
+            number_of_segments=self._number_regions_spinbox.value(),
+            points_per_segment=10,
+        )
+
+        self._regions_layer = self._napari_viewer.add_shapes(
+            name="clt_regions_layer",
+            ndim=2,
+            edge_width=3,
+            edge_color="#27adf5",
+        )
+        self._regions_layer.add_paths(region_paths)
+        self._spline_layer.visible = False
+        self._napari_viewer.layers.selection.active = self._regions_layer
+        self._regions_status_label.setText("Regions not saved")
+
+    def _load_regions_layer(self, regions_path):
+        if not regions_path.is_file():
+            return None
+
+        opened_layers = self._napari_viewer.open(str(regions_path))
+        if not isinstance(opened_layers, list):
+            opened_layers = [opened_layers]
+
+        for layer in opened_layers:
+            if isinstance(layer, Shapes):
+                return layer
+
+        return None
+
+    def _save_regions_button_pressed(self) -> None:
+        if self._regions_layer is None:
+            self._regions_status_label.setText("No regions created")
+            return
+
+        gonad_path = self._project_list_widget.get_current_project_path()
+        project_path = (
+            resolve_clsp_project_path(gonad_path)
+            if gonad_path is not None
+            else None
+        )
+        if project_path is None:
+            self._regions_status_label.setText("No project selected")
+            return
+
+        regions_path = (
+            project_path
+            / PROJECT_FILE_DIR_NAME
+            / REGIONS_DIR_NAME
+            / REGIONS_LAYER_FILE_NAME
+        )
+        regions_path.parent.mkdir(parents=True, exist_ok=True)
+        self._regions_layer.save(str(regions_path))
+        self._regions_status_label.setText("Regions saved")
 
     def _save_spline_button_pressed(self) -> None:
         if self._spline_layer is None:
