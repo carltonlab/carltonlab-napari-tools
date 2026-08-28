@@ -33,6 +33,7 @@ from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
 from carltonlab_napari_tools.spline_manager._spline_manager import (
+    SPLINE_DEFAULT_EDGE_WIDTH,
     configure_spline_layer,
     display_splines,
     get_spline_equal_segments,
@@ -43,6 +44,17 @@ from carltonlab_napari_tools.spline_manager._spline_manager import (
 
 if TYPE_CHECKING:
     from napari.components import ViewerModel
+
+
+REGION_COLOR_PALETTE = (
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+)
 
 
 class CLTStitchedRegionsWidget(QWidget):
@@ -284,6 +296,7 @@ class CLTStitchedRegionsWidget(QWidget):
         )
         self._regions_layer = self._load_regions_layer(regions_path)
         if self._regions_layer is not None:
+            self._apply_region_colors(self._regions_layer)
             self._set_regions_saved_state(True)
             self._napari_viewer.layers.selection.active = self._regions_layer
 
@@ -330,13 +343,25 @@ class CLTStitchedRegionsWidget(QWidget):
         self._regions_layer = self._napari_viewer.add_shapes(
             name="clt_regions_layer",
             ndim=2,
-            edge_width=3,
-            edge_color="#27adf5",
+            edge_width=SPLINE_DEFAULT_EDGE_WIDTH,
         )
         self._regions_layer.add_paths(region_paths)
+        self._apply_region_colors(self._regions_layer)
         self._spline_layer.visible = False
         self._napari_viewer.layers.selection.active = self._regions_layer
         self._set_regions_saved_state(False)
+
+    @staticmethod
+    def _apply_region_colors(regions_layer: Shapes) -> None:
+        number_of_regions = len(regions_layer._data_view.shapes)
+        colors = [
+            REGION_COLOR_PALETTE[index % len(REGION_COLOR_PALETTE)]
+            for index in range(number_of_regions)
+        ]
+        regions_layer.edge_width = SPLINE_DEFAULT_EDGE_WIDTH
+        regions_layer.current_edge_width = SPLINE_DEFAULT_EDGE_WIDTH
+        regions_layer.edge_color = colors
+        regions_layer.refresh()
 
     def _load_regions_layer(self, regions_path):
         if not regions_path.is_file():
