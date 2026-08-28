@@ -149,6 +149,10 @@ class CLTScoreSBSRow(QWidget):
         )
         layout.addWidget(foci_label)
 
+        self._scored = scored
+        self._set_flag_style(flags)
+
+    def _set_flag_style(self, flags: list[SBSFlag | str] | None) -> None:
         flagged_values = {
             flag.value if isinstance(flag, SBSFlag) else flag
             for flag in flags or []
@@ -159,10 +163,13 @@ class CLTScoreSBSRow(QWidget):
 
         if flagged:
             self.showing_label.setStyleSheet("color: #A80000;")
-        elif scored:
+        elif self._scored:
             self.showing_label.setStyleSheet("color: #29BA00;")
         else:
             self.showing_label.setStyleSheet("color: black;")
+
+    def set_flags(self, flags: list[SBSFlag | str]) -> None:
+        self._set_flag_style(flags)
 
 
 class CLTScoreSBSListItem(QListWidgetItem):
@@ -363,6 +370,9 @@ class CLTScoreNucleiWidget(QWidget):
             QSizePolicy.Policy.Maximum,
             QSizePolicy.Policy.Preferred,
         )
+        self._apply_dimensions_button.clicked.connect(
+            self._on_apply_dimensions_button_pressed
+        )
         self._sbs_dimensions_layout.addWidget(self._apply_dimensions_button)
         self._sbs_dimensions_layout.addStretch()
         self._layout.addWidget(self._sbs_dimensions_widget)
@@ -443,6 +453,11 @@ class CLTScoreNucleiWidget(QWidget):
         self._sbs_flags_layout.addWidget(self._remove_flags_widget)
         self._layout.addWidget(self._sbs_flags_widget)
 
+        self._add_flags_button.clicked.connect(self._add_selected_sbs_flag)
+        self._remove_flags_button.clicked.connect(
+            self._remove_selected_sbs_flag
+        )
+
         self._load_project_scoring_data()
 
     def _get_scoring_project_paths(self) -> list[Path]:
@@ -510,11 +525,19 @@ class CLTScoreNucleiWidget(QWidget):
                 tile_bounding_boxes=tile_bounding_boxes,
             )
 
-        has_missing_sbs = False
-        for project_data in self._project_scoring_data.values():
-            missing_sbs_paths = project_data.get_sbs_images_needing_crop()
-            if missing_sbs_paths:
-                has_missing_sbs = True
+        self._update_cut_sbs_status()
+        has_missing_sbs = any(
+            project_data.get_sbs_images_needing_crop()
+            for project_data in self._project_scoring_data.values()
+        )
+        self._cut_sbs_button.setEnabled(has_missing_sbs)
+        self._update_sbs_list()
+
+    def _update_cut_sbs_status(self) -> None:
+        has_missing_sbs = any(
+            project_data.get_sbs_images_needing_crop()
+            for project_data in self._project_scoring_data.values()
+        )
 
         if not self._project_scoring_data:
             self._sbs_status_label.setText("SBS not cut")
@@ -533,7 +556,6 @@ class CLTScoreNucleiWidget(QWidget):
             )
 
         self._cut_sbs_button.setEnabled(has_missing_sbs)
-        self._update_sbs_list()
 
     def _sbs_selection_changed(
         self,
@@ -543,6 +565,7 @@ class CLTScoreNucleiWidget(QWidget):
         self._napari_viewer.layers.clear()
         self._sbs_images = []
         self._foci_points = None
+        self._update_sbs_flags_controls()
 
         if current_item is None:
             return
@@ -602,6 +625,117 @@ class CLTScoreNucleiWidget(QWidget):
             contrast_limits = tile_contrasts.get(channel_index)
             if contrast_limits is not None:
                 image_layer.contrast_limits = contrast_limits
+
+    def _get_selected_sbs_context(
+        self,
+    ) -> tuple[ProjectScoringData, str] | None:
+        current_item = self._sbs_list_widget.currentItem()
+        if not isinstance(current_item, CLTScoreSBSListItem):
+            return None
+
+        project_data = self._project_scoring_data.get(
+            current_item.entry.project_path
+        )
+        if project_data is None:
+            return None
+
+        return project_data, f"sbs{current_item.entry.sbs_number}"
+
+    def _on_apply_dimensions_button_pressed(self) -> None:
+        current_item = self._sbs_list_widget.currentItem()
+        if not isinstance(current_item, CLTScoreSBSListItem):
+            return
+
+        project_data = self._project_scoring_data.get(
+            current_item.entry.project_path
+        )
+        if project_data is None:
+            return
+
+        sbs_number = current_item.entry.sbs_number
+        matching_rows = project_data.features.index[
+            project_data.features["sbs_number"] == sbs_number
+        ]
+        if len(matching_rows) == 0:
+            return
+
+        feature_index = matching_rows[0]
+        new_dimensions = {
+            "square_width": self._width_spinbox.value(),
+            "square_height": self._height_spinbox.value(),
+            "square_z_sections": self._z_sections_spinbox.value(),
+        }
+        dimensions_changed = any(
+            int(project_data.features.loc[feature_index, column]) != value
+            for column, value in new_dimensions.items()
+        )
+        if not dimensions_changed:
+            return
+
+        for column, value in new_dimensions.items():
+            project_data.features.loc[feature_index, column] = value
+
+        project_data.flags_manager.add_flag(
+            f"sbs{sbs_number}",
+            SBSFlag.COORD_RECALC_NEEDED,
+        )
+
+        features_path = (
+            project_data.project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        )
+        project_data.features.to_csv(features_path, index=False)
+        project_data.flags_manager.save()
+        self._cut_project_sbs(project_data)
+        self._update_cut_sbs_status()
+        self._sbs_selection_changed(current_item, None)
+
+    def _update_sbs_flags_controls(self) -> None:
+        self._remove_flags_combo.clear()
+        context = self._get_selected_sbs_context()
+        if context is None:
+            self._flags_summary_label.setText("Flags: None")
+            return
+
+        project_data, sbs_name = context
+        flags = project_data.flags_manager.get_flags(sbs_name)
+        current_item = self._sbs_list_widget.currentItem()
+        if isinstance(current_item, CLTScoreSBSListItem):
+            current_item.entry.flags = flags
+            row_widget = self._sbs_list_widget.itemWidget(current_item)
+            if isinstance(row_widget, CLTScoreSBSRow):
+                row_widget.set_flags(flags)
+
+        self._flags_summary_label.setText(
+            "Flags: " + (", ".join(flags) if flags else "None")
+        )
+        self._remove_flags_combo.addItems(flags)
+
+    def _add_selected_sbs_flag(self) -> None:
+        context = self._get_selected_sbs_context()
+        flag = self._add_flags_combo.currentText()
+        if context is None or not flag:
+            return
+
+        project_data, sbs_name = context
+        project_data.flags_manager.add_flag(sbs_name, flag)
+        project_data.flags_manager.save()
+        self._update_cut_sbs_status()
+        self._update_sbs_flags_controls()
+
+    def _remove_selected_sbs_flag(self) -> None:
+        context = self._get_selected_sbs_context()
+        flag = self._remove_flags_combo.currentText()
+        if context is None or not flag:
+            return
+
+        project_data, sbs_name = context
+        project_data.flags_manager.remove_flag(sbs_name, flag)
+        project_data.flags_manager.save()
+        self._update_cut_sbs_status()
+        self._update_sbs_flags_controls()
 
     def _on_peek_toggled(self, checked: bool) -> None:
         if not checked:

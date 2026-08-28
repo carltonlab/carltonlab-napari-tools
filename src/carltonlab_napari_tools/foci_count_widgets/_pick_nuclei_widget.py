@@ -55,6 +55,7 @@ class CLTSBSPointWidget(QWidget):
         region_name: str | None,
         square_width: int,
         square_height: int,
+        square_z_sections: int,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -69,20 +70,24 @@ class CLTSBSPointWidget(QWidget):
         )
         self._square_width_label = QLabel(f"W: {square_width}")
         self._square_height_label = QLabel(f"H: {square_height}")
+        self._square_z_sections_label = QLabel(f"Z: {square_z_sections}")
 
         layout.addWidget(self._point_name_label)
         layout.addWidget(self._region_name_label)
         layout.addStretch()
         layout.addWidget(self._square_width_label)
         layout.addWidget(self._square_height_label)
+        layout.addWidget(self._square_z_sections_label)
 
     def set_square_dimensions(
         self,
         square_width: int,
         square_height: int,
+        square_z_sections: int,
     ) -> None:
         self._square_width_label.setText(f"W: {square_width}")
         self._square_height_label.setText(f"H: {square_height}")
+        self._square_z_sections_label.setText(f"Z: {square_z_sections}")
 
 
 class CLTPickNucleiWidget(QWidget):
@@ -202,21 +207,21 @@ class CLTPickNucleiWidget(QWidget):
         self._z_sections_layout.setContentsMargins(0, 0, 0, 0)
         self._z_sections_widget.setLayout(self._z_sections_layout)
 
-        self._z_sections_label = QLabel("Z-sections")
-        self._z_sections_label.setSizePolicy(
+        self._default_z_sections_label = QLabel("Z-sections")
+        self._default_z_sections_label.setSizePolicy(
             QSizePolicy.Policy.Preferred,
             QSizePolicy.Policy.Preferred,
         )
-        self._z_sections_layout.addWidget(self._z_sections_label)
+        self._z_sections_layout.addWidget(self._default_z_sections_label)
 
-        self._z_sections_spinbox = QSpinBox()
-        self._z_sections_spinbox.setRange(1, 1_000_000)
-        self._z_sections_spinbox.setValue(27)
-        self._z_sections_spinbox.setSizePolicy(
+        self._default_z_sections_spinbox = QSpinBox()
+        self._default_z_sections_spinbox.setRange(1, 1_000_000)
+        self._default_z_sections_spinbox.setValue(27)
+        self._default_z_sections_spinbox.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
         )
-        self._z_sections_layout.addWidget(self._z_sections_spinbox)
+        self._z_sections_layout.addWidget(self._default_z_sections_spinbox)
         self._layout.addWidget(self._z_sections_widget)
 
         self._layout.addSpacing(6)
@@ -253,11 +258,17 @@ class CLTPickNucleiWidget(QWidget):
         self._height_spinbox = QSpinBox()
         self._height_spinbox.setRange(1, 1_000_000)
         self._height_spinbox.setValue(100)
+        self._z_sections_label = QLabel("Z:")
+        self._z_sections_spinbox = QSpinBox()
+        self._z_sections_spinbox.setRange(1, 1_000_000)
+        self._z_sections_spinbox.setValue(27)
 
         self._sbs_list_header_layout.addWidget(self._width_label)
         self._sbs_list_header_layout.addWidget(self._width_spinbox)
         self._sbs_list_header_layout.addWidget(self._height_label)
         self._sbs_list_header_layout.addWidget(self._height_spinbox)
+        self._sbs_list_header_layout.addWidget(self._z_sections_label)
+        self._sbs_list_header_layout.addWidget(self._z_sections_spinbox)
         self._layout.addWidget(self._sbs_list_header_widget)
 
         self._sbs_list_widget = QListWidget()
@@ -313,6 +324,9 @@ class CLTPickNucleiWidget(QWidget):
         self._height_spinbox.valueChanged.connect(
             self._on_square_dimensions_changed
         )
+        self._z_sections_spinbox.valueChanged.connect(
+            self._on_square_dimensions_changed
+        )
 
         self._layout.addWidget(FrameSeparator(parent=self))
 
@@ -342,6 +356,7 @@ class CLTPickNucleiWidget(QWidget):
         region_name: str | None,
         square_width: int,
         square_height: int,
+        square_z_sections: int,
     ) -> None:
         item = QListWidgetItem()
         point_widget = CLTSBSPointWidget(
@@ -349,6 +364,7 @@ class CLTPickNucleiWidget(QWidget):
             region_name,
             square_width,
             square_height,
+            square_z_sections,
             parent=self._sbs_list_widget,
         )
         item.setSizeHint(point_widget.sizeHint())
@@ -368,6 +384,7 @@ class CLTPickNucleiWidget(QWidget):
         sbs_header = self._nuclei_features_headers["sbs_number"]
         width_header = self._nuclei_features_headers["square_width"]
         height_header = self._nuclei_features_headers["square_height"]
+        z_sections_header = self._nuclei_features_headers["square_z_sections"]
 
         for feature in features.to_dict(orient="records"):
             self._add_sbs_list_entry(
@@ -375,6 +392,7 @@ class CLTPickNucleiWidget(QWidget):
                 region_name=None,
                 square_width=int(feature[width_header]),
                 square_height=int(feature[height_header]),
+                square_z_sections=int(feature[z_sections_header]),
             )
 
     def _on_sbs_selection_changed(self) -> None:
@@ -394,15 +412,20 @@ class CLTPickNucleiWidget(QWidget):
         selected_features = features.iloc[selected_rows]
         width_header = self._nuclei_features_headers["square_width"]
         height_header = self._nuclei_features_headers["square_height"]
+        z_sections_header = self._nuclei_features_headers["square_z_sections"]
         with (
             QSignalBlocker(self._width_spinbox),
             QSignalBlocker(self._height_spinbox),
+            QSignalBlocker(self._z_sections_spinbox),
         ):
             self._width_spinbox.setValue(
                 int(selected_features[width_header].max())
             )
             self._height_spinbox.setValue(
                 int(selected_features[height_header].max())
+            )
+            self._z_sections_spinbox.setValue(
+                int(selected_features[z_sections_header].max())
             )
         self._update_sbs_flags_controls()
 
@@ -424,6 +447,7 @@ class CLTPickNucleiWidget(QWidget):
             [feature_index],
             self._width_spinbox.value(),
             self._height_spinbox.value(),
+            self._z_sections_spinbox.value(),
         )
         features.loc[
             feature_index,
@@ -433,6 +457,10 @@ class CLTPickNucleiWidget(QWidget):
             feature_index,
             self._nuclei_features_headers["square_height"],
         ] = self._height_spinbox.value()
+        features.loc[
+            feature_index,
+            self._nuclei_features_headers["square_z_sections"],
+        ] = self._z_sections_spinbox.value()
         self._nuclei_centers_layer.features = features
         self._rebuild_nuclei_squares()
 
@@ -442,6 +470,7 @@ class CLTPickNucleiWidget(QWidget):
             item_widget.set_square_dimensions(
                 self._width_spinbox.value(),
                 self._height_spinbox.value(),
+                self._z_sections_spinbox.value(),
             )
 
     def _apply_dimensions_to_selected(self) -> None:
@@ -462,6 +491,7 @@ class CLTPickNucleiWidget(QWidget):
             feature_indices,
             self._width_spinbox.value(),
             self._height_spinbox.value(),
+            self._z_sections_spinbox.value(),
         )
         features.loc[
             feature_indices,
@@ -471,6 +501,10 @@ class CLTPickNucleiWidget(QWidget):
             feature_indices,
             self._nuclei_features_headers["square_height"],
         ] = self._height_spinbox.value()
+        features.loc[
+            feature_indices,
+            self._nuclei_features_headers["square_z_sections"],
+        ] = self._z_sections_spinbox.value()
         self._nuclei_centers_layer.features = features
         self._rebuild_nuclei_squares()
 
@@ -481,6 +515,7 @@ class CLTPickNucleiWidget(QWidget):
                 item_widget.set_square_dimensions(
                     self._width_spinbox.value(),
                     self._height_spinbox.value(),
+                    self._z_sections_spinbox.value(),
                 )
 
     def _mark_coordinate_recalculation_needed(
@@ -489,6 +524,7 @@ class CLTPickNucleiWidget(QWidget):
         feature_indices: object,
         width: int,
         height: int,
+        z_sections: int,
     ) -> None:
         if self._sbs_flags_manager is None:
             return
@@ -496,6 +532,7 @@ class CLTPickNucleiWidget(QWidget):
         sbs_header = self._nuclei_features_headers["sbs_number"]
         width_header = self._nuclei_features_headers["square_width"]
         height_header = self._nuclei_features_headers["square_height"]
+        z_sections_header = self._nuclei_features_headers["square_z_sections"]
         foci_coords_header = self._nuclei_features_headers[
             "stitched_foci_coords"
         ]
@@ -512,6 +549,7 @@ class CLTPickNucleiWidget(QWidget):
             dimensions_changed = (
                 int(feature[width_header]) != width
                 or int(feature[height_header]) != height
+                or int(feature[z_sections_header]) != z_sections
             )
             if dimensions_changed:
                 sbs_name = f"sbs{int(feature[sbs_header])}"
@@ -797,7 +835,7 @@ class CLTPickNucleiWidget(QWidget):
         features.loc[
             feature_index,
             self._nuclei_features_headers["square_z_sections"],
-        ] = self._z_sections_spinbox.value()
+        ] = self._default_z_sections_spinbox.value()
         self._nuclei_centers_layer.features = features
         self._rebuild_nuclei_squares()
         self._update_sbs_list()
