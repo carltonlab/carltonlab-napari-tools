@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -29,11 +30,13 @@ class CLTGeneratePlotsWidget(QWidget):
         napari_viewer: "ViewerModel",
         parent: QWidget,
         project_list_widget: CLTProjectListWidget,
+        status_update_callback: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
 
         self._napari_viewer = napari_viewer
         self._project_list_widget = project_list_widget
+        self._status_update_callback = status_update_callback
         self._output_directory: Path | None = None
 
         layout = QVBoxLayout()
@@ -94,3 +97,5 @@ class CLTGeneratePlotsWidget(QWidget):
             self._project_list_widget.get_project_paths(),
             self._output_directory,
         )
+        if self._status_update_callback is not None:
+            self._status_update_callback()

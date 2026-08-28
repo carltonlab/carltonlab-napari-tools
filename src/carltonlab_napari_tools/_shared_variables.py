@@ -104,6 +104,7 @@ CLSA_PROJECT_SUFFIX = "_clsa_project"
 CLSP_PROJECT_SUFFIX = "_clsp_project"
 
 RESULTS_DIR = "summaries_and_plots"
+FOCI_COUNT_PLOT_FILE_NAME_PREFIX = "foci_count_"
 TILE_POSITIONS_FILE_NAME_SUFFIX = "_tile_positions.csv"
 SEGMENTATION_MASKS_FILE_NAME_SUFFIX = "_meiotic_3d_crops_masks.npy"
 FILTERED_SEGMENTATION_MASKS_FILE_NAME_SUFFIX = "_filtered.npy"

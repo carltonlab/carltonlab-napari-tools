@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from carltonlab_napari_tools._shared_variables import (
+    FOCI_COUNT_PLOT_FILE_NAME_PREFIX,
     NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
     PICK_NUCLEI_DIR_NAME,
     PROJECT_FILE_DIR_NAME,
@@ -54,6 +55,29 @@ def _load_project_plot_data(project_path: Path) -> pd.DataFrame | None:
         .rename("foci_count")
         .reset_index()
     )
+
+
+def is_project_plot_complete(project_path: Path) -> bool:
+    resolved_project_path = resolve_clsp_project_path(project_path)
+    if resolved_project_path is None:
+        return False
+
+    output_directory = (
+        resolved_project_path / PROJECT_FILE_DIR_NAME / RESULTS_DIR
+    )
+    pdf_stems = {
+        path.stem
+        for path in output_directory.glob(
+            f"{FOCI_COUNT_PLOT_FILE_NAME_PREFIX}*.pdf"
+        )
+    }
+    png_stems = {
+        path.stem
+        for path in output_directory.glob(
+            f"{FOCI_COUNT_PLOT_FILE_NAME_PREFIX}*.png"
+        )
+    }
+    return bool(pdf_stems & png_stems)
 
 
 def _save_bar_plot(

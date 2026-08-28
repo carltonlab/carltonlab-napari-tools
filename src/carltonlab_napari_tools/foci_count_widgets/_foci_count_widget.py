@@ -42,8 +42,14 @@ from carltonlab_napari_tools._shared_widgets import (
     get_directory,
     get_file,
 )
+from carltonlab_napari_tools.foci_count_widgets._generate_plots_widget import (
+    CLTGeneratePlotsWidget,
+)
 from carltonlab_napari_tools.foci_count_widgets._pick_nuclei_widget import (
     CLTPickNucleiWidget,
+)
+from carltonlab_napari_tools.foci_count_widgets._plot_manager import (
+    is_project_plot_complete,
 )
 from carltonlab_napari_tools.foci_count_widgets._score_nuclei_widget import (
     CLTScoreNucleiWidget,
@@ -224,6 +230,18 @@ class IntegrationProjectRow(QWidget):
                 "Nuclei regions assigned"
                 if complete
                 else "Nuclei regions are incomplete"
+            ),
+        )
+
+    def apply_plots_status(self, complete: bool) -> None:
+        self._set_status_button(
+            self._generate_plots_button,
+            "GP",
+            "green" if complete else "red",
+            (
+                "Project plots generated"
+                if complete
+                else "Project plots not generated"
             ),
         )
 
@@ -447,8 +465,9 @@ class IntegrationWidget(QWidget):
         self._define_regions_button.clicked.connect(
             self._show_stitched_regions_widget
         )
-        self._generate_reports_button = QPushButton(
-            "6.Generate Project Reports"
+        self._generate_reports_button = QPushButton("6.Generate Plots")
+        self._generate_reports_button.clicked.connect(
+            self._show_generate_plots_widget
         )
 
         self._process_status_labels: dict[str, QLabel] = {}
@@ -585,9 +604,13 @@ class IntegrationWidget(QWidget):
             regions_count,
             total,
         )
+        plots_count = sum(
+            is_project_plot_complete(project_path)
+            for project_path in project_paths
+        )
         self._set_process_status_label(
             self._process_status_labels["reports"],
-            0,
+            plots_count,
             total,
         )
 
@@ -658,6 +681,15 @@ class IntegrationWidget(QWidget):
         )
         self._set_current_widget(stitched_regions_widget)
 
+    def _show_generate_plots_widget(self) -> None:
+        generate_plots_widget = CLTGeneratePlotsWidget(
+            napari_viewer=self._napari_viewer,
+            parent=self,
+            project_list_widget=self._project_directories_list,
+            status_update_callback=self._on_plots_generated,
+        )
+        self._set_current_widget(generate_plots_widget)
+
     def _save_score_nuclei_from_key(self, _event=None) -> None:
         if not isinstance(self._current_widget, CLTScoreNucleiWidget):
             return
@@ -675,6 +707,10 @@ class IntegrationWidget(QWidget):
         self._update_process_status_labels()
 
     def _on_regions_saved(self) -> None:
+        self._project_directories_list.refresh_rows()
+        self._update_process_status_labels()
+
+    def _on_plots_generated(self) -> None:
         self._project_directories_list.refresh_rows()
         self._update_process_status_labels()
 
@@ -714,6 +750,7 @@ class IntegrationWidget(QWidget):
         row.apply_regions_status(
             CLTStitchedRegionsWidget.is_project_regions_complete(project_path)
         )
+        row.apply_plots_status(is_project_plot_complete(project_path))
         return row
 
     def _on_keep_channels_changed(self, *_args: object) -> None:
