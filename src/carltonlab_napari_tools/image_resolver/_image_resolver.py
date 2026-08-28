@@ -7,6 +7,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any
 
 import numpy as np
+import xarray as xr
 from bioio_base.exceptions import UnsupportedFileFormatError
 from mrc import DVFile
 from mrc._new import BE_HDR, LE_HDR, _byte_order
@@ -278,6 +279,17 @@ def resolve_image_data(image_path: str | Path) -> Any | None:
     if image is None:
         return None
     return _carltonlab_normalize_image_data(image.xarray_data)
+
+
+def resolve_lazy_image_data(
+    image_path: str | Path,
+) -> xr.DataArray | None:
+    """Resolve image data without eagerly loading all pixels."""
+    image = resolve_image(image_path)
+    if image is None:
+        return None
+
+    return _carltonlab_normalize_image_data(image.xarray_dask_data)
 
 
 def _get_ome_stage_translation(image: nImage) -> dict[str, float]:

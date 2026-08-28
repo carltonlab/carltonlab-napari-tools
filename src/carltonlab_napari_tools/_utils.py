@@ -6,7 +6,19 @@ from pathlib import Path
 
 from napari.utils.notifications import show_error
 
-from carltonlab_napari_tools._shared_variables import PROJECT_TYPES
+from carltonlab_napari_tools._shared_variables import (
+    PROJECT_TYPES,
+    STITCHED_IMAGE_DIR_NAME,
+)
+
+
+def get_project_stitched_image_path(
+    project_path: Path,
+) -> Path | None:
+    stitched_directory = project_path / STITCHED_IMAGE_DIR_NAME
+    stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
+    return stitched_paths[0] if stitched_paths else None
+
 
 SUPPORTED_IMAGE_EXTENSIONS: tuple[str, ...] = (
     ".ome.zarr",
