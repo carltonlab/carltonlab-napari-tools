@@ -215,6 +215,18 @@ class IntegrationProjectRow(QWidget):
             ),
         )
 
+    def apply_regions_status(self, complete: bool) -> None:
+        self._set_status_button(
+            self._regions_button,
+            "Re",
+            "green" if complete else "red",
+            (
+                "Nuclei regions assigned"
+                if complete
+                else "Nuclei regions are incomplete"
+            ),
+        )
+
 
 class IntegrationWidget(QWidget):
     def __init__(
@@ -564,12 +576,20 @@ class IntegrationWidget(QWidget):
             total,
         )
 
-        for process_name in ("regions", "reports"):
-            self._set_process_status_label(
-                self._process_status_labels[process_name],
-                0,
-                total,
-            )
+        regions_count = sum(
+            CLTStitchedRegionsWidget.is_project_regions_complete(project_path)
+            for project_path in project_paths
+        )
+        self._set_process_status_label(
+            self._process_status_labels["regions"],
+            regions_count,
+            total,
+        )
+        self._set_process_status_label(
+            self._process_status_labels["reports"],
+            0,
+            total,
+        )
 
     def _remove_current_widget(self) -> None:
         if self._current_widget is None:
@@ -634,6 +654,7 @@ class IntegrationWidget(QWidget):
             napari_viewer=self._napari_viewer,
             parent=self,
             project_list_widget=self._project_directories_list,
+            status_update_callback=self._on_regions_saved,
         )
         self._set_current_widget(stitched_regions_widget)
 
@@ -650,6 +671,10 @@ class IntegrationWidget(QWidget):
         self._update_process_status_labels()
 
     def _on_scoring_saved(self) -> None:
+        self._project_directories_list.refresh_rows()
+        self._update_process_status_labels()
+
+    def _on_regions_saved(self) -> None:
         self._project_directories_list.refresh_rows()
         self._update_process_status_labels()
 
@@ -685,6 +710,9 @@ class IntegrationWidget(QWidget):
         )
         row.apply_scoring_status(
             CLTScoreNucleiWidget.is_project_scoring_complete(project_path)
+        )
+        row.apply_regions_status(
+            CLTStitchedRegionsWidget.is_project_regions_complete(project_path)
         )
         return row
 

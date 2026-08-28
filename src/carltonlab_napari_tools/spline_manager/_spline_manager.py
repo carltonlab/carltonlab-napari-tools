@@ -413,6 +413,33 @@ def save_regions_configuration(
         config.write(config_file)
 
 
+def reset_regions_configuration(
+    saving_path: Path,
+    *,
+    reset_number_of_regions: bool = False,
+    reset_expansion_values: bool = False,
+) -> None:
+    config = configparser.ConfigParser()
+    if saving_path.is_file():
+        config.read(saving_path)
+    if not config.has_section("Regions"):
+        config["Regions"] = {}
+
+    if reset_number_of_regions:
+        config["Regions"]["number_of_regions"] = "None"
+        for option in list(config["Regions"]):
+            if option.startswith("region-"):
+                del config["Regions"][option]
+    elif reset_expansion_values:
+        for option in list(config["Regions"]):
+            if option.startswith("region-"):
+                config["Regions"][option] = "None"
+
+    saving_path.parent.mkdir(parents=True, exist_ok=True)
+    with saving_path.open("w", encoding="utf-8") as config_file:
+        config.write(config_file)
+
+
 def load_regions_configuration(
     values_path: Path,
 ) -> tuple[int | None, int | None, tuple[int | None, ...] | None] | None:

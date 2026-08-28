@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,7 +26,10 @@ from carltonlab_napari_tools._shared_variables import (
     REGIONS_DIR_NAME,
     SPLINE_LAYER_FILE_NAME,
 )
-from carltonlab_napari_tools._shared_widgets import FrameSeparator
+from carltonlab_napari_tools._shared_widgets import (
+    FrameSeparator,
+    confirm_dialog,
+)
 from carltonlab_napari_tools._utils import (
     get_project_stitched_image_path,
     resolve_clsp_project_path,
@@ -47,6 +51,7 @@ from carltonlab_napari_tools.spline_manager._spline_manager import (
     get_spline_equal_segments,
     load_regions_configuration,
     load_spline_layer,
+    reset_regions_configuration,
     save_regions_configuration,
     save_spline_layer,
     verify_spline_interpolation,
@@ -64,16 +69,54 @@ REGION_COLOR_PALETTE = (
 
 
 class CLTStitchedRegionsWidget(QWidget):
+    @staticmethod
+    def is_project_regions_complete(project_path: Path) -> bool:
+        resolved_project_path = resolve_clsp_project_path(project_path)
+        if resolved_project_path is None:
+            return False
+
+        regions_directory = (
+            resolved_project_path / PROJECT_FILE_DIR_NAME / REGIONS_DIR_NAME
+        )
+        configuration = load_regions_configuration(
+            regions_directory / REGIONS_CONFIGURATION_FILE_NAME
+        )
+        if configuration is None or configuration[1] is None:
+            return False
+
+        features_path = (
+            resolved_project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        )
+        try:
+            features = pd.read_csv(features_path)
+        except (
+            OSError,
+            pd.errors.EmptyDataError,
+            pd.errors.ParserError,
+        ):
+            return False
+
+        return (
+            not features.empty
+            and "region" in features
+            and bool(features["region"].notna().all())
+        )
+
     def __init__(
         self,
         napari_viewer: "ViewerModel",
         parent: QWidget,
         project_list_widget: CLTProjectListWidget,
+        status_update_callback: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
 
         self._napari_viewer = napari_viewer
         self._project_list_widget = project_list_widget
+        self._status_update_callback = status_update_callback
         self._project_list_widget.itemSelectionChanged.connect(
             self._on_project_selection_changed
         )
@@ -86,6 +129,11 @@ class CLTStitchedRegionsWidget(QWidget):
         self._nuclei_features: pd.DataFrame | None = None
         self._expanded_regions_spinboxes: list[QSpinBox] = []
         self._current_project_path: Path | None = None
+        self._saved_spline_signature: tuple[tuple[int, ...], bytes] | None = (
+            None
+        )
+        self._saved_interpolation_order: int | None = None
+        self._saved_number_of_regions: int | None = None
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
@@ -179,7 +227,7 @@ class CLTStitchedRegionsWidget(QWidget):
         )
         self._number_regions_layout.addWidget(self._number_regions_spinbox)
 
-        self._current_regions_label = QLabel("Current number of regions: None")
+        self._current_regions_label = QLabel("Current regions: None")
         self._number_regions_layout.addWidget(self._current_regions_label)
 
         self._apply_regions_button = QPushButton("Apply")
@@ -243,10 +291,6 @@ class CLTStitchedRegionsWidget(QWidget):
         self._display_spline_button.clicked.connect(
             self._display_spline_button_pressed
         )
-        self._interpolation_order_spinbox.valueChanged.connect(
-            self._display_spline_button_pressed
-        )
-
         self._container_layout.addStretch()
 
         self.setSizePolicy(
@@ -344,9 +388,24 @@ class CLTStitchedRegionsWidget(QWidget):
             _, saved_number_of_regions, _ = regions_configuration
             if saved_number_of_regions is not None:
                 self._current_regions_label.setText(
-                    f"Current number of regions: {saved_number_of_regions}"
+                    f"Current regions: {saved_number_of_regions}"
                 )
                 self._set_regions_saved_state(True)
+
+        self._saved_spline_signature = self._get_spline_signature()
+        self._saved_interpolation_order = (
+            self._interpolation_order_spinbox.value()
+        )
+        self._saved_number_of_regions = (
+            saved_number_of_regions
+            if regions_configuration is not None
+            and saved_number_of_regions is not None
+            else (
+                len(self._regions_layer._data_view.shapes)
+                if self._regions_layer is not None
+                else None
+            )
+        )
 
         self._image_status_label.setText(f"Loaded: {stitched_path.name}")
 
@@ -401,6 +460,8 @@ class CLTStitchedRegionsWidget(QWidget):
             / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
         )
         self._nuclei_features.to_csv(features_path, index=False)
+        if self._status_update_callback is not None:
+            self._status_update_callback()
 
         line_data = np.stack(
             [points_yx, projected_points],
@@ -411,6 +472,12 @@ class CLTStitchedRegionsWidget(QWidget):
             REGION_COLOR_PALETTE[(region - 1) % len(REGION_COLOR_PALETTE)]
             for region in region_numbers
         ]
+        if (
+            self._nuclei_connections_layer is not None
+            and self._nuclei_connections_layer in self._napari_viewer.layers
+        ):
+            self._napari_viewer.layers.remove(self._nuclei_connections_layer)
+
         self._nuclei_connections_layer = self._napari_viewer.add_shapes(
             name="clt_nuclei_spline_connections",
             ndim=2,
@@ -419,6 +486,110 @@ class CLTStitchedRegionsWidget(QWidget):
         self._nuclei_connections_layer.add_lines(line_data)
         self._nuclei_connections_layer.edge_color = line_colors
         self._nuclei_connections_layer.refresh()
+
+    def _get_spline_signature(
+        self,
+    ) -> tuple[tuple[int, ...], bytes] | None:
+        if self._spline_layer is None:
+            return None
+        shapes = self._spline_layer._data_view.shapes
+        if len(shapes) != 1:
+            return None
+        data = np.asarray(shapes[0].data)
+        return data.shape, data.tobytes()
+
+    def _reset_nuclei_regions(self) -> None:
+        if self._current_project_path is None:
+            return
+
+        self._load_nuclei_features(self._current_project_path)
+        if self._nuclei_features is None:
+            return
+        if "region" not in self._nuclei_features.columns:
+            return
+
+        self._nuclei_features["region"] = None
+        features_path = (
+            self._current_project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        )
+        self._nuclei_features.to_csv(features_path, index=False)
+
+    def _confirm_region_recalculation(self) -> bool:
+        current_spline_signature = self._get_spline_signature()
+        spline_changed = (
+            current_spline_signature != self._saved_spline_signature
+        )
+        interpolation_changed = (
+            self._saved_interpolation_order is not None
+            and self._interpolation_order_spinbox.value()
+            != self._saved_interpolation_order
+        )
+        number_changed = (
+            self._saved_number_of_regions is not None
+            and self._number_regions_spinbox.value()
+            != self._saved_number_of_regions
+        )
+
+        if not (spline_changed or interpolation_changed or number_changed):
+            return True
+
+        if spline_changed or interpolation_changed:
+            changes = (
+                "the region geometry",
+                "the expanded region settings",
+                "all nuclei region assignments",
+            )
+        else:
+            changes = (
+                "the expanded region settings",
+                "all nuclei region assignments",
+            )
+
+        message = (
+            "This change may alter the SBS region assignments.\n\n"
+            "The following will be reset:\n- "
+            + "\n- ".join(changes)
+            + "\n\nDo you want to continue?"
+        )
+        if not confirm_dialog(self._napari_viewer, message):
+            return False
+
+        if self._current_project_path is not None:
+            configuration_path = (
+                self._current_project_path
+                / PROJECT_FILE_DIR_NAME
+                / REGIONS_DIR_NAME
+                / REGIONS_CONFIGURATION_FILE_NAME
+            )
+            reset_regions_configuration(
+                configuration_path,
+                reset_number_of_regions=spline_changed
+                or interpolation_changed,
+                reset_expansion_values=True,
+            )
+
+        self._reset_nuclei_regions()
+        self._remove_region_layers()
+        self._display_spline_button_pressed()
+        self._create_regions_button_pressed()
+        self._evaluate_nuclei_regions()
+        self._set_regions_saved_state(False)
+        self._set_expanded_regions_saved_state(False)
+
+        self._saved_spline_signature = self._get_spline_signature()
+        self._saved_interpolation_order = (
+            self._interpolation_order_spinbox.value()
+        )
+        self._saved_number_of_regions = self._number_regions_spinbox.value()
+        if self._current_project_path is not None:
+            save_regions_configuration(
+                configuration_path,
+                number_of_regions=self._number_regions_spinbox.value(),
+            )
+        return True
 
     def _display_spline_button_pressed(self) -> None:
         if self._spline_layer is None:
@@ -430,8 +601,8 @@ class CLTStitchedRegionsWidget(QWidget):
         )
 
     def _apply_regions_button_pressed(self) -> None:
-        self._remove_region_layers()
-        self._create_regions_button_pressed()
+        if not self._confirm_region_recalculation():
+            return
         if self._regions_layer is None:
             return
 
@@ -449,11 +620,12 @@ class CLTStitchedRegionsWidget(QWidget):
             number_of_regions=self._number_regions_spinbox.value(),
         )
         self._current_regions_label.setText(
-            "Current number of regions: "
-            f"{len(self._regions_layer._data_view.shapes)}"
+            f"Current regions: {len(self._regions_layer._data_view.shapes)}"
         )
         self._set_regions_saved_state(True)
         self._evaluate_nuclei_regions()
+        if self._status_update_callback is not None:
+            self._status_update_callback()
 
     def _remove_region_layers(self) -> None:
         for layer in (
@@ -721,6 +893,9 @@ class CLTStitchedRegionsWidget(QWidget):
         )
         if project_path is None:
             self._spline_status_label.setText("No project selected")
+            return
+
+        if not self._confirm_region_recalculation():
             return
 
         spline_path = (
