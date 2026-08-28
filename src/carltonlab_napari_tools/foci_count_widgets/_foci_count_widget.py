@@ -1103,6 +1103,10 @@ class CarltonLabCountTool(QWidget):
         self._global_scroll_speed_container.setLayout(
             self._global_scroll_speed_container_layout
         )
+        self._global_scroll_speed_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
         self._main_layout.addWidget(self._global_scroll_speed_container)
 
         self._global_scroll_speed_label: QLabel = QLabel("Scroll speed")
@@ -1128,11 +1132,13 @@ class CarltonLabCountTool(QWidget):
             self._global_scroll_speed_slider
         )
 
+        self._main_layout.addWidget(FrameSeparator(parent=self))
+
         self._integration_widget = IntegrationWidget(
             self._napari_viewer,
             self,
         )
-        self._main_layout.addWidget(self._integration_widget)
+        self._main_layout.addWidget(self._integration_widget, 1)
 
     ##################################################################
     #   Button connections
