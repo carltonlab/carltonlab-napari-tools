@@ -435,15 +435,26 @@ class IntegrationWidget(QWidget):
 
         self._layout.addWidget(FrameSeparator(parent=self))
 
-        self._workflow_widget_container = QWidget()
-        self._workflow_widget_layout = QVBoxLayout()
-        self._workflow_widget_layout.setContentsMargins(0, 0, 0, 0)
-        self._workflow_widget_container.setLayout(self._workflow_widget_layout)
-        self._workflow_widget_container.setSizePolicy(
+        self._workflow_scroll_area = QScrollArea()
+        self._workflow_scroll_area.setWidgetResizable(True)
+        self._workflow_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self._workflow_scroll_area.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Expanding,
         )
-        self._layout.addWidget(self._workflow_widget_container, 1)
+
+        self._workflow_widget_container = QWidget()
+        self._workflow_widget_layout = QVBoxLayout()
+        self._workflow_widget_layout.setContentsMargins(0, 0, 0, 0)
+        self._workflow_widget_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self._workflow_widget_container.setLayout(self._workflow_widget_layout)
+        self._workflow_widget_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+
+        self._workflow_scroll_area.setWidget(self._workflow_widget_container)
+        self._layout.addWidget(self._workflow_scroll_area, 1)
 
         self._current_widget: QWidget | None = None
 
@@ -540,6 +551,9 @@ class IntegrationWidget(QWidget):
         if self._current_widget is None:
             return
 
+        if isinstance(self._current_widget, CLTScoreNucleiWidget):
+            self._napari_viewer.bind_key("u", None)
+
         self._workflow_widget_layout.removeWidget(self._current_widget)
         self._current_widget.setParent(None)
         self._current_widget.deleteLater()
@@ -584,10 +598,27 @@ class IntegrationWidget(QWidget):
             project_list_widget=self._project_directories_list,
         )
         self._set_current_widget(score_nuclei_widget)
+        self._napari_viewer.bind_key(
+            "u",
+            self._save_score_nuclei_from_key,
+            overwrite=True,
+        )
+
+    def _save_score_nuclei_from_key(self, _event=None) -> None:
+        if not isinstance(self._current_widget, CLTScoreNucleiWidget):
+            return
+        if not self._current_widget.isVisible():
+            return
+
+        self._current_widget._on_save_foci_points_button_pressed()
 
     def _on_nuclei_saved(self) -> None:
         self._project_directories_list.refresh_rows()
         self._update_process_status_labels()
+
+    def _refresh_score_nuclei_widget(self) -> None:
+        if isinstance(self._current_widget, CLTScoreNucleiWidget):
+            self._current_widget.refresh_project_data()
 
     def _save_multigonad_project(self, saving_path: str) -> bool:
         project_paths = self._project_directories_list.get_project_paths()
@@ -682,6 +713,7 @@ class IntegrationWidget(QWidget):
 
         self._project_directories_list.add_project_paths(valid_paths)
         self._update_process_status_labels()
+        self._refresh_score_nuclei_widget()
 
     def _add_multigonad_config_button_pressed(self) -> None:
         config_path = get_file(
@@ -725,10 +757,12 @@ class IntegrationWidget(QWidget):
 
         self._project_directories_list.set_project_paths(project_paths)
         self._update_process_status_labels()
+        self._refresh_score_nuclei_widget()
 
     def _remove_project_directory_button_pressed(self) -> None:
         self._project_directories_list.remove_selected_project_paths()
         self._update_process_status_labels()
+        self._refresh_score_nuclei_widget()
 
 
 class GonadControlWidget(QWidget):

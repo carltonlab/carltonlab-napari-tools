@@ -551,7 +551,15 @@ class CLTScoreNucleiWidget(QWidget):
         self._point_controls_layout.addWidget(self._point_opacity_slider)
         self._layout.addWidget(self._point_controls_widget)
 
+        self._sbs_empty_label = QLabel("No project selected")
+        self._sbs_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sbs_empty_label.setStyleSheet(
+            "color: gray; font-style: italic; font-size: 20px;"
+        )
+        self._layout.addWidget(self._sbs_empty_label)
+
         self._sbs_list_widget = QListWidget()
+        self._sbs_list_widget.setVisible(False)
         self._layout.addWidget(self._sbs_list_widget)
         self._sbs_list_widget.currentItemChanged.connect(
             self._sbs_selection_changed
@@ -640,6 +648,14 @@ class CLTScoreNucleiWidget(QWidget):
             self._remove_selected_sbs_flag
         )
 
+        self._overall_progress_label = QLabel("Scored SBS: 0/0")
+        self._overall_progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._layout.addWidget(self._overall_progress_label)
+        self._layout.addStretch()
+
+        self._load_project_scoring_data()
+
+    def refresh_project_data(self) -> None:
         self._load_project_scoring_data()
 
     def _get_scoring_project_paths(self) -> list[Path]:
@@ -744,6 +760,31 @@ class CLTScoreNucleiWidget(QWidget):
         )
         self._cut_sbs_button.setEnabled(has_missing_sbs)
         self._update_sbs_list()
+        self._update_overall_progress()
+
+    def _update_overall_progress(self) -> None:
+        total_sbs = 0
+        scored_sbs = 0
+
+        for project_data in self._project_scoring_data.values():
+            for scored_foci_number in project_data.features[
+                "scored_foci_number"
+            ]:
+                total_sbs += 1
+                if not pd.isna(scored_foci_number):
+                    scored_sbs += 1
+
+        self._overall_progress_label.setText(
+            f"Scored SBS: {scored_sbs}/{total_sbs}"
+        )
+        if total_sbs > 0 and scored_sbs == total_sbs:
+            self._overall_progress_label.setStyleSheet(
+                "color: #29BA00; font-weight: bold;"
+            )
+        else:
+            self._overall_progress_label.setStyleSheet(
+                "color: #A80000; font-weight: bold;"
+            )
 
     def _update_cut_sbs_status(self) -> None:
         has_missing_sbs = any(
@@ -1033,10 +1074,45 @@ class CLTScoreNucleiWidget(QWidget):
 
         current_item.entry.foci_count = len(stitched_foci_coords)
         current_item.entry.scored = True
+        self._update_overall_progress()
 
         row_widget = self._sbs_list_widget.itemWidget(current_item)
         if isinstance(row_widget, CLTScoreSBSRow):
             row_widget.set_foci_count(len(stitched_foci_coords))
+
+        self._select_next_unscored_sbs(current_item)
+
+    def _select_next_unscored_sbs(
+        self,
+        current_item: CLTScoreSBSListItem,
+    ) -> None:
+        current_row = self._sbs_list_widget.row(current_item)
+        item_count = self._sbs_list_widget.count()
+
+        candidate_rows = [
+            (current_row + offset) % item_count
+            for offset in range(1, item_count + 1)
+        ]
+
+        for row in candidate_rows:
+            candidate_item = self._sbs_list_widget.item(row)
+            if not isinstance(candidate_item, CLTScoreSBSListItem):
+                continue
+            if candidate_item.entry.scored:
+                continue
+
+            project_data = self._project_scoring_data.get(
+                candidate_item.entry.project_path
+            )
+            if project_data is None:
+                continue
+
+            sbs_name = f"sbs{candidate_item.entry.sbs_number}"
+            if project_data.lock_manager.is_locked(sbs_name):
+                continue
+
+            self._sbs_list_widget.setCurrentRow(row)
+            return
 
     def _get_selected_sbs_context(
         self,
@@ -1206,8 +1282,7 @@ class CLTScoreNucleiWidget(QWidget):
         self._peek_details_widget.setVisible(True)
 
     def _project_selection_changed(self, *_args: object) -> None:
-        if self._mode_combo.currentText() == "Single":
-            self._load_project_scoring_data()
+        self._load_project_scoring_data()
 
     def _scoring_options_changed(self, _state: bool) -> None:
         self._update_sbs_list()
@@ -1309,6 +1384,15 @@ class CLTScoreNucleiWidget(QWidget):
     def _update_sbs_list(self) -> None:
         self._sbs_list_widget.clear()
 
+        has_projects = bool(self._project_scoring_data)
+        self._sbs_empty_label.setVisible(not has_projects)
+        self._sbs_list_widget.setVisible(has_projects)
+
+        if not has_projects:
+            self._update_sbs_list_height()
+            self._update_overall_progress()
+            return
+
         sbs_entries: list[ScoreSBSEntry] = []
 
         for project_path, project_data in self._project_scoring_data.items():
@@ -1356,3 +1440,19 @@ class CLTScoreNucleiWidget(QWidget):
             list_item.setSizeHint(row_widget.sizeHint())
             self._sbs_list_widget.addItem(list_item)
             self._sbs_list_widget.setItemWidget(list_item, row_widget)
+
+        self._update_sbs_list_height()
+        self._update_overall_progress()
+
+    def _update_sbs_list_height(self) -> None:
+        visible_rows = min(self._sbs_list_widget.count(), 10)
+        if visible_rows == 0:
+            self._sbs_list_widget.setFixedHeight(0)
+            return
+
+        rows_height = sum(
+            self._sbs_list_widget.item(row).sizeHint().height()
+            for row in range(visible_rows)
+        )
+        frame_height = 2 * self._sbs_list_widget.frameWidth()
+        self._sbs_list_widget.setFixedHeight(rows_height + frame_height)
