@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
+from random import shuffle
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -92,13 +93,21 @@ class ProjectScoringData:
         return missing_sbs_paths
 
 
+@dataclass
+class ScoreSBSEntry:
+    project_path: Path
+    sbs_number: int
+    foci_count: int | None
+    scored: bool
+    flags: list[str]
+
+
 class CLTScoreSBSRow(QWidget):
     def __init__(
         self,
         sbs_name: str,
         foci_count: int,
         *,
-        blind: bool = False,
         scored: bool = False,
         flags: list[SBSFlag | str] | None = None,
         parent: QWidget | None = None,
@@ -110,7 +119,7 @@ class CLTScoreSBSRow(QWidget):
         layout.setSpacing(4)
         self.setLayout(layout)
 
-        self.showing_label = QLabel("Blind" if blind else sbs_name)
+        self.showing_label = QLabel(sbs_name)
         self.showing_label.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
@@ -145,6 +154,16 @@ class CLTScoreSBSRow(QWidget):
             self.showing_label.setStyleSheet("color: #29BA00;")
         else:
             self.showing_label.setStyleSheet("color: black;")
+
+
+class CLTScoreSBSListItem(QListWidgetItem):
+    def __init__(
+        self,
+        entry: ScoreSBSEntry,
+        parent: QListWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.entry = entry
 
 
 class CLTScoreNucleiWidget(QWidget):
@@ -228,7 +247,17 @@ class CLTScoreNucleiWidget(QWidget):
         self._control_layout.addWidget(self._sbs_status_widget)
 
         self._blind_nuclei_checkbox = QCheckBox("Blind nuclei")
+        self._blind_nuclei_checkbox.setChecked(True)
+        self._blind_nuclei_checkbox.toggled.connect(
+            self._scoring_options_changed
+        )
+
         self._shuffle_nuclei_checkbox = QCheckBox("Shuffle nuclei")
+        self._shuffle_nuclei_checkbox.setChecked(True)
+        self._shuffle_nuclei_checkbox.toggled.connect(
+            self._scoring_options_changed
+        )
+
         self._control_layout.addWidget(self._blind_nuclei_checkbox)
         self._control_layout.addWidget(self._shuffle_nuclei_checkbox)
 
@@ -361,16 +390,11 @@ class CLTScoreNucleiWidget(QWidget):
         if current_item is None:
             return
 
-        item_data = current_item.data(Qt.ItemDataRole.UserRole)
-        if (
-            not isinstance(item_data, tuple)
-            or len(item_data) != 2
-            or not isinstance(item_data[0], Path)
-            or not isinstance(item_data[1], int)
-        ):
+        if not isinstance(current_item, CLTScoreSBSListItem):
             return
 
-        project_path, sbs_number = item_data
+        project_path = current_item.entry.project_path
+        sbs_number = current_item.entry.sbs_number
         project_data = self._project_scoring_data.get(project_path)
         if project_data is None:
             return
@@ -393,6 +417,9 @@ class CLTScoreNucleiWidget(QWidget):
     def _project_selection_changed(self, *_args: object) -> None:
         if self._mode_combo.currentText() == "Single":
             self._load_project_scoring_data()
+
+    def _scoring_options_changed(self, _state: bool) -> None:
+        self._update_sbs_list()
 
     def _on_cut_sbs_button_pressed(self) -> None:
         for project_data in self._project_scoring_data.values():
@@ -463,28 +490,45 @@ class CLTScoreNucleiWidget(QWidget):
     def _update_sbs_list(self) -> None:
         self._sbs_list_widget.clear()
 
+        sbs_entries: list[ScoreSBSEntry] = []
+
         for project_path, project_data in self._project_scoring_data.items():
             for feature in project_data.features.to_dict(orient="records"):
                 sbs_number = int(feature["sbs_number"])
                 foci_value = feature["scored_foci_number"]
                 foci_count = None if pd.isna(foci_value) else int(foci_value)
-                sbs_name = f"sbs{sbs_number} - {project_path.name}"
                 flag_key = f"sbs{sbs_number}"
+                flags = project_data.flags_manager.get_flags(flag_key)
 
-                row_widget = CLTScoreSBSRow(
-                    sbs_name=sbs_name,
-                    foci_count=foci_count,
-                    scored=foci_count is not None,
-                    flags=project_data.flags_manager.get_flags(flag_key),
+                sbs_entries.append(
+                    ScoreSBSEntry(
+                        project_path=project_path,
+                        sbs_number=sbs_number,
+                        foci_count=foci_count,
+                        scored=foci_count is not None,
+                        flags=flags,
+                    )
                 )
-                list_item = QListWidgetItem()
-                list_item.setData(
-                    Qt.ItemDataRole.UserRole,
-                    (project_path, sbs_number),
-                )
-                list_item.setSizeHint(row_widget.sizeHint())
-                self._sbs_list_widget.addItem(list_item)
-                self._sbs_list_widget.setItemWidget(
-                    list_item,
-                    row_widget,
-                )
+
+        if self._shuffle_nuclei_checkbox.isChecked():
+            shuffle(sbs_entries)
+
+        blind = self._blind_nuclei_checkbox.isChecked()
+
+        for display_index, entry in enumerate(sbs_entries, start=1):
+            sbs_name = (
+                f"Blind {display_index}"
+                if blind
+                else f"sbs{entry.sbs_number} - {entry.project_path.name}"
+            )
+
+            row_widget = CLTScoreSBSRow(
+                sbs_name=sbs_name,
+                foci_count=entry.foci_count,
+                scored=entry.scored,
+                flags=entry.flags,
+            )
+            list_item = CLTScoreSBSListItem(entry)
+            list_item.setSizeHint(row_widget.sizeHint())
+            self._sbs_list_widget.addItem(list_item)
+            self._sbs_list_widget.setItemWidget(list_item, row_widget)
