@@ -5,8 +5,8 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 import tifffile
-from napari.layers import Image, Points
-from qtpy.QtCore import Qt
+from napari.layers import Image, Points, Shapes
+from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -196,6 +196,7 @@ class CLTScoreNucleiWidget(QWidget):
 
         self._sbs_images: list[Image] = []
         self._foci_points: Points | None = None
+        self._area_indicator: Shapes | None = None
         self._project_scoring_data: dict[Path, ProjectScoringData] = {}
 
         self._layout = QVBoxLayout()
@@ -373,6 +374,8 @@ class CLTScoreNucleiWidget(QWidget):
         self._apply_dimensions_button.clicked.connect(
             self._on_apply_dimensions_button_pressed
         )
+        self._width_spinbox.valueChanged.connect(self._update_area_indicator)
+        self._height_spinbox.valueChanged.connect(self._update_area_indicator)
         self._sbs_dimensions_layout.addWidget(self._apply_dimensions_button)
         self._sbs_dimensions_layout.addStretch()
         self._layout.addWidget(self._sbs_dimensions_widget)
@@ -565,6 +568,7 @@ class CLTScoreNucleiWidget(QWidget):
         self._napari_viewer.layers.clear()
         self._sbs_images = []
         self._foci_points = None
+        self._area_indicator = None
         self._update_sbs_flags_controls()
 
         if current_item is None:
@@ -604,14 +608,21 @@ class CLTScoreNucleiWidget(QWidget):
             return
 
         feature = feature_matches.iloc[0]
-        for spinbox, column in (
-            (self._width_spinbox, "square_width"),
-            (self._height_spinbox, "square_height"),
-            (self._z_sections_spinbox, "square_z_sections"),
+        with (
+            QSignalBlocker(self._width_spinbox),
+            QSignalBlocker(self._height_spinbox),
+            QSignalBlocker(self._z_sections_spinbox),
         ):
-            value = feature.get(column)
-            if value is not None and not pd.isna(value):
-                spinbox.setValue(int(value))
+            for spinbox, column in (
+                (self._width_spinbox, "square_width"),
+                (self._height_spinbox, "square_height"),
+                (self._z_sections_spinbox, "square_z_sections"),
+            ):
+                value = feature.get(column)
+                if value is not None and not pd.isna(value):
+                    spinbox.setValue(int(value))
+
+        self._update_area_indicator()
 
         tile_path = find_tile_for_sbs(
             feature.to_dict(),
@@ -625,6 +636,64 @@ class CLTScoreNucleiWidget(QWidget):
             contrast_limits = tile_contrasts.get(channel_index)
             if contrast_limits is not None:
                 image_layer.contrast_limits = contrast_limits
+
+    def _update_area_indicator(self, _value: int = 0) -> None:
+        current_item = self._sbs_list_widget.currentItem()
+        if (
+            not isinstance(current_item, CLTScoreSBSListItem)
+            or not self._sbs_images
+        ):
+            return
+
+        project_data = self._project_scoring_data.get(
+            current_item.entry.project_path
+        )
+        if project_data is None:
+            return
+
+        matching_features = project_data.features[
+            project_data.features["sbs_number"]
+            == current_item.entry.sbs_number
+        ]
+        if matching_features.empty:
+            return
+
+        feature = matching_features.iloc[0]
+        stored_width = int(feature["square_width"])
+        stored_height = int(feature["square_height"])
+        width = self._width_spinbox.value()
+        height = self._height_spinbox.value()
+
+        if width == stored_width and height == stored_height:
+            if self._area_indicator is not None:
+                self._napari_viewer.layers.remove(self._area_indicator)
+                self._area_indicator = None
+            return
+
+        image_height, image_width = self._sbs_images[0].data.shape[-2:]
+        center_y = image_height / 2
+        center_x = image_width / 2
+        half_width = width / 2
+        half_height = height / 2
+        rectangle = [
+            [center_y - half_height, center_x - half_width],
+            [center_y - half_height, center_x + half_width],
+            [center_y + half_height, center_x + half_width],
+            [center_y + half_height, center_x - half_width],
+        ]
+
+        if self._area_indicator is None:
+            self._area_indicator = self._napari_viewer.add_shapes(
+                [rectangle],
+                shape_type="rectangle",
+                ndim=2,
+                name="SBS area indicator",
+                edge_color="yellow",
+                face_color="yellow",
+                opacity=0.25,
+            )
+        else:
+            self._area_indicator.data = [rectangle]
 
     def _get_selected_sbs_context(
         self,
