@@ -16,6 +16,7 @@ from qtpy.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -313,6 +314,59 @@ class CLTScoreNucleiWidget(QWidget):
 
         self._layout.addWidget(FrameSeparator(parent=self))
 
+        self._sbs_list_title = QLabel("SBS list")
+        self._sbs_list_title.setStyleSheet("font-weight: bold;")
+        self._layout.addWidget(self._sbs_list_title)
+
+        self._sbs_dimensions_widget = QWidget()
+        self._sbs_dimensions_layout = QHBoxLayout()
+        self._sbs_dimensions_layout.setContentsMargins(0, 0, 0, 0)
+        self._sbs_dimensions_widget.setLayout(self._sbs_dimensions_layout)
+
+        for label_text in ("W:", "H:", "Z:"):
+            label = QLabel(label_text)
+            label.setSizePolicy(
+                QSizePolicy.Policy.Maximum,
+                QSizePolicy.Policy.Preferred,
+            )
+            self._sbs_dimensions_layout.addWidget(label)
+            if label_text == "W:":
+                self._width_spinbox = QSpinBox()
+                self._width_spinbox.setRange(1, 1_000_000)
+                self._width_spinbox.setValue(100)
+                self._width_spinbox.setSizePolicy(
+                    QSizePolicy.Policy.Maximum,
+                    QSizePolicy.Policy.Preferred,
+                )
+                self._sbs_dimensions_layout.addWidget(self._width_spinbox)
+            elif label_text == "H:":
+                self._height_spinbox = QSpinBox()
+                self._height_spinbox.setRange(1, 1_000_000)
+                self._height_spinbox.setValue(100)
+                self._height_spinbox.setSizePolicy(
+                    QSizePolicy.Policy.Maximum,
+                    QSizePolicy.Policy.Preferred,
+                )
+                self._sbs_dimensions_layout.addWidget(self._height_spinbox)
+            else:
+                self._z_sections_spinbox = QSpinBox()
+                self._z_sections_spinbox.setRange(1, 1_000_000)
+                self._z_sections_spinbox.setValue(27)
+                self._z_sections_spinbox.setSizePolicy(
+                    QSizePolicy.Policy.Maximum,
+                    QSizePolicy.Policy.Preferred,
+                )
+                self._sbs_dimensions_layout.addWidget(self._z_sections_spinbox)
+
+        self._apply_dimensions_button = QPushButton("Apply")
+        self._apply_dimensions_button.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._sbs_dimensions_layout.addWidget(self._apply_dimensions_button)
+        self._sbs_dimensions_layout.addStretch()
+        self._layout.addWidget(self._sbs_dimensions_widget)
+
         self._sbs_list_widget = QListWidget()
         self._layout.addWidget(self._sbs_list_widget)
         self._sbs_list_widget.currentItemChanged.connect(
@@ -324,6 +378,71 @@ class CLTScoreNucleiWidget(QWidget):
         self._project_list_widget.currentItemChanged.connect(
             self._project_selection_changed
         )
+
+        self._sbs_flags_widget = QWidget()
+        self._sbs_flags_layout = QVBoxLayout()
+        self._sbs_flags_layout.setContentsMargins(0, 0, 0, 0)
+        self._sbs_flags_widget.setLayout(self._sbs_flags_layout)
+
+        self._flags_summary_label = QLabel("Flags: None")
+        self._flags_summary_label.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._sbs_flags_layout.addWidget(self._flags_summary_label)
+
+        self._add_flags_widget = QWidget()
+        self._add_flags_layout = QHBoxLayout()
+        self._add_flags_layout.setContentsMargins(0, 0, 0, 0)
+        self._add_flags_widget.setLayout(self._add_flags_layout)
+        self._add_flags_button = QPushButton("Add flags")
+        self._add_flags_button.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._add_flags_combo = QComboBox()
+        self._add_flags_combo.addItems(flag.value for flag in SBSFlag)
+        self._add_flags_combo.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._add_flags_layout.addWidget(self._add_flags_button)
+        self._add_flags_layout.addWidget(self._add_flags_combo)
+        self._add_flags_layout.addStretch()
+        self._sbs_flags_layout.addWidget(self._add_flags_widget)
+
+        self._remove_flags_widget = QWidget()
+        self._remove_flags_layout = QHBoxLayout()
+        self._remove_flags_layout.setContentsMargins(0, 0, 0, 0)
+        self._remove_flags_widget.setLayout(self._remove_flags_layout)
+        self._remove_flags_button = QPushButton("Remove flags")
+        self._remove_flags_button.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._remove_flags_combo = QComboBox()
+        self._remove_flags_combo.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        flags_combo_width = max(
+            self._add_flags_combo.sizeHint().width(),
+            self._remove_flags_combo.sizeHint().width(),
+        )
+        self._add_flags_combo.setFixedWidth(flags_combo_width)
+        self._remove_flags_combo.setFixedWidth(flags_combo_width)
+        flags_button_width = max(
+            self._add_flags_button.sizeHint().width(),
+            self._remove_flags_button.sizeHint().width(),
+        )
+        self._add_flags_button.setFixedWidth(flags_button_width)
+        self._remove_flags_button.setFixedWidth(flags_button_width)
+        self._remove_flags_layout.addWidget(self._remove_flags_button)
+        self._remove_flags_layout.addWidget(self._remove_flags_combo)
+        self._remove_flags_layout.addStretch()
+        self._sbs_flags_layout.addWidget(self._remove_flags_widget)
+        self._layout.addWidget(self._sbs_flags_widget)
+
         self._load_project_scoring_data()
 
     def _get_scoring_project_paths(self) -> list[Path]:
