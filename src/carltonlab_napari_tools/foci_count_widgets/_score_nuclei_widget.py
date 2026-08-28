@@ -516,6 +516,22 @@ class CLTScoreNucleiWidget(QWidget):
             if missing_sbs_paths:
                 has_missing_sbs = True
 
+        if not self._project_scoring_data:
+            self._sbs_status_label.setText("SBS not cut")
+            self._sbs_status_label.setStyleSheet(
+                "color: gray; font-style: italic;"
+            )
+        elif has_missing_sbs:
+            self._sbs_status_label.setText("SBS not cut")
+            self._sbs_status_label.setStyleSheet(
+                "color: #A80000; font-weight: bold;"
+            )
+        else:
+            self._sbs_status_label.setText("SBS cut")
+            self._sbs_status_label.setStyleSheet(
+                "color: #29BA00; font-weight: bold;"
+            )
+
         self._cut_sbs_button.setEnabled(has_missing_sbs)
         self._update_sbs_list()
 
@@ -564,8 +580,18 @@ class CLTScoreNucleiWidget(QWidget):
         if feature_matches.empty:
             return
 
+        feature = feature_matches.iloc[0]
+        for spinbox, column in (
+            (self._width_spinbox, "square_width"),
+            (self._height_spinbox, "square_height"),
+            (self._z_sections_spinbox, "square_z_sections"),
+        ):
+            value = feature.get(column)
+            if value is not None and not pd.isna(value):
+                spinbox.setValue(int(value))
+
         tile_path = find_tile_for_sbs(
-            feature_matches.iloc[0].to_dict(),
+            feature.to_dict(),
             project_data.tile_bounding_boxes,
         )
         if tile_path is None:
