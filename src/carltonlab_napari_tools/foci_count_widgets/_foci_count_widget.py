@@ -75,19 +75,9 @@ if TYPE_CHECKING:
     import napari
     from napari.components import ViewerModel
 
-from carltonlab_napari_tools._main_widget_buttons import (
-    BUTTONS_LIST,
-    PREPARE_BUTTONS_LIST,
-    RESULTS_BUTTONS_LIST,
-    SCORE_BUTTONS_LIST,
-)
 from carltonlab_napari_tools._protocols import (
-    CToolButton,
     MainWidgetCallBacks,
-    PrepareWidgetAPI,
     ProcessWidgetAPI,
-    ScoreWidgetAPI,
-    SummaryWidgetAPI,
 )
 
 BUTTONS_WIDTH = 30
@@ -1098,11 +1088,6 @@ class CarltonLabCountTool(QWidget):
         self._already_shown = False
         self._parent_widget = None
 
-        self._prepare_widget: PrepareWidgetAPI | None = None
-        self._process_widget: ProcessWidgetAPI | None = None
-        self._score_widget: ScoreWidgetAPI | None = None
-        self._summary_widget: SummaryWidgetAPI | None = None
-        self._score_nuclei_widget: QWidget | None = None
         self._scroll_timer: QTimer | None = None
         self._scroll_direction: int = 0
         self._scroll_interval_ms = 80
@@ -1116,158 +1101,6 @@ class CarltonLabCountTool(QWidget):
         self._main_layout = QVBoxLayout()
         self.setLayout(self._main_layout)
         self._main_layout.setContentsMargins(25, 2, 2, 25)
-
-        self._top_container: QWidget = QWidget()
-        self._top_container_layout: QVBoxLayout = QVBoxLayout()
-        self._top_container.setLayout(self._top_container_layout)
-
-        self._top_scroll_area: QScrollArea = QScrollArea()
-        self._top_scroll_area.setWidgetResizable(True)
-        self._top_scroll_area.setVisible(False)
-        self._main_layout.addWidget(self._top_scroll_area)
-        self._top_scroll_area.setWidget(self._top_container)
-
-        self._main_title_label = QLabel("CL Count Tool")
-        self._main_title_label.setStyleSheet(
-            "font-weight: bold; font-size: 20px"
-        )
-        self._main_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._top_container_layout.addWidget(self._main_title_label)
-
-        self._prepare_container: QWidget = QWidget()
-        self._prepare_container_layout: QVBoxLayout = QVBoxLayout()
-        self._prepare_container.setLayout(self._prepare_container_layout)
-
-        self._prepare_container_title: QLabel = QLabel("Prepare images")
-        self._prepare_container_title.setStyleSheet("font-weight: bold")
-        self._prepare_container_layout.addWidget(self._prepare_container_title)
-
-        self._top_container_layout.addWidget(self._prepare_container)
-
-        main_widget_casted: MainWidgetCallBacks = cast(
-            MainWidgetCallBacks, self
-        )
-
-        self._prepare_buttons_instances_dict: dict[str, CToolButton] = {}
-        for class_name, class_ref in PREPARE_BUTTONS_LIST.items():
-            self._prepare_buttons_instances_dict[class_name] = class_ref(
-                self._napari_viewer, main_widget_casted
-            )
-
-        for class_instance in self._prepare_buttons_instances_dict.values():
-            self._prepare_container_layout.addWidget(
-                class_instance.get_button()
-            )
-
-        first_section_separator: QFrame = QFrame(self)
-        first_section_separator.setFrameShape(QFrame.Shape.HLine)
-        first_section_separator.setFrameShadow(QFrame.Shadow.Sunken)
-        first_section_separator.setStyleSheet("background-color: gray;")
-        first_section_separator.setFixedHeight(2)
-        self._top_container_layout.addWidget(first_section_separator)
-
-        self._process_container: QWidget = QWidget()
-        self._process_container_layout: QVBoxLayout = QVBoxLayout()
-        self._process_container.setLayout(self._process_container_layout)
-
-        self._process_container_title: QLabel = QLabel("Process gonads")
-        self._process_container_title.setStyleSheet("font-weight: bold")
-        self._process_container_title.setVisible(False)
-        self._process_container_layout.addWidget(self._process_container_title)
-
-        self._process_gonads_control_widget: GonadControlWidget = (
-            GonadControlWidget(self._napari_viewer, self)
-        )
-        self._process_gonads_control_widget.setVisible(False)
-
-        self._process_container_layout.addWidget(
-            self._process_gonads_control_widget
-        )
-
-        self._top_container_layout.addWidget(self._process_container)
-
-        self._buttons_instances_dict: dict[str, CToolButton] = {}
-        for class_name, class_ref in BUTTONS_LIST.items():
-            self._buttons_instances_dict[class_name] = class_ref(
-                self._napari_viewer, main_widget_casted
-            )
-
-        for class_instance in self._buttons_instances_dict.values():
-            button_vbox_container: QWidget = QWidget()
-            button_vbox_container_layout = QVBoxLayout()
-            button_vbox_container_layout.setContentsMargins(0, 0, 0, 5)
-            button_vbox_container.setLayout(button_vbox_container_layout)
-            self._process_container_layout.addWidget(button_vbox_container)
-            button_vbox_container_layout.addWidget(class_instance.get_button())
-            status_label: QLabel | None = class_instance.get_status_label()
-            if status_label is not None:
-                button_vbox_container_layout.addWidget(status_label)
-                class_instance.set_status_label_state(False)
-
-        second_section_separator: QFrame = QFrame(self)
-        second_section_separator.setFrameShape(QFrame.Shape.HLine)
-        second_section_separator.setFrameShadow(QFrame.Shadow.Sunken)
-        second_section_separator.setStyleSheet("background-color: gray;")
-        second_section_separator.setFixedHeight(2)
-        self._top_container_layout.addWidget(second_section_separator)
-
-        self._score_container: QWidget = QWidget()
-        self._score_container_layout: QVBoxLayout = QVBoxLayout()
-        self._score_container.setLayout(self._score_container_layout)
-
-        self._score_container_title: QLabel = QLabel("Score nuclei")
-        self._score_container_title.setStyleSheet("font-weight: bold")
-        self._score_container_layout.addWidget(self._score_container_title)
-
-        self._top_container_layout.addWidget(self._score_container)
-
-        self._score_buttons_instances_dict: dict[str, CToolButton] = {}
-        for class_name, class_ref in SCORE_BUTTONS_LIST.items():
-            self._score_buttons_instances_dict[class_name] = class_ref(
-                self._napari_viewer, main_widget_casted
-            )
-
-        for class_instance in self._score_buttons_instances_dict.values():
-            button_vbox_container: QWidget = QWidget()
-            button_vbox_container_layout = QVBoxLayout()
-            button_vbox_container_layout.setContentsMargins(0, 0, 0, 5)
-            button_vbox_container.setLayout(button_vbox_container_layout)
-            self._score_container_layout.addWidget(button_vbox_container)
-            button_vbox_container_layout.addWidget(class_instance.get_button())
-            status_label: QLabel | None = class_instance.get_status_label()
-            if status_label is not None:
-                button_vbox_container_layout.addWidget(status_label)
-                class_instance.set_status_label_state(False)
-
-        third_section_separator: QFrame = QFrame(self)
-        third_section_separator.setFrameShape(QFrame.Shape.HLine)
-        third_section_separator.setFrameShadow(QFrame.Shadow.Sunken)
-        third_section_separator.setStyleSheet("background-color: gray;")
-        third_section_separator.setFixedHeight(2)
-        self._top_container_layout.addWidget(third_section_separator)
-
-        self._results_container: QWidget = QWidget()
-        self._results_container_layout: QVBoxLayout = QVBoxLayout()
-        self._results_container.setLayout(self._results_container_layout)
-
-        self._results_container_title: QLabel = QLabel("Results")
-        self._results_container_title.setStyleSheet("font-weight: bold")
-        self._results_container_layout.addWidget(self._results_container_title)
-
-        self._top_container_layout.addWidget(self._results_container)
-
-        self._results_buttons_instances_dict: dict[str, CToolButton] = {}
-        for class_name, class_ref in RESULTS_BUTTONS_LIST.items():
-            self._results_buttons_instances_dict[class_name] = class_ref(
-                self._napari_viewer, main_widget_casted
-            )
-
-        for class_instance in self._results_buttons_instances_dict.values():
-            self._results_container_layout.addWidget(
-                class_instance.get_button()
-            )
-
-        self._top_container_layout.addStretch()
 
         self._main_layout.addSpacing(12)
         speed_separator: QFrame = QFrame(self)
@@ -1323,159 +1156,12 @@ class CarltonLabCountTool(QWidget):
         )
         self._main_layout.addWidget(self._integration_widget, 1)
 
-    ##################################################################
-    #   Button connections
-    ##################################################################
-
-    def set_prepare_widget(
-        self, setting_widget: PrepareWidgetAPI | None, widget_name: str
-    ) -> None:
-        self.close_other_widgets()
-        if setting_widget is None:
-            return
-        self._prepare_widget = setting_widget
-        self._napari_viewer.window.add_dock_widget(
-            setting_widget, name=widget_name
-        )
-        return
-
-    def get_process_widget(self) -> ProcessWidgetAPI | None:
-        return self._process_widget
-
-    def set_process_widget(
-        self, setting_widget: ProcessWidgetAPI | None, widget_name: str
-    ) -> None:
-        self.close_other_widgets()
-        if setting_widget is None:
-            return
-        self._process_widget = setting_widget
-        self._napari_viewer.window.add_dock_widget(
-            setting_widget, name=widget_name
-        )
-
-    def get_score_widget(self) -> ScoreWidgetAPI | None:
-        return self._score_widget
-
-    def set_score_widget(
-        self, setting_widget: ScoreWidgetAPI | None, widget_name: str
-    ) -> None:
-        if setting_widget is None:
-            return
-        if not validate_closed_layers(self._napari_viewer):
-            self._safe_delete_later(cast(QWidget, setting_widget))
-            return
-        self.close_other_widgets()
-        self._score_widget = setting_widget
-        self._score_nuclei_widget = cast(QWidget, setting_widget)
-        self._napari_viewer.window.add_dock_widget(
-            setting_widget, name=widget_name
-        )
-
-    def _safe_delete_later(self, widget: object | None) -> None:
-        if widget is None:
-            return
-        if not isinstance(widget, QWidget):
-            return
-        try:
-            widget.deleteLater()
-        except RuntimeError:
-            return
-
-    def close_other_widgets(self) -> None:
-        self._process_gonads_control_widget.close_tile_images()
-        process_control_data = (
-            self._process_gonads_control_widget.get_images_and_paths()
-        )
-        if process_control_data is not None:
-            for image_layer in process_control_data[2]:
-                image_layer.visible = True
-        if self._prepare_widget is not None:
-            try:
-                parent_dock_widget: QWidget | None = (
-                    self._prepare_widget.parent()
-                )
-            except RuntimeError:
-                parent_dock_widget = None
-            self._safe_delete_later(cast(QWidget, self._prepare_widget))
-            self._prepare_widget = None
-            if isinstance(parent_dock_widget, QWidget):
-                self._safe_delete_later(parent_dock_widget)
-        if self._process_widget is not None:
-            try:
-                parent_dock_widget: QWidget | None = (
-                    self._process_widget.parent()
-                )
-            except RuntimeError:
-                parent_dock_widget = None
-            self._safe_delete_later(cast(QWidget, self._process_widget))
-            self._process_widget = None
-            if isinstance(parent_dock_widget, QWidget):
-                self._safe_delete_later(parent_dock_widget)
-        if self._score_widget is not None:
-            try:
-                parent_dock_widget: QWidget | None = (
-                    self._score_widget.parent()
-                )
-            except RuntimeError:
-                parent_dock_widget = None
-            self._safe_delete_later(cast(QWidget, self._score_widget))
-            self._score_widget = None
-            self._score_nuclei_widget = None
-            if isinstance(parent_dock_widget, QWidget):
-                self._safe_delete_later(parent_dock_widget)
-        if self._summary_widget is not None:
-            try:
-                parent_dock_widget: QWidget | None = (
-                    self._summary_widget.parent()
-                )
-            except RuntimeError:
-                parent_dock_widget = None
-            self._safe_delete_later(cast(QWidget, self._summary_widget))
-            self._summary_widget = None
-            if isinstance(parent_dock_widget, QWidget):
-                self._safe_delete_later(parent_dock_widget)
-
-    def get_process_control_images_and_paths(
-        self,
-    ) -> tuple[str, str, list[Image]] | None:
-        obtained_images_and_paths: tuple[str, str, list[Image]] | None = (
-            self._process_gonads_control_widget.get_images_and_paths()
-        )
-        return obtained_images_and_paths
-
-    def get_process_control_tiles(self) -> dict[int, str]:
-        return self._process_gonads_control_widget.get_image_tiles()
-
-    def open_process_control_tile_images(
-        self, tile_index: int
-    ) -> list[Image] | None:
-        return self._process_gonads_control_widget.open_tile_images(tile_index)
-
-    def close_process_control_tile_images(self) -> None:
-        self._process_gonads_control_widget.close_tile_images()
-
-    def set_image_path(self, image_path: str, image_layer: Image) -> None:
-        self._image_path = image_path
-        self._image_layer = image_layer
-
-    def get_image_path(self) -> tuple[str, Image] | None:
-        if self._image_path is None or self._image_layer is None:
-            return None
-        return (self._image_path, self._image_layer)
-
-    def validate_process_results(self, image_path: str) -> None:
-        for class_instance in self._buttons_instances_dict.values():
-            class_instance.validate_property(image_path)
-
     def _install_keybindings(self) -> None:
         self._napari_viewer.bind_key(
             "j", self._scroll_z_down_hold, overwrite=True
         )
         self._napari_viewer.bind_key(
             "l", self._scroll_z_up_hold, overwrite=True
-        )
-        self._napari_viewer.bind_key(
-            "u", self._confirm_score_nuclei, overwrite=True
         )
         self._napari_viewer.bind_key(
             "i", self._increase_scroll_speed, overwrite=True
