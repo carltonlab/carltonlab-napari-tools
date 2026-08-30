@@ -1,5 +1,5 @@
 [project]
-name = "carltonlab-napari-count-tool"
+name = "carltonlab-napari-tools"
 dynamic = ["version"]
 description = "The carltonlab count tool made for napari. This is made thinking about RAD-51 counting in C.elegans gonads."
 readme = "README.md"
@@ -28,9 +28,11 @@ requires-python = ">=3.11"
 # or any other Qt bindings directly (e.g. PyQt5, PySide2).
 # See best practices: https://napari.org/stable/plugins/building_a_plugin/best_practices.html
 dependencies = [
+    "napari",
     "numpy",
     "matplotlib",
     "magicgui",
+    "qtpy",
     "scikit-image",
     "ndevio",
     "bioio-tifffile",
@@ -41,11 +43,12 @@ dependencies = [
     "scipy",
     "dask",
     "superqt",
+    "zarr",
 ]
 
 [project.optional-dependencies]
 # Allow easily installation with the full, default napari installation
-# (including Qt backend) using carltonlab-napari-count-tool[all].
+# (including Qt backend) using carltonlab-napari-tools[all].
 all = ["napari[all]"]
 segmentation = [
     "cellpose",
@@ -76,13 +79,13 @@ dev = [
 ]
 
 [project.entry-points."napari.manifest"]
-carltonlab-napari-count-tool = "carltonlab_napari_count_tool:napari.yaml"
+carltonlab-napari-tools = "carltonlab_napari_tools:napari.yaml"
 
 [project.urls]
-"Bug Tracker" = "https://github.com/carlosmariorr/carltonlab-napari-count-tool/issues"
-"Documentation" = "https://github.com/carlosmariorr/carltonlab-napari-count-tool#README.md"
-"Source Code" = "https://github.com/carlosmariorr/carltonlab-napari-count-tool"
-"User Support" = "https://github.com/carlosmariorr/carltonlab-napari-count-tool/issues"
+"Bug Tracker" = "https://github.com/carlosmariorr/carltonlab-napari-tools/issues"
+"Documentation" = "https://github.com/carlosmariorr/carltonlab-napari-tools#README.md"
+"Source Code" = "https://github.com/carlosmariorr/carltonlab-napari-tools"
+"User Support" = "https://github.com/carlosmariorr/carltonlab-napari-tools/issues"
 
 [build-system]
 requires = ["setuptools>=42.0.0", "setuptools_scm"]
@@ -95,10 +98,10 @@ include-package-data = true
 where = ["src"]
 
 [tool.setuptools.package-data]
-"*" = ["*.yaml"]
+"*" = ["*.yaml", "*.json", "*.config", "*.md"]
 
 [tool.setuptools_scm]
-write_to = "src/carltonlab_napari_count_tool/_version.py"
+write_to = "src/carltonlab_napari_tools/_version.py"
 fallback_version = "0.0.1+nogit"
 
 [tool.pytest.ini_options]

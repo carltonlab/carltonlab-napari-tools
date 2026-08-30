@@ -1,6 +1,6 @@
 ---
 name: "\U0001F680 Feature Request"
-about: Submit a proposal/request for a new carltonlab-napari-count-tool feature
+about: Submit a proposal/request for a new carltonlab-napari-tools feature
 title: ''
 labels: feature
 assignees: ''

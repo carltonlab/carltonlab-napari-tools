@@ -1,0 +1,1483 @@
+import json
+import os
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from random import shuffle
+from tempfile import NamedTemporaryFile
+from typing import TYPE_CHECKING
+
+import pandas as pd
+import tifffile
+import xarray as xr
+from napari.layers import Image, Points, Shapes
+from napari.utils.notifications import show_error
+from qtpy.QtCore import QSignalBlocker, Qt
+from qtpy.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QSizePolicy,
+    QSlider,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+from superqt import QToggleSwitch
+
+from carltonlab_napari_tools._sbs_lock_manager import SBSLockManager
+from carltonlab_napari_tools._shared_variables import (
+    CLSP_PROJECT_SUFFIX,
+    CUT_SBS_DIR_NAME,
+    NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
+    PICK_NUCLEI_DIR_NAME,
+    PROJECT_FILE_DIR_NAME,
+    SBS_FILE_NAME_EXTENSION,
+    SCORING_SAVE_LOCK_NAME,
+    STITCHED_IMAGE_DIR_NAME,
+    TILES_DIR_NAME,
+)
+from carltonlab_napari_tools._shared_widgets import FrameSeparator
+from carltonlab_napari_tools._tile_utils import (
+    TileBoundingBox,
+    find_tile_for_sbs,
+    load_tile_bounding_boxes,
+    load_tile_contrasts,
+)
+from carltonlab_napari_tools._utils import (
+    get_project_stitched_image_path,
+    resolve_clsp_project_path,
+)
+from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
+    SBSFlag,
+    SBSFlagsManager,
+)
+from carltonlab_napari_tools.general_widgets._project_list_widget import (
+    CLTProjectListWidget,
+)
+from carltonlab_napari_tools.image_processing import (
+    SBSCropBounds,
+    crop_sbs_data,
+    get_sbs_crop_bounds,
+)
+from carltonlab_napari_tools.image_resolver import resolve_lazy_image_data
+
+if TYPE_CHECKING:
+    from napari.components import ViewerModel
+
+
+@dataclass
+class ProjectScoringData:
+    project_path: Path
+    project_name: str
+    features: pd.DataFrame
+    flags_manager: SBSFlagsManager
+    tile_bounding_boxes: dict[Path, TileBoundingBox]
+    sbs_crop_bounds: dict[int, SBSCropBounds]
+    lock_manager: SBSLockManager
+
+    @property
+    def features_path(self) -> Path:
+        return (
+            self.project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        )
+
+    def merge_sbs_features(
+        self,
+        sbs_number: int,
+        updates: dict[str, object],
+    ) -> bool:
+        sbs_name = f"sbs{sbs_number}"
+        if not self.lock_manager.owns(sbs_name):
+            return False
+        if not self.lock_manager.acquire(SCORING_SAVE_LOCK_NAME):
+            return False
+
+        temporary_path: Path | None = None
+        try:
+            latest_features = pd.read_csv(self.features_path)
+            matching_rows = latest_features.index[
+                latest_features["sbs_number"] == sbs_number
+            ]
+            if len(matching_rows) != 1:
+                return False
+
+            feature_index = matching_rows[0]
+            if any(
+                column not in latest_features.columns for column in updates
+            ):
+                return False
+            for column, value in updates.items():
+                latest_features.loc[feature_index, column] = value
+
+            with NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=self.features_path.parent,
+                prefix=f".{self.features_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as temporary_file:
+                temporary_path = Path(temporary_file.name)
+                latest_features.to_csv(temporary_file, index=False)
+
+            os.replace(temporary_path, self.features_path)
+            temporary_path = None
+            self.features = latest_features
+        except (OSError, ValueError, pd.errors.ParserError):
+            return False
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+            self.lock_manager.release(SCORING_SAVE_LOCK_NAME)
+
+        return True
+
+    def merge_sbs_scoring(
+        self,
+        sbs_number: int,
+        stitched_foci_coords: list[list[float]],
+    ) -> bool:
+        return self.merge_sbs_features(
+            sbs_number,
+            {
+                "stitched_foci_coords": json.dumps(stitched_foci_coords),
+                "scored_foci_number": len(stitched_foci_coords),
+            },
+        )
+
+    def merge_sbs_flag(
+        self,
+        sbs_name: str,
+        flag: SBSFlag | str,
+        *,
+        add: bool,
+    ) -> bool:
+        if not self.lock_manager.owns(sbs_name):
+            return False
+        if not self.lock_manager.acquire(SCORING_SAVE_LOCK_NAME):
+            return False
+
+        try:
+            latest_flags = SBSFlagsManager(self.project_path)
+            if not latest_flags.load():
+                return False
+
+            if add:
+                latest_flags.add_flag(sbs_name, flag)
+            else:
+                latest_flags.remove_flag(sbs_name, flag)
+
+            if not latest_flags.save():
+                return False
+
+            self.flags_manager = latest_flags
+        finally:
+            self.lock_manager.release(SCORING_SAVE_LOCK_NAME)
+
+        return True
+
+    def update_sbs_crop_bounds(self, image_data: xr.DataArray) -> None:
+        self.sbs_crop_bounds.clear()
+        for feature in self.features.to_dict(orient="records"):
+            sbs_number = int(feature["sbs_number"])
+            bounds = get_sbs_crop_bounds(feature, image_data)
+            if bounds is not None:
+                self.sbs_crop_bounds[sbs_number] = bounds
+
+    def get_sbs_image_path(self, sbs_name: str) -> Path | None:
+        if not sbs_name.startswith("sbs"):
+            return None
+
+        cut_sbs_directory = (
+            self.project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / CUT_SBS_DIR_NAME
+        )
+        sbs_path = cut_sbs_directory / (
+            f"{self.project_name}_{sbs_name}{SBS_FILE_NAME_EXTENSION}"
+        )
+
+        return sbs_path if sbs_path.is_file() else None
+
+    def get_sbs_images_needing_crop(self) -> list[Path]:
+        cut_sbs_directory = (
+            self.project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / CUT_SBS_DIR_NAME
+        )
+        missing_sbs_paths: list[Path] = []
+
+        for sbs_number in self.features["sbs_number"]:
+            sbs_name = f"sbs{int(sbs_number)}"
+            sbs_path = cut_sbs_directory / (
+                f"{self.project_name}_{sbs_name}{SBS_FILE_NAME_EXTENSION}"
+            )
+            sbs_flags = self.flags_manager.get_flags(sbs_name)
+            needs_coordinate_recalculation = (
+                SBSFlag.COORD_RECALC_NEEDED.value in sbs_flags
+            )
+            if not sbs_path.is_file() or needs_coordinate_recalculation:
+                missing_sbs_paths.append(sbs_path)
+
+        return missing_sbs_paths
+
+
+@dataclass
+class ScoreSBSEntry:
+    project_path: Path
+    sbs_number: int
+    foci_count: int | None
+    scored: bool
+    flags: list[str]
+    locked: bool
+
+
+class CLTScoreSBSRow(QWidget):
+    def __init__(
+        self,
+        sbs_name: str,
+        foci_count: int,
+        *,
+        scored: bool = False,
+        flags: list[SBSFlag | str] | None = None,
+        locked: bool = False,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(4)
+        self.setLayout(layout)
+
+        self.showing_label = QLabel(sbs_name)
+        self.showing_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        layout.addWidget(self.showing_label)
+
+        separator_label = QLabel(" --- ")
+        separator_label.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        layout.addWidget(separator_label)
+
+        self._foci_label = QLabel(f"foci: {foci_count}")
+        self._foci_label.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        layout.addWidget(self._foci_label)
+
+        self._lock_label = QLabel("Locked")
+        self._lock_label.setStyleSheet("color: #D97706; font-weight: bold;")
+        self._lock_label.setVisible(locked)
+        layout.addWidget(self._lock_label)
+
+        self._scored = scored
+        self._flags = list(flags or [])
+        self._set_flag_style(flags)
+
+    def _set_flag_style(self, flags: list[SBSFlag | str] | None) -> None:
+        flagged_values = {
+            flag.value if isinstance(flag, SBSFlag) else flag
+            for flag in flags or []
+        }
+        flagged = flagged_values.intersection(
+            {SBSFlag.IGNORE.value, SBSFlag.APOPTOTIC.value}
+        )
+
+        if flagged:
+            self.showing_label.setStyleSheet("color: #A80000;")
+        elif self._scored:
+            self.showing_label.setStyleSheet("color: #29BA00;")
+        else:
+            self.showing_label.setStyleSheet("color: black;")
+
+    def set_flags(self, flags: list[SBSFlag | str]) -> None:
+        self._flags = list(flags)
+        self._set_flag_style(flags)
+
+    def set_foci_count(self, foci_count: int) -> None:
+        self._scored = True
+        self._foci_label.setText(f"foci: {foci_count}")
+        self._set_flag_style(self._flags)
+
+    def set_locked(self, locked: bool) -> None:
+        self._lock_label.setVisible(locked)
+
+
+class CLTScoreSBSListItem(QListWidgetItem):
+    def __init__(
+        self,
+        entry: ScoreSBSEntry,
+        parent: QListWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.entry = entry
+
+
+class CLTScoreNucleiWidget(QWidget):
+    def __init__(
+        self,
+        napari_viewer: "ViewerModel",
+        parent: QWidget,
+        project_list_widget: CLTProjectListWidget,
+        status_update_callback: Callable[[], None] | None = None,
+    ) -> None:
+        super().__init__(parent)
+
+        self._napari_viewer = napari_viewer
+        self._project_list_widget = project_list_widget
+        self._status_update_callback = status_update_callback
+
+        self._sbs_images: list[Image] = []
+        self._foci_points: Points | None = None
+        self._area_indicator: Shapes | None = None
+        self._project_scoring_data: dict[Path, ProjectScoringData] = {}
+        self._current_sbs_lock: tuple[Path, str] | None = None
+        self.destroyed.connect(self._release_all_project_locks)
+
+        self._layout = QVBoxLayout()
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self.setLayout(self._layout)
+
+        self._title_label = QLabel("CLT Score Nuclei")
+        self._title_label.setStyleSheet("font-weight: bold; font-size: 20px")
+        self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._layout.addWidget(self._title_label)
+
+        self._layout.addWidget(FrameSeparator(parent=self))
+
+        self._control_widget = QWidget()
+        self._control_layout = QVBoxLayout()
+        self._control_layout.setContentsMargins(0, 0, 0, 0)
+        self._control_widget.setLayout(self._control_layout)
+        self._layout.addWidget(self._control_widget)
+
+        self._mode_widget = QWidget()
+        self._mode_layout = QHBoxLayout()
+        self._mode_layout.setContentsMargins(0, 0, 0, 0)
+        self._mode_widget.setLayout(self._mode_layout)
+
+        self._mode_label = QLabel("Score projects mode:")
+        self._mode_label.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._mode_layout.addWidget(self._mode_label)
+
+        self._mode_combo = QComboBox()
+        self._mode_combo.addItems(["All", "Single"])
+        self._mode_combo.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._mode_layout.addWidget(self._mode_combo)
+        self._mode_layout.addStretch()
+        self._control_layout.addWidget(self._mode_widget)
+
+        self._sbs_status_widget = QWidget()
+        self._sbs_status_layout = QHBoxLayout()
+        self._sbs_status_layout.setContentsMargins(0, 0, 0, 0)
+        self._sbs_status_widget.setLayout(self._sbs_status_layout)
+
+        self._sbs_status_label = QLabel("SBS not cut")
+        self._sbs_status_label.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._sbs_status_label.setStyleSheet(
+            "color: gray; font-style: italic;"
+        )
+        self._sbs_status_layout.addWidget(self._sbs_status_label)
+
+        self._cut_sbs_button = QPushButton("Cut project(s) SBS")
+        self._cut_sbs_button.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._cut_sbs_button.clicked.connect(self._on_cut_sbs_button_pressed)
+        self._sbs_status_layout.addWidget(self._cut_sbs_button)
+        self._sbs_status_layout.addStretch()
+        self._control_layout.addWidget(self._sbs_status_widget)
+
+        self._blind_nuclei_checkbox = QCheckBox("Blind nuclei")
+        self._blind_nuclei_checkbox.setChecked(True)
+        self._blind_nuclei_checkbox.toggled.connect(
+            self._scoring_options_changed
+        )
+
+        self._shuffle_nuclei_checkbox = QCheckBox("Shuffle nuclei")
+        self._shuffle_nuclei_checkbox.setChecked(True)
+        self._shuffle_nuclei_checkbox.toggled.connect(
+            self._scoring_options_changed
+        )
+
+        self._control_layout.addWidget(self._blind_nuclei_checkbox)
+        self._control_layout.addWidget(self._shuffle_nuclei_checkbox)
+
+        self._peek_widget = QWidget()
+        self._peek_layout = QHBoxLayout()
+        self._peek_layout.setContentsMargins(0, 0, 0, 0)
+        self._peek_widget.setLayout(self._peek_layout)
+
+        self._peek_label = QLabel("Peek nuclei")
+        self._peek_label.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._peek_layout.addWidget(self._peek_label)
+
+        self._peek_toggle = QToggleSwitch()
+        self._peek_toggle.toggled.connect(self._on_peek_toggled)
+        self._peek_layout.addWidget(self._peek_toggle)
+        self._peek_layout.addStretch()
+        self._control_layout.addWidget(self._peek_widget)
+
+        self._peek_details_widget = QWidget()
+        self._peek_details_layout = QVBoxLayout()
+        self._peek_details_layout.setContentsMargins(12, 0, 0, 0)
+        self._peek_details_widget.setLayout(self._peek_details_layout)
+        self._peek_details_widget.setVisible(False)
+
+        self._sbs_name_label = QLabel("SBS name:")
+        self._flags_label = QLabel("Flags:")
+        self._region_label = QLabel("Region:")
+        for label in (
+            self._sbs_name_label,
+            self._flags_label,
+            self._region_label,
+        ):
+            label.setSizePolicy(
+                QSizePolicy.Policy.Maximum,
+                QSizePolicy.Policy.Preferred,
+            )
+            label.setStyleSheet("font-style: italic;")
+        self._peek_details_layout.addWidget(self._sbs_name_label)
+        self._peek_details_layout.addWidget(self._flags_label)
+        self._peek_details_layout.addWidget(self._region_label)
+        self._control_layout.addWidget(self._peek_details_widget)
+
+        self._layout.addWidget(FrameSeparator(parent=self))
+
+        self._sbs_list_title = QLabel("SBS list")
+        self._sbs_list_title.setStyleSheet("font-weight: bold;")
+        self._layout.addWidget(self._sbs_list_title)
+
+        self._sbs_dimensions_widget = QWidget()
+        self._sbs_dimensions_layout = QHBoxLayout()
+        self._sbs_dimensions_layout.setContentsMargins(0, 0, 0, 0)
+        self._sbs_dimensions_widget.setLayout(self._sbs_dimensions_layout)
+
+        for label_text in ("W:", "H:", "Z:"):
+            label = QLabel(label_text)
+            label.setSizePolicy(
+                QSizePolicy.Policy.Maximum,
+                QSizePolicy.Policy.Preferred,
+            )
+            self._sbs_dimensions_layout.addWidget(label)
+            if label_text == "W:":
+                self._width_spinbox = QSpinBox()
+                self._width_spinbox.setRange(1, 1_000_000)
+                self._width_spinbox.setValue(100)
+                self._width_spinbox.setSizePolicy(
+                    QSizePolicy.Policy.Maximum,
+                    QSizePolicy.Policy.Preferred,
+                )
+                self._sbs_dimensions_layout.addWidget(self._width_spinbox)
+            elif label_text == "H:":
+                self._height_spinbox = QSpinBox()
+                self._height_spinbox.setRange(1, 1_000_000)
+                self._height_spinbox.setValue(100)
+                self._height_spinbox.setSizePolicy(
+                    QSizePolicy.Policy.Maximum,
+                    QSizePolicy.Policy.Preferred,
+                )
+                self._sbs_dimensions_layout.addWidget(self._height_spinbox)
+            else:
+                self._z_sections_spinbox = QSpinBox()
+                self._z_sections_spinbox.setRange(1, 1_000_000)
+                self._z_sections_spinbox.setValue(27)
+                self._z_sections_spinbox.setSizePolicy(
+                    QSizePolicy.Policy.Maximum,
+                    QSizePolicy.Policy.Preferred,
+                )
+                self._sbs_dimensions_layout.addWidget(self._z_sections_spinbox)
+
+        self._apply_dimensions_button = QPushButton("Apply")
+        self._apply_dimensions_button.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._apply_dimensions_button.clicked.connect(
+            self._on_apply_dimensions_button_pressed
+        )
+        self._width_spinbox.valueChanged.connect(self._update_area_indicator)
+        self._height_spinbox.valueChanged.connect(self._update_area_indicator)
+        self._point_size_spinbox = QSpinBox()
+        self._point_size_spinbox.setRange(1, 1_000_000)
+        self._point_size_spinbox.setValue(10)
+        self._point_size_spinbox.valueChanged.connect(
+            self._on_point_size_changed
+        )
+
+        self._point_opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._point_opacity_slider.setRange(0, 100)
+        self._point_opacity_slider.setValue(60)
+        self._point_opacity_slider.valueChanged.connect(
+            self._on_point_opacity_changed
+        )
+
+        self._sbs_dimensions_layout.addWidget(self._apply_dimensions_button)
+        self._sbs_dimensions_layout.addStretch()
+        self._layout.addWidget(self._sbs_dimensions_widget)
+
+        self._point_controls_widget = QWidget()
+        self._point_controls_layout = QHBoxLayout()
+        self._point_controls_layout.setContentsMargins(0, 0, 0, 0)
+        self._point_controls_widget.setLayout(self._point_controls_layout)
+        self._point_size_label = QLabel("Point size:")
+        self._point_opacity_label = QLabel("Opacity:")
+        self._point_controls_layout.addWidget(self._point_size_label)
+        self._point_controls_layout.addWidget(self._point_size_spinbox)
+        self._point_controls_layout.addWidget(self._point_opacity_label)
+        self._point_controls_layout.addWidget(self._point_opacity_slider)
+        self._layout.addWidget(self._point_controls_widget)
+
+        self._sbs_empty_label = QLabel("No project selected")
+        self._sbs_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._sbs_empty_label.setStyleSheet(
+            "color: gray; font-style: italic; font-size: 20px;"
+        )
+        self._layout.addWidget(self._sbs_empty_label)
+
+        self._sbs_list_widget = QListWidget()
+        self._sbs_list_widget.setVisible(False)
+        self._layout.addWidget(self._sbs_list_widget)
+        self._sbs_list_widget.currentItemChanged.connect(
+            self._sbs_selection_changed
+        )
+
+        self._layout.addWidget(FrameSeparator(parent=self))
+        self._save_foci_button = QPushButton("Save foci points")
+        self._save_foci_button.clicked.connect(
+            self._on_save_foci_points_button_pressed
+        )
+        self._layout.addWidget(self._save_foci_button)
+
+        self._mode_combo.currentTextChanged.connect(
+            self._load_project_scoring_data
+        )
+        self._project_list_widget.currentItemChanged.connect(
+            self._project_selection_changed
+        )
+
+        self._sbs_flags_widget = QWidget()
+        self._sbs_flags_layout = QVBoxLayout()
+        self._sbs_flags_layout.setContentsMargins(0, 0, 0, 0)
+        self._sbs_flags_widget.setLayout(self._sbs_flags_layout)
+
+        self._flags_summary_label = QLabel("Flags: None")
+        self._flags_summary_label.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._sbs_flags_layout.addWidget(self._flags_summary_label)
+
+        self._add_flags_widget = QWidget()
+        self._add_flags_layout = QHBoxLayout()
+        self._add_flags_layout.setContentsMargins(0, 0, 0, 0)
+        self._add_flags_widget.setLayout(self._add_flags_layout)
+        self._add_flags_button = QPushButton("Add flags")
+        self._add_flags_button.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._add_flags_combo = QComboBox()
+        self._add_flags_combo.addItems(flag.value for flag in SBSFlag)
+        self._add_flags_combo.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._add_flags_layout.addWidget(self._add_flags_button)
+        self._add_flags_layout.addWidget(self._add_flags_combo)
+        self._add_flags_layout.addStretch()
+        self._sbs_flags_layout.addWidget(self._add_flags_widget)
+
+        self._remove_flags_widget = QWidget()
+        self._remove_flags_layout = QHBoxLayout()
+        self._remove_flags_layout.setContentsMargins(0, 0, 0, 0)
+        self._remove_flags_widget.setLayout(self._remove_flags_layout)
+        self._remove_flags_button = QPushButton("Remove flags")
+        self._remove_flags_button.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._remove_flags_combo = QComboBox()
+        self._remove_flags_combo.setSizePolicy(
+            QSizePolicy.Policy.Maximum,
+            QSizePolicy.Policy.Preferred,
+        )
+        flags_combo_width = max(
+            self._add_flags_combo.sizeHint().width(),
+            self._remove_flags_combo.sizeHint().width(),
+        )
+        self._add_flags_combo.setFixedWidth(flags_combo_width)
+        self._remove_flags_combo.setFixedWidth(flags_combo_width)
+        flags_button_width = max(
+            self._add_flags_button.sizeHint().width(),
+            self._remove_flags_button.sizeHint().width(),
+        )
+        self._add_flags_button.setFixedWidth(flags_button_width)
+        self._remove_flags_button.setFixedWidth(flags_button_width)
+        self._remove_flags_layout.addWidget(self._remove_flags_button)
+        self._remove_flags_layout.addWidget(self._remove_flags_combo)
+        self._remove_flags_layout.addStretch()
+        self._sbs_flags_layout.addWidget(self._remove_flags_widget)
+        self._layout.addWidget(self._sbs_flags_widget)
+
+        self._add_flags_button.clicked.connect(self._add_selected_sbs_flag)
+        self._remove_flags_button.clicked.connect(
+            self._remove_selected_sbs_flag
+        )
+
+        self._overall_progress_label = QLabel("Scored SBS: 0/0")
+        self._overall_progress_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._layout.addWidget(self._overall_progress_label)
+        self._layout.addStretch()
+
+        self._load_project_scoring_data()
+
+    @staticmethod
+    def is_project_scoring_complete(project_path: Path) -> bool:
+        resolved_project_path = resolve_clsp_project_path(project_path)
+        if resolved_project_path is None:
+            return False
+
+        features_path = (
+            resolved_project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        )
+        try:
+            features = pd.read_csv(features_path)
+        except (
+            OSError,
+            KeyError,
+            pd.errors.EmptyDataError,
+            pd.errors.ParserError,
+        ):
+            return False
+
+        if "scored_foci_number" not in features:
+            return False
+
+        return not features.empty and bool(
+            features["scored_foci_number"].notna().all()
+        )
+
+    def refresh_project_data(self) -> None:
+        self._load_project_scoring_data()
+
+    def _get_scoring_project_paths(self) -> list[Path]:
+        if self._mode_combo.currentText() == "Single":
+            current_project_path = (
+                self._project_list_widget.get_current_project_path()
+            )
+            return (
+                [] if current_project_path is None else [current_project_path]
+            )
+
+        return self._project_list_widget.get_project_paths()
+
+    def _release_current_sbs_lock(self) -> None:
+        if self._current_sbs_lock is None:
+            return
+
+        project_path, sbs_name = self._current_sbs_lock
+        project_data = self._project_scoring_data.get(project_path)
+        if project_data is not None:
+            project_data.lock_manager.release(sbs_name)
+        self._current_sbs_lock = None
+
+    def _release_all_project_locks(self, *_args: object) -> None:
+        for project_data in self._project_scoring_data.values():
+            project_data.lock_manager.release_all()
+        self._current_sbs_lock = None
+
+    def _set_item_locked(
+        self,
+        item: QListWidgetItem | None,
+        locked: bool,
+    ) -> None:
+        if not isinstance(item, CLTScoreSBSListItem):
+            return
+        item.entry.locked = locked
+        row_widget = self._sbs_list_widget.itemWidget(item)
+        if isinstance(row_widget, CLTScoreSBSRow):
+            row_widget.set_locked(locked)
+
+    def _load_project_scoring_data(self, *_args: object) -> None:
+        self._release_all_project_locks()
+        self._project_scoring_data.clear()
+
+        for starting_path in self._get_scoring_project_paths():
+            project_path = resolve_clsp_project_path(starting_path)
+            if project_path is None:
+                continue
+
+            features_path = (
+                project_path
+                / PROJECT_FILE_DIR_NAME
+                / PICK_NUCLEI_DIR_NAME
+                / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+            )
+            if not features_path.is_file():
+                continue
+
+            features = pd.read_csv(features_path)
+            flags_manager = SBSFlagsManager(project_path)
+            flags_manager.load()
+
+            stitched_directory = project_path / STITCHED_IMAGE_DIR_NAME
+            stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
+            tile_bounding_boxes = (
+                load_tile_bounding_boxes(
+                    stitched_paths[0],
+                    project_path / TILES_DIR_NAME,
+                )
+                if stitched_paths
+                else {}
+            )
+
+            self._project_scoring_data[project_path] = ProjectScoringData(
+                project_path=project_path,
+                project_name=project_path.name.removesuffix(
+                    CLSP_PROJECT_SUFFIX
+                ),
+                features=features,
+                flags_manager=flags_manager,
+                tile_bounding_boxes=tile_bounding_boxes,
+                sbs_crop_bounds={},
+                lock_manager=SBSLockManager(project_path),
+            )
+
+        self._update_cut_sbs_status()
+        has_missing_sbs = any(
+            project_data.get_sbs_images_needing_crop()
+            for project_data in self._project_scoring_data.values()
+        )
+        self._cut_sbs_button.setEnabled(has_missing_sbs)
+        self._update_sbs_list()
+        self._update_overall_progress()
+
+    def _update_overall_progress(self) -> None:
+        total_sbs = 0
+        scored_sbs = 0
+
+        for project_data in self._project_scoring_data.values():
+            for scored_foci_number in project_data.features[
+                "scored_foci_number"
+            ]:
+                total_sbs += 1
+                if not pd.isna(scored_foci_number):
+                    scored_sbs += 1
+
+        self._overall_progress_label.setText(
+            f"Scored SBS: {scored_sbs}/{total_sbs}"
+        )
+        if total_sbs > 0 and scored_sbs == total_sbs:
+            self._overall_progress_label.setStyleSheet(
+                "color: #29BA00; font-weight: bold;"
+            )
+        else:
+            self._overall_progress_label.setStyleSheet(
+                "color: #A80000; font-weight: bold;"
+            )
+
+    def _update_cut_sbs_status(self) -> None:
+        has_missing_sbs = any(
+            project_data.get_sbs_images_needing_crop()
+            for project_data in self._project_scoring_data.values()
+        )
+
+        if not self._project_scoring_data:
+            self._sbs_status_label.setText("SBS not cut")
+            self._sbs_status_label.setStyleSheet(
+                "color: gray; font-style: italic;"
+            )
+        elif has_missing_sbs:
+            self._sbs_status_label.setText("SBS not cut")
+            self._sbs_status_label.setStyleSheet(
+                "color: #A80000; font-weight: bold;"
+            )
+        else:
+            self._sbs_status_label.setText("SBS cut")
+            self._sbs_status_label.setStyleSheet(
+                "color: #29BA00; font-weight: bold;"
+            )
+
+        self._cut_sbs_button.setEnabled(has_missing_sbs)
+
+    def _sbs_selection_changed(
+        self,
+        current_item: QListWidgetItem | None,
+        previous_item: QListWidgetItem | None,
+    ) -> None:
+        self._release_current_sbs_lock()
+        self._set_item_locked(previous_item, False)
+        self._napari_viewer.layers.clear()
+        self._sbs_images = []
+        self._foci_points = None
+        self._area_indicator = None
+        self._update_sbs_flags_controls()
+
+        if current_item is None:
+            return
+
+        if not isinstance(current_item, CLTScoreSBSListItem):
+            return
+
+        project_path = current_item.entry.project_path
+        sbs_number = current_item.entry.sbs_number
+        project_data = self._project_scoring_data.get(project_path)
+        if project_data is None:
+            return
+
+        sbs_name = f"sbs{sbs_number}"
+        if not project_data.lock_manager.acquire(sbs_name):
+            self._set_item_locked(current_item, True)
+            show_error(f"{sbs_name} is currently locked by another user.")
+            return
+
+        self._current_sbs_lock = (project_path, sbs_name)
+        self._set_item_locked(current_item, False)
+
+        if self._peek_toggle.isChecked():
+            self._update_peek_details()
+
+        sbs_path = project_data.get_sbs_image_path(sbs_name)
+        if sbs_path is None:
+            return
+
+        image_data = tifffile.imread(sbs_path)
+        opened_images = self._napari_viewer.add_image(
+            image_data,
+            channel_axis=0,
+        )
+        self._sbs_images = (
+            opened_images
+            if isinstance(opened_images, list)
+            else [opened_images]
+        )
+
+        feature_matches = project_data.features[
+            project_data.features["sbs_number"] == sbs_number
+        ]
+        if feature_matches.empty:
+            return
+
+        feature = feature_matches.iloc[0]
+        with (
+            QSignalBlocker(self._width_spinbox),
+            QSignalBlocker(self._height_spinbox),
+            QSignalBlocker(self._z_sections_spinbox),
+        ):
+            for spinbox, column in (
+                (self._width_spinbox, "square_width"),
+                (self._height_spinbox, "square_height"),
+                (self._z_sections_spinbox, "square_z_sections"),
+            ):
+                value = feature.get(column)
+                if value is not None and not pd.isna(value):
+                    spinbox.setValue(int(value))
+
+        self._update_area_indicator()
+        self._load_foci_points(project_data, sbs_number, feature)
+        if self._foci_points is not None:
+            with (
+                QSignalBlocker(self._point_size_spinbox),
+                QSignalBlocker(self._point_opacity_slider),
+            ):
+                self._point_size_spinbox.setValue(
+                    int(round(float(self._foci_points.current_size)))
+                )
+                self._point_opacity_slider.setValue(
+                    int(round(self._foci_points.opacity * 100))
+                )
+
+        tile_path = find_tile_for_sbs(
+            feature.to_dict(),
+            project_data.tile_bounding_boxes,
+        )
+        if tile_path is None:
+            return
+
+        tile_contrasts = load_tile_contrasts(tile_path)
+        for channel_index, image_layer in enumerate(self._sbs_images):
+            contrast_limits = tile_contrasts.get(channel_index)
+            if contrast_limits is not None:
+                image_layer.contrast_limits = contrast_limits
+
+    def _update_area_indicator(self, _value: int = 0) -> None:
+        current_item = self._sbs_list_widget.currentItem()
+        if (
+            not isinstance(current_item, CLTScoreSBSListItem)
+            or not self._sbs_images
+        ):
+            return
+
+        project_data = self._project_scoring_data.get(
+            current_item.entry.project_path
+        )
+        if project_data is None:
+            return
+
+        matching_features = project_data.features[
+            project_data.features["sbs_number"]
+            == current_item.entry.sbs_number
+        ]
+        if matching_features.empty:
+            return
+
+        feature = matching_features.iloc[0]
+        stored_width = int(feature["square_width"])
+        stored_height = int(feature["square_height"])
+        width = self._width_spinbox.value()
+        height = self._height_spinbox.value()
+
+        if width == stored_width and height == stored_height:
+            if self._area_indicator is not None:
+                self._napari_viewer.layers.remove(self._area_indicator)
+                self._area_indicator = None
+            return
+
+        image_height, image_width = self._sbs_images[0].data.shape[-2:]
+        center_y = image_height / 2
+        center_x = image_width / 2
+        half_width = width / 2
+        half_height = height / 2
+        rectangle = [
+            [center_y - half_height, center_x - half_width],
+            [center_y - half_height, center_x + half_width],
+            [center_y + half_height, center_x + half_width],
+            [center_y + half_height, center_x - half_width],
+        ]
+
+        if self._area_indicator is None:
+            self._area_indicator = self._napari_viewer.add_shapes(
+                [rectangle],
+                shape_type="rectangle",
+                ndim=2,
+                name="SBS area indicator",
+                edge_color="yellow",
+                face_color="yellow",
+                opacity=0.25,
+            )
+        else:
+            self._area_indicator.data = [rectangle]
+
+    def _ensure_project_crop_bounds(
+        self,
+        project_data: ProjectScoringData,
+    ) -> None:
+        if project_data.sbs_crop_bounds:
+            return
+
+        stitched_path = get_project_stitched_image_path(
+            project_data.project_path
+        )
+        if stitched_path is None:
+            return
+
+        stitched_data = resolve_lazy_image_data(stitched_path)
+        if stitched_data is not None:
+            project_data.update_sbs_crop_bounds(stitched_data)
+
+    def _load_foci_points(
+        self,
+        project_data: ProjectScoringData,
+        sbs_number: int,
+        feature: pd.Series,
+    ) -> None:
+        self._ensure_project_crop_bounds(project_data)
+        crop_bounds = project_data.sbs_crop_bounds.get(sbs_number)
+        if crop_bounds is None:
+            self._foci_points = self._napari_viewer.add_points(
+                [],
+                ndim=3,
+                name="Foci points",
+                size=self._point_size_spinbox.value(),
+                opacity=self._point_opacity_slider.value() / 100,
+            )
+            return
+
+        raw_coordinates = feature.get("stitched_foci_coords", "[]")
+        try:
+            stitched_coordinates = json.loads(str(raw_coordinates))
+        except (TypeError, json.JSONDecodeError):
+            stitched_coordinates = []
+
+        local_coordinates = [
+            crop_bounds.stitched_to_local(
+                tuple(float(value) for value in coordinates)
+            )
+            for coordinates in stitched_coordinates
+            if len(coordinates) == 3
+        ]
+        self._foci_points = self._napari_viewer.add_points(
+            local_coordinates,
+            ndim=3,
+            name="Foci points",
+            size=self._point_size_spinbox.value(),
+            opacity=self._point_opacity_slider.value() / 100,
+        )
+
+    def _on_point_size_changed(self, value: int) -> None:
+        if self._foci_points is not None:
+            self._foci_points.size = value
+            self._foci_points.current_size = value
+
+    def _on_point_opacity_changed(self, value: int) -> None:
+        if self._foci_points is not None:
+            self._foci_points.opacity = value / 100
+
+    def _on_save_foci_points_button_pressed(self) -> None:
+        if self._foci_points is None:
+            return
+
+        current_item = self._sbs_list_widget.currentItem()
+        if not isinstance(current_item, CLTScoreSBSListItem):
+            return
+
+        project_data = self._project_scoring_data.get(
+            current_item.entry.project_path
+        )
+        if project_data is None:
+            return
+
+        sbs_number = current_item.entry.sbs_number
+        self._ensure_project_crop_bounds(project_data)
+        crop_bounds = project_data.sbs_crop_bounds.get(sbs_number)
+        if crop_bounds is None:
+            return
+
+        stitched_foci_coords = [
+            list(
+                crop_bounds.local_to_stitched(
+                    tuple(float(value) for value in point)
+                )
+            )
+            for point in self._foci_points.data
+            if len(point) == 3
+        ]
+
+        if not project_data.merge_sbs_scoring(
+            sbs_number,
+            stitched_foci_coords,
+        ):
+            show_error(
+                "Could not save foci. The SBS or project save file is locked."
+            )
+            return
+
+        current_item.entry.foci_count = len(stitched_foci_coords)
+        current_item.entry.scored = True
+        self._update_overall_progress()
+
+        row_widget = self._sbs_list_widget.itemWidget(current_item)
+        if isinstance(row_widget, CLTScoreSBSRow):
+            row_widget.set_foci_count(len(stitched_foci_coords))
+
+        self._select_next_unscored_sbs(current_item)
+        if self._status_update_callback is not None:
+            self._status_update_callback()
+
+    def _select_next_unscored_sbs(
+        self,
+        current_item: CLTScoreSBSListItem,
+    ) -> None:
+        current_row = self._sbs_list_widget.row(current_item)
+        item_count = self._sbs_list_widget.count()
+
+        candidate_rows = [
+            (current_row + offset) % item_count
+            for offset in range(1, item_count + 1)
+        ]
+
+        for row in candidate_rows:
+            candidate_item = self._sbs_list_widget.item(row)
+            if not isinstance(candidate_item, CLTScoreSBSListItem):
+                continue
+            if candidate_item.entry.scored:
+                continue
+
+            project_data = self._project_scoring_data.get(
+                candidate_item.entry.project_path
+            )
+            if project_data is None:
+                continue
+
+            sbs_name = f"sbs{candidate_item.entry.sbs_number}"
+            if project_data.lock_manager.is_locked(sbs_name):
+                continue
+
+            self._sbs_list_widget.setCurrentRow(row)
+            return
+
+    def _get_selected_sbs_context(
+        self,
+    ) -> tuple[ProjectScoringData, str] | None:
+        current_item = self._sbs_list_widget.currentItem()
+        if not isinstance(current_item, CLTScoreSBSListItem):
+            return None
+
+        project_data = self._project_scoring_data.get(
+            current_item.entry.project_path
+        )
+        if project_data is None:
+            return None
+
+        return project_data, f"sbs{current_item.entry.sbs_number}"
+
+    def _on_apply_dimensions_button_pressed(self) -> None:
+        current_item = self._sbs_list_widget.currentItem()
+        if not isinstance(current_item, CLTScoreSBSListItem):
+            return
+
+        project_data = self._project_scoring_data.get(
+            current_item.entry.project_path
+        )
+        if project_data is None:
+            return
+
+        sbs_number = current_item.entry.sbs_number
+        matching_rows = project_data.features.index[
+            project_data.features["sbs_number"] == sbs_number
+        ]
+        if len(matching_rows) == 0:
+            return
+
+        feature_index = matching_rows[0]
+        new_dimensions = {
+            "square_width": self._width_spinbox.value(),
+            "square_height": self._height_spinbox.value(),
+            "square_z_sections": self._z_sections_spinbox.value(),
+        }
+        dimensions_changed = any(
+            int(project_data.features.loc[feature_index, column]) != value
+            for column, value in new_dimensions.items()
+        )
+        if not dimensions_changed:
+            return
+
+        if not project_data.merge_sbs_features(
+            sbs_number,
+            new_dimensions,
+        ):
+            show_error(
+                "Could not update SBS dimensions. "
+                "The SBS or project save file is locked."
+            )
+            return
+
+        if not project_data.merge_sbs_flag(
+            f"sbs{sbs_number}",
+            SBSFlag.COORD_RECALC_NEEDED,
+            add=True,
+        ):
+            show_error(
+                "Could not mark the SBS for recalculation. "
+                "The SBS or project save file is locked."
+            )
+            return
+
+        self._cut_project_sbs(project_data)
+        self._update_cut_sbs_status()
+        self._sbs_selection_changed(current_item, None)
+
+    def _update_sbs_flags_controls(self) -> None:
+        self._remove_flags_combo.clear()
+        context = self._get_selected_sbs_context()
+        if context is None:
+            self._flags_summary_label.setText("Flags: None")
+            return
+
+        project_data, sbs_name = context
+        flags = project_data.flags_manager.get_flags(sbs_name)
+        current_item = self._sbs_list_widget.currentItem()
+        if isinstance(current_item, CLTScoreSBSListItem):
+            current_item.entry.flags = flags
+            row_widget = self._sbs_list_widget.itemWidget(current_item)
+            if isinstance(row_widget, CLTScoreSBSRow):
+                row_widget.set_flags(flags)
+
+        self._flags_summary_label.setText(
+            "Flags: " + (", ".join(flags) if flags else "None")
+        )
+        self._remove_flags_combo.addItems(flags)
+
+    def _add_selected_sbs_flag(self) -> None:
+        context = self._get_selected_sbs_context()
+        flag = self._add_flags_combo.currentText()
+        if context is None or not flag:
+            return
+
+        project_data, sbs_name = context
+        if not project_data.merge_sbs_flag(sbs_name, flag, add=True):
+            show_error(
+                "Could not add the flag. "
+                "The SBS or project save file is locked."
+            )
+            return
+
+        self._update_cut_sbs_status()
+        self._update_sbs_flags_controls()
+
+    def _remove_selected_sbs_flag(self) -> None:
+        context = self._get_selected_sbs_context()
+        flag = self._remove_flags_combo.currentText()
+        if context is None or not flag:
+            return
+
+        project_data, sbs_name = context
+        if not project_data.merge_sbs_flag(sbs_name, flag, add=False):
+            show_error(
+                "Could not remove the flag. "
+                "The SBS or project save file is locked."
+            )
+            return
+
+        self._update_cut_sbs_status()
+        self._update_sbs_flags_controls()
+
+    def _on_peek_toggled(self, checked: bool) -> None:
+        if not checked:
+            self._peek_details_widget.setVisible(False)
+            return
+
+        self._update_peek_details()
+
+    def _update_peek_details(self) -> None:
+        current_item = self._sbs_list_widget.currentItem()
+        if not isinstance(current_item, CLTScoreSBSListItem):
+            self._peek_details_widget.setVisible(False)
+            return
+
+        entry = current_item.entry
+        project_data = self._project_scoring_data.get(entry.project_path)
+        if project_data is None:
+            self._peek_details_widget.setVisible(False)
+            return
+
+        matching_features = project_data.features[
+            project_data.features["sbs_number"] == entry.sbs_number
+        ]
+        if matching_features.empty:
+            self._peek_details_widget.setVisible(False)
+            return
+
+        feature = matching_features.iloc[0]
+        sbs_name = f"sbs{entry.sbs_number}"
+        sbs_path = project_data.get_sbs_image_path(sbs_name)
+        sbs_filename = sbs_path.name if sbs_path is not None else "Not cut"
+        flags = project_data.flags_manager.get_flags(sbs_name)
+        flags_text = ", ".join(flags) if flags else "None"
+
+        region = feature.get("region")
+        region_text = "None" if pd.isna(region) else str(region)
+
+        self._sbs_name_label.setText(f"SBS name: {sbs_filename}")
+        self._flags_label.setText(f"Flags: {flags_text}")
+        self._region_label.setText(f"Region: {region_text}")
+        self._peek_details_widget.setVisible(True)
+
+    def _project_selection_changed(self, *_args: object) -> None:
+        self._load_project_scoring_data()
+
+    def _scoring_options_changed(self, _state: bool) -> None:
+        self._update_sbs_list()
+
+    def _on_cut_sbs_button_pressed(self) -> None:
+        for project_data in self._project_scoring_data.values():
+            self._cut_project_sbs(project_data)
+
+        self._load_project_scoring_data()
+
+    def _cut_project_sbs(
+        self,
+        project_data: ProjectScoringData,
+    ) -> None:
+        stitched_path = get_project_stitched_image_path(
+            project_data.project_path
+        )
+        if stitched_path is None:
+            return
+
+        stitched_data = resolve_lazy_image_data(stitched_path)
+        if stitched_data is None:
+            return
+
+        project_data.update_sbs_crop_bounds(stitched_data)
+        cut_sbs_directory = (
+            project_data.project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / CUT_SBS_DIR_NAME
+        )
+        cut_sbs_directory.mkdir(parents=True, exist_ok=True)
+
+        for feature in project_data.features.to_dict(orient="records"):
+            sbs_number = int(feature["sbs_number"])
+            sbs_name = f"sbs{sbs_number}"
+            acquired_sbs_lock = False
+            if not project_data.lock_manager.owns(sbs_name):
+                if not project_data.lock_manager.acquire(sbs_name):
+                    continue
+                acquired_sbs_lock = True
+
+            try:
+                self._cut_single_project_sbs(
+                    project_data,
+                    stitched_data,
+                    cut_sbs_directory,
+                    feature,
+                    sbs_number,
+                    sbs_name,
+                )
+            finally:
+                if acquired_sbs_lock:
+                    project_data.lock_manager.release(sbs_name)
+
+    def _cut_single_project_sbs(
+        self,
+        project_data: ProjectScoringData,
+        stitched_data: xr.DataArray,
+        cut_sbs_directory: Path,
+        feature: dict[str, object],
+        sbs_number: int,
+        sbs_name: str,
+    ) -> None:
+        sbs_flags = project_data.flags_manager.get_flags(sbs_name)
+        needs_recalculation = SBSFlag.COORD_RECALC_NEEDED.value in sbs_flags
+        output_path = cut_sbs_directory / (
+            f"{project_data.project_name}_{sbs_name}"
+            f"{SBS_FILE_NAME_EXTENSION}"
+        )
+
+        if output_path.is_file() and not needs_recalculation:
+            return
+
+        crop_bounds = project_data.sbs_crop_bounds.get(sbs_number)
+        cropped_data = crop_sbs_data(
+            stitched_data,
+            feature,
+            crop_bounds,
+        )
+        if cropped_data is None:
+            return
+
+        try:
+            tifffile.imwrite(
+                output_path,
+                cropped_data.compute().values,
+            )
+        except (OSError, ValueError):
+            return
+
+        if needs_recalculation:
+            project_data.merge_sbs_flag(
+                sbs_name,
+                SBSFlag.COORD_RECALC_NEEDED,
+                add=False,
+            )
+
+    def _update_sbs_list(self) -> None:
+        self._sbs_list_widget.clear()
+
+        has_projects = bool(self._project_scoring_data)
+        self._sbs_empty_label.setVisible(not has_projects)
+        self._sbs_list_widget.setVisible(has_projects)
+
+        if not has_projects:
+            self._update_sbs_list_height()
+            self._update_overall_progress()
+            return
+
+        sbs_entries: list[ScoreSBSEntry] = []
+
+        for project_path, project_data in self._project_scoring_data.items():
+            for feature in project_data.features.to_dict(orient="records"):
+                sbs_number = int(feature["sbs_number"])
+                foci_value = feature["scored_foci_number"]
+                foci_count = None if pd.isna(foci_value) else int(foci_value)
+                flag_key = f"sbs{sbs_number}"
+                flags = project_data.flags_manager.get_flags(flag_key)
+                locked = project_data.lock_manager.is_locked(
+                    flag_key
+                ) and not project_data.lock_manager.owns(flag_key)
+
+                sbs_entries.append(
+                    ScoreSBSEntry(
+                        project_path=project_path,
+                        sbs_number=sbs_number,
+                        foci_count=foci_count,
+                        scored=foci_count is not None,
+                        flags=flags,
+                        locked=locked,
+                    )
+                )
+
+        if self._shuffle_nuclei_checkbox.isChecked():
+            shuffle(sbs_entries)
+
+        blind = self._blind_nuclei_checkbox.isChecked()
+
+        for display_index, entry in enumerate(sbs_entries, start=1):
+            sbs_name = (
+                f"Blind {display_index}"
+                if blind
+                else f"sbs{entry.sbs_number} - {entry.project_path.name}"
+            )
+
+            row_widget = CLTScoreSBSRow(
+                sbs_name=sbs_name,
+                foci_count=entry.foci_count,
+                scored=entry.scored,
+                flags=entry.flags,
+                locked=entry.locked,
+            )
+            list_item = CLTScoreSBSListItem(entry)
+            list_item.setSizeHint(row_widget.sizeHint())
+            self._sbs_list_widget.addItem(list_item)
+            self._sbs_list_widget.setItemWidget(list_item, row_widget)
+
+        self._update_sbs_list_height()
+        self._update_overall_progress()
+
+    def _update_sbs_list_height(self) -> None:
+        visible_rows = min(self._sbs_list_widget.count(), 10)
+        if visible_rows == 0:
+            self._sbs_list_widget.setFixedHeight(0)
+            return
+
+        rows_height = sum(
+            self._sbs_list_widget.item(row).sizeHint().height()
+            for row in range(visible_rows)
+        )
+        frame_height = 2 * self._sbs_list_widget.frameWidth()
+        self._sbs_list_widget.setFixedHeight(rows_height + frame_height)

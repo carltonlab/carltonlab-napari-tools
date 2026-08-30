@@ -1,6 +1,6 @@
 ---
 name: "\U0001F4DA Documentation"
-about: Report an issue with carltonlab-napari-count-tool documentation
+about: Report an issue with carltonlab-napari-tools documentation
 title: ''
 labels: documentation
 assignees: ''

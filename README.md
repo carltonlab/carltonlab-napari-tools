@@ -1,11 +1,11 @@
-# carltonlab-napari-count-tool
+# carltonlab-napari-tools
 
-[![License BSD-3](https://img.shields.io/pypi/l/carltonlab-napari-count-tool.svg?color=green)](https://github.com/carlosmariorr/carltonlab-napari-count-tool/raw/main/LICENSE)
-[![PyPI](https://img.shields.io/pypi/v/carltonlab-napari-count-tool.svg?color=green)](https://pypi.org/project/carltonlab-napari-count-tool)
-[![Python Version](https://img.shields.io/pypi/pyversions/carltonlab-napari-count-tool.svg?color=green)](https://python.org)
-[![tests](https://github.com/carlosmariorr/carltonlab-napari-count-tool/workflows/tests/badge.svg)](https://github.com/carlosmariorr/carltonlab-napari-count-tool/actions)
-[![codecov](https://codecov.io/gh/carlosmariorr/carltonlab-napari-count-tool/branch/main/graph/badge.svg)](https://codecov.io/gh/carlosmariorr/carltonlab-napari-count-tool)
-[![napari hub](https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/carltonlab-napari-count-tool)](https://napari-hub.org/plugins/carltonlab-napari-count-tool)
+[![License BSD-3](https://img.shields.io/pypi/l/carltonlab-napari-tools.svg?color=green)](https://github.com/carlosmariorr/carltonlab-napari-tools/raw/main/LICENSE)
+[![PyPI](https://img.shields.io/pypi/v/carltonlab-napari-tools.svg?color=green)](https://pypi.org/project/carltonlab-napari-tools)
+[![Python Version](https://img.shields.io/pypi/pyversions/carltonlab-napari-tools.svg?color=green)](https://python.org)
+[![tests](https://github.com/carlosmariorr/carltonlab-napari-tools/workflows/tests/badge.svg)](https://github.com/carlosmariorr/carltonlab-napari-tools/actions)
+[![codecov](https://codecov.io/gh/carlosmariorr/carltonlab-napari-tools/branch/main/graph/badge.svg)](https://codecov.io/gh/carlosmariorr/carltonlab-napari-tools)
+[![napari hub](https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/carltonlab-napari-tools)](https://napari-hub.org/plugins/carltonlab-napari-tools)
 [![npe2](https://img.shields.io/badge/plugin-npe2-blue?link=https://napari.org/stable/plugins/index.html)](https://napari.org/stable/plugins/index.html)
 [![Copier](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-purple.json)](https://github.com/copier-org/copier)
 
@@ -25,23 +25,23 @@ https://napari.org/stable/plugins/index.html
 
 ## Installation
 
-You can install `carltonlab-napari-count-tool` via [pip]:
+You can install `carltonlab-napari-tools` via [pip]:
 
 ```
-pip install carltonlab-napari-count-tool
+pip install carltonlab-napari-tools
 ```
 
-If napari is not already installed, you can install `carltonlab-napari-count-tool` with napari and Qt via:
+If napari is not already installed, you can install `carltonlab-napari-tools` with napari and Qt via:
 
 ```
-pip install "carltonlab-napari-count-tool[all]"
+pip install "carltonlab-napari-tools[all]"
 ```
 
 
 To install latest development version :
 
 ```
-pip install git+https://github.com/carlosmariorr/carltonlab-napari-count-tool.git
+pip install git+https://github.com/carlosmariorr/carltonlab-napari-tools.git
 ```
 
 
@@ -54,7 +54,7 @@ the coverage at least stays the same before you submit a pull request.
 ## License
 
 Distributed under the terms of the [BSD-3] license,
-"carltonlab-napari-count-tool" is free and open source software
+"carltonlab-napari-tools" is free and open source software
 
 ## Issues
 
@@ -71,7 +71,7 @@ If you encounter any problems, please [file an issue] along with a detailed desc
 [Mozilla Public License 2.0]: https://www.mozilla.org/media/MPL/2.0/index.txt
 [napari-plugin-template]: https://github.com/napari/napari-plugin-template
 
-[file an issue]: https://github.com/carlosmariorr/carltonlab-napari-count-tool/issues
+[file an issue]: https://github.com/carlosmariorr/carltonlab-napari-tools/issues
 
 [napari]: https://github.com/napari/napari
 [tox]: https://tox.readthedocs.io/en/latest/
