@@ -1,13 +1,105 @@
 import configparser
 import csv
+import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from carltonlab_napari_tools._shared_variables import (
+    SUPPORTED_STITCH_EXTENSIONS,
     TILE_CONTRASTS_FILE_NAME_SUFFIX,
     TILE_POSITIONS_FILE_NAME_SUFFIX,
+    TILES_CONFIG_FILE_NAME,
+    TILES_DIR_NAME,
 )
+
+
+def write_tiles_config(
+    tiles_directory: Path,
+    tile_paths: list[Path],
+) -> bool:
+    config = configparser.ConfigParser()
+    config["tiles"] = {
+        f"file_{index}": tile_path.name
+        for index, tile_path in enumerate(tile_paths)
+    }
+
+    try:
+        with (tiles_directory / TILES_CONFIG_FILE_NAME).open(
+            "w",
+            encoding="utf-8",
+        ) as config_file:
+            config.write(config_file)
+    except OSError:
+        return False
+
+    return True
+
+
+def ensure_tiles_config(project_path: Path) -> bool:
+    tiles_directory = project_path / TILES_DIR_NAME
+    config_path = tiles_directory / TILES_CONFIG_FILE_NAME
+
+    if config_path.exists():
+        return True
+
+    tile_paths = sorted(
+        path
+        for path in tiles_directory.iterdir()
+        if path.name.endswith(".ome.zarr")
+        or (
+            path.is_file()
+            and any(
+                path.name.endswith(extension)
+                for extension in SUPPORTED_STITCH_EXTENSIONS
+            )
+        )
+    )
+
+    if not tile_paths:
+        return False
+
+    return write_tiles_config(tiles_directory, tile_paths)
+
+
+def move_tiles(
+    source_directory: Path,
+    project_path: Path,
+) -> bool:
+    tiles_directory = project_path / TILES_DIR_NAME
+
+    image_paths = [
+        path
+        for path in source_directory.iterdir()
+        if path.name.endswith(".ome.zarr")
+        or (
+            path.is_file()
+            and any(
+                path.name.endswith(extension)
+                for extension in SUPPORTED_STITCH_EXTENSIONS
+            )
+        )
+    ]
+
+    if not image_paths:
+        return False
+
+    destination_paths = [
+        tiles_directory / image_path.name for image_path in image_paths
+    ]
+    if any(path.exists() for path in destination_paths):
+        return False
+
+    try:
+        for image_path in image_paths:
+            shutil.move(
+                str(image_path),
+                str(tiles_directory / image_path.name),
+            )
+    except OSError:
+        return False
+
+    return write_tiles_config(tiles_directory, image_paths)
 
 
 @dataclass(frozen=True)

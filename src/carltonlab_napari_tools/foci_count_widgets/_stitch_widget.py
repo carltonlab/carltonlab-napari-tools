@@ -1,5 +1,4 @@
 import configparser
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -31,6 +30,10 @@ from carltonlab_napari_tools._shared_variables import (
 from carltonlab_napari_tools._shared_widgets import (
     FrameSeparator,
     KeepChannelsWidget,
+)
+from carltonlab_napari_tools._tile_utils import (
+    ensure_tiles_config,
+    move_tiles,
 )
 from carltonlab_napari_tools._utils import (
     create_project_structure,
@@ -379,59 +382,6 @@ class StitchOmeZarrWidget(QWidget):
 
         return tile_paths
 
-    def _write_tiles_config(
-        self,
-        tiles_path: Path,
-        tile_paths: list[Path],
-    ) -> bool:
-        """Write the tile filenames to the project manifest."""
-        tiles_config = configparser.ConfigParser()
-        tiles_config["tiles"] = {
-            f"file_{index}": tile_path.name
-            for index, tile_path in enumerate(tile_paths)
-        }
-
-        try:
-            with (tiles_path / TILES_CONFIG_FILE_NAME).open(
-                "w",
-                encoding="utf-8",
-            ) as config_file:
-                tiles_config.write(config_file)
-        except OSError as exc:
-            show_error(
-                f"Could not write {TILES_CONFIG_FILE_NAME} in "
-                f"{tiles_path}: {exc}"
-            )
-            return False
-
-        return True
-
-    def _ensure_tiles_config(self, project_path: Path) -> bool:
-        """Create a tile manifest for an existing project if needed."""
-        tiles_path = project_path / TILES_DIR_NAME
-        config_path = tiles_path / TILES_CONFIG_FILE_NAME
-
-        if config_path.exists():
-            return True
-
-        tile_paths = sorted(
-            path
-            for path in tiles_path.iterdir()
-            if path.name.endswith(".ome.zarr")
-            or (
-                path.is_file()
-                and any(
-                    path.name.endswith(extension)
-                    for extension in SUPPORTED_STITCH_EXTENSIONS
-                )
-            )
-        )
-        if not tile_paths:
-            show_error(f"No tiles found in {tiles_path}.")
-            return False
-
-        return self._write_tiles_config(tiles_path, tile_paths)
-
     def _write_extracted_channels_config(
         self,
         project_path: Path,
@@ -535,50 +485,6 @@ class StitchOmeZarrWidget(QWidget):
 
         return extracted_paths
 
-    def _move_tiles(
-        self,
-        project_base_dir: Path,
-        project_path: Path,
-    ) -> bool:
-        tiles_path = project_path / TILES_DIR_NAME
-
-        image_paths = [
-            image_path
-            for image_path in project_base_dir.iterdir()
-            if (
-                image_path.name.endswith(".ome.zarr")
-                or (
-                    image_path.is_file()
-                    and any(
-                        image_path.name.endswith(extension)
-                        for extension in SUPPORTED_STITCH_EXTENSIONS
-                    )
-                )
-            )
-        ]
-
-        if not image_paths:
-            show_error(f"No image tiles found in {project_base_dir}")
-            return False
-
-        destination_paths = [
-            tiles_path / image_path.name for image_path in image_paths
-        ]
-        if any(destination.exists() for destination in destination_paths):
-            show_error(
-                f"One or more tile destinations already exist in {tiles_path}"
-            )
-            return False
-
-        try:
-            for image_path in image_paths:
-                shutil.move(str(image_path), str(tiles_path / image_path.name))
-        except OSError as exc:
-            show_error(f"Could not move tiles from {project_base_dir}: {exc}")
-            return False
-
-        return self._write_tiles_config(tiles_path, image_paths)
-
     def _on_stitch_button_pressed(self) -> None:
         starting_projects = self._project_list_widget.get_project_paths()
         if not starting_projects:
@@ -596,11 +502,11 @@ class StitchOmeZarrWidget(QWidget):
             if (
                 tiles_path.is_dir()
                 and not any(tiles_path.iterdir())
-                and not self._move_tiles(starting_project, project_path)
+                and not move_tiles(starting_project, project_path)
             ):
                 continue
 
-            if not self._ensure_tiles_config(project_path):
+            if not ensure_tiles_config(project_path):
                 continue
 
             project_paths.append(project_path)

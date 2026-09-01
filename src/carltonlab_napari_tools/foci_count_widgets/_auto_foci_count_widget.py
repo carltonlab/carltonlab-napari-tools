@@ -2001,7 +2001,6 @@ class AutoFociCountWidget(QWidget):
             return
 
         invalid_directory_messages: list[str] = []
-        created_project_directories: list[str] = []
         ready_project_paths: list[Path] = []
         stitching_tile_directories: list[Path] = []
 
