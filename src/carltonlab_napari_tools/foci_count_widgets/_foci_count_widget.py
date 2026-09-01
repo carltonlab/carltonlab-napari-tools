@@ -246,7 +246,8 @@ class ManualFociCountWidget(QWidget):
         self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._layout.addWidget(self._title_label)
 
-        self._layout.addWidget(FrameSeparator(parent=self))
+        self._title_separator = FrameSeparator(parent=self)
+        self._layout.addWidget(self._title_separator)
 
         self._project_directories_container = QWidget()
         self._project_directories_layout = QVBoxLayout()
@@ -291,9 +292,6 @@ class ManualFociCountWidget(QWidget):
             QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
         )
         self._add_project_directory_button.setToolTip("Add project directory")
-        self._add_project_directory_button.clicked.connect(
-            self._add_project_directory_button_pressed
-        )
         self._project_directories_header_layout.addWidget(
             self._add_project_directory_button
         )
@@ -312,9 +310,6 @@ class ManualFociCountWidget(QWidget):
         self._add_multigonad_config_button.setToolTip(
             "Add multigonad config file"
         )
-        self._add_multigonad_config_button.clicked.connect(
-            self._add_multigonad_config_button_pressed
-        )
         self._project_directories_header_layout.addWidget(
             self._add_multigonad_config_button
         )
@@ -330,9 +325,6 @@ class ManualFociCountWidget(QWidget):
         )
         self._remove_project_directory_button.setToolTip(
             "Remove selected project directories"
-        )
-        self._remove_project_directory_button.clicked.connect(
-            self._remove_project_directory_button_pressed
         )
         self._project_directories_header_layout.addWidget(
             self._remove_project_directory_button
@@ -359,18 +351,14 @@ class ManualFociCountWidget(QWidget):
             self._project_directories_visibility_button,
         )
 
-        self._layout.addWidget(FrameSeparator(parent=self))
+        self._project_directories_separator = FrameSeparator(parent=self)
+        self._layout.addWidget(self._project_directories_separator)
 
         self._keep_channels_widget = KeepChannelsWidget(parent=self)
-        self._keep_channels_widget._keep_channels_cb.toggled.connect(
-            self._on_keep_channels_changed
-        )
-        self._keep_channels_widget._keep_channels_line_edit.editingFinished.connect(
-            self._on_keep_channels_changed
-        )
         self._layout.addWidget(self._keep_channels_widget)
 
-        self._layout.addWidget(FrameSeparator(parent=self))
+        self._keep_channels_separator = FrameSeparator(parent=self)
+        self._layout.addWidget(self._keep_channels_separator)
 
         self._multigonad_project_saver = CLToggleSavePathWidget(
             self,
@@ -379,12 +367,10 @@ class ManualFociCountWidget(QWidget):
             allow_overwrite=False,
             force_suffix=MULTIGONAD_FOCI_COUNT_TOOL_FILE_SUFFIX,
         )
-        self._multigonad_project_saver.connect_save_callback(
-            self._save_multigonad_project
-        )
         self._layout.addWidget(self._multigonad_project_saver)
 
-        self._layout.addWidget(FrameSeparator(parent=self))
+        self._multigonad_separator = FrameSeparator(parent=self)
+        self._layout.addWidget(self._multigonad_separator)
 
         self._layout.addSpacing(6)
 
@@ -487,6 +473,20 @@ class ManualFociCountWidget(QWidget):
         self._layout.addWidget(self._workflow_scroll_area, 1)
 
         self._current_widget: QWidget | None = None
+
+    def detach_shared_controls(self) -> list[QWidget]:
+        shared_widgets = [
+            self._project_directories_container,
+            self._project_directories_separator,
+            self._keep_channels_widget,
+            self._keep_channels_separator,
+            self._multigonad_project_saver,
+            self._multigonad_separator,
+        ]
+        for widget in shared_widgets:
+            self._layout.removeWidget(widget)
+            widget.setParent(None)
+        return shared_widgets
 
     def _add_process_button(
         self,
@@ -699,158 +699,6 @@ class ManualFociCountWidget(QWidget):
         if isinstance(self._current_widget, CLTScoreNucleiWidget):
             self._current_widget.refresh_project_data()
 
-    def _save_multigonad_project(self, saving_path: str) -> bool:
-        project_paths = self._project_directories_list.get_project_paths()
-
-        if not project_paths:
-            return False
-
-        return save_multigonad_project(
-            saving_path=saving_path,
-            project_directories=project_paths,
-            project_type="clsp",
-        )
-
-    def _create_project_row(self, project_path: Path) -> QWidget:
-        requested_channels = self._keep_channels_widget.get_channels()
-        project_status = StitchOmeZarrWidget.get_project_status(
-            project_path,
-            requested_channels,
-        )
-
-        row = IntegrationProjectRow(
-            f"{project_path.parent.name}/{project_path.name}"
-        )
-        row.apply_project_status(project_status)
-        row.apply_nuclei_status(
-            CLTPickNucleiWidget.is_project_nuclei_complete(project_path)
-        )
-        row.apply_scoring_status(
-            CLTScoreNucleiWidget.is_project_scoring_complete(project_path)
-        )
-        row.apply_regions_status(
-            CLTStitchedRegionsWidget.is_project_regions_complete(project_path)
-        )
-        row.apply_plots_status(is_project_plot_complete(project_path))
-        return row
-
-    def _on_keep_channels_changed(self, *_args: object) -> None:
-        self._project_directories_list.refresh_rows()
-        self._update_process_status_labels()
-
-    def _verify_project_directory(self, project_path: Path) -> bool:
-        has_existing_project = any(
-            path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
-            for path in project_path.iterdir()
-        )
-        if has_existing_project:
-            return True
-
-        supported_entries = [
-            path
-            for path in project_path.iterdir()
-            if path.name.endswith(".ome.zarr")
-            or (
-                path.is_file()
-                and any(
-                    path.name.endswith(extension)
-                    for extension in SUPPORTED_STITCH_EXTENSIONS
-                )
-            )
-        ]
-        if not supported_entries:
-            show_error(
-                f"The directory {project_path} does not contain "
-                "supported image files."
-            )
-            return False
-
-        unsupported_files = [
-            path
-            for path in project_path.iterdir()
-            if path.is_file() and path not in supported_entries
-        ]
-        if unsupported_files:
-            show_error(
-                f"The directory {project_path} contains unsupported files:\n"
-                + "\n".join(path.name for path in unsupported_files)
-            )
-            return False
-
-        return True
-
-    def _add_project_directory_button_pressed(self) -> None:
-        project_paths = get_directories(
-            self,
-            caption="Select project directories",
-        )
-        if project_paths is None:
-            return
-
-        valid_paths = [
-            project_path
-            for project_path in project_paths
-            if (
-                project_path
-                not in self._project_directories_list.get_project_paths()
-                and self._verify_project_directory(project_path)
-            )
-        ]
-
-        self._project_directories_list.add_project_paths(valid_paths)
-        self._update_process_status_labels()
-        self._refresh_score_nuclei_widget()
-
-    def _add_multigonad_config_button_pressed(self) -> None:
-        config_path = get_file(
-            self,
-            caption="Select a multigonad project configuration",
-            filters="Config files (*.config)",
-        )
-        if config_path is None:
-            return
-
-        config = load_multigonad_project(config_path)
-        if config is None:
-            show_error("Could not load the multigonad project configuration.")
-            return
-
-        try:
-            if config.get("project", "type") != "clsp":
-                show_error("The selected file is not a CLSP project.")
-                return
-
-            project_paths = [
-                Path(project_path)
-                for _, project_path in config.items("project_directories")
-            ]
-        except configparser.Error:
-            show_error(
-                "The multigonad project configuration is missing "
-                "required sections."
-            )
-            return
-
-        if not project_paths:
-            show_error("The multigonad project contains no directories.")
-            return
-
-        for project_path in project_paths:
-            if not project_path.is_dir():
-                show_error(f"Directory does not exist: {project_path}")
-                return
-            if not self._verify_project_directory(project_path):
-                return
-
-        self._project_directories_list.set_project_paths(project_paths)
-        self._update_process_status_labels()
-        self._refresh_score_nuclei_widget()
-
-    def _remove_project_directory_button_pressed(self) -> None:
-        self._project_directories_list.remove_selected_project_paths()
-        self._update_process_status_labels()
-        self._refresh_score_nuclei_widget()
-
 
 class CarltonLabCountTool(QWidget):
     # your QWidget.__init__ can optionally request the napari viewer instance
@@ -924,7 +772,6 @@ class CarltonLabCountTool(QWidget):
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
         self._workflow_tabs = QTabWidget(self)
-        self._main_layout.addWidget(self._workflow_tabs, 1)
 
         self._manual_scroll_area = QScrollArea(self._workflow_tabs)
         self._manual_scroll_area.setWidgetResizable(True)
@@ -935,6 +782,48 @@ class CarltonLabCountTool(QWidget):
             self._manual_scroll_area,
         )
         self._manual_scroll_area.setWidget(self._manual_foci_count_widget)
+
+        for (
+            shared_widget
+        ) in self._manual_foci_count_widget.detach_shared_controls():
+            self._main_layout.addWidget(shared_widget)
+
+        self._project_directories_list = (
+            self._manual_foci_count_widget._project_directories_list
+        )
+        self._keep_channels_widget = (
+            self._manual_foci_count_widget._keep_channels_widget
+        )
+        self._multigonad_project_saver = (
+            self._manual_foci_count_widget._multigonad_project_saver
+        )
+        self._project_directories_list._row_factory = self._create_project_row
+
+        self._keep_channels_widget._keep_channels_cb.toggled.disconnect()
+        self._keep_channels_widget._keep_channels_cb.toggled.connect(
+            self._on_keep_channels_changed
+        )
+        self._keep_channels_widget._keep_channels_line_edit.editingFinished.disconnect()
+        self._keep_channels_widget._keep_channels_line_edit.editingFinished.connect(
+            self._on_keep_channels_changed
+        )
+        self._manual_foci_count_widget._add_project_directory_button.clicked.disconnect()
+        self._manual_foci_count_widget._add_project_directory_button.clicked.connect(
+            self._add_project_directory_button_pressed
+        )
+        self._manual_foci_count_widget._add_multigonad_config_button.clicked.disconnect()
+        self._manual_foci_count_widget._add_multigonad_config_button.clicked.connect(
+            self._add_multigonad_config_button_pressed
+        )
+        self._manual_foci_count_widget._remove_project_directory_button.clicked.disconnect()
+        self._manual_foci_count_widget._remove_project_directory_button.clicked.connect(
+            self._remove_project_directory_button_pressed
+        )
+        self._multigonad_project_saver.connect_save_callback(
+            self._save_multigonad_project
+        )
+
+        self._main_layout.addWidget(self._workflow_tabs, 1)
         self._workflow_tabs.addTab(self._manual_scroll_area, "Manual")
 
         self._auto_scroll_area = QScrollArea(self._workflow_tabs)
@@ -948,6 +837,152 @@ class CarltonLabCountTool(QWidget):
         )
         self._auto_scroll_area.setWidget(self._auto_widget)
         self._workflow_tabs.addTab(self._auto_scroll_area, "Auto")
+
+    def _create_project_row(self, project_path: Path) -> QWidget:
+        requested_channels = self._keep_channels_widget.get_channels()
+        project_status = StitchOmeZarrWidget.get_project_status(
+            project_path,
+            requested_channels,
+        )
+
+        row = IntegrationProjectRow(
+            f"{project_path.parent.name}/{project_path.name}"
+        )
+        row.apply_project_status(project_status)
+        row.apply_nuclei_status(
+            CLTPickNucleiWidget.is_project_nuclei_complete(project_path)
+        )
+        row.apply_scoring_status(
+            CLTScoreNucleiWidget.is_project_scoring_complete(project_path)
+        )
+        row.apply_regions_status(
+            CLTStitchedRegionsWidget.is_project_regions_complete(project_path)
+        )
+        row.apply_plots_status(is_project_plot_complete(project_path))
+        return row
+
+    def _on_keep_channels_changed(self, *_args: object) -> None:
+        self._project_directories_list.refresh_rows()
+        self._manual_foci_count_widget._update_process_status_labels()
+
+    def _save_multigonad_project(self, saving_path: str) -> bool:
+        project_paths = self._project_directories_list.get_project_paths()
+        if not project_paths:
+            return False
+
+        return save_multigonad_project(
+            saving_path=saving_path,
+            project_directories=project_paths,
+            project_type="clsp",
+        )
+
+    def _verify_project_directory(self, project_path: Path) -> bool:
+        has_existing_project = any(
+            path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
+            for path in project_path.iterdir()
+        )
+        if has_existing_project:
+            return True
+
+        supported_entries = [
+            path
+            for path in project_path.iterdir()
+            if path.name.endswith(".ome.zarr")
+            or (
+                path.is_file()
+                and any(
+                    path.name.endswith(extension)
+                    for extension in SUPPORTED_STITCH_EXTENSIONS
+                )
+            )
+        ]
+        if not supported_entries:
+            show_error(
+                f"The directory {project_path} does not contain "
+                "supported image files."
+            )
+            return False
+
+        unsupported_files = [
+            path
+            for path in project_path.iterdir()
+            if path.is_file() and path not in supported_entries
+        ]
+        if unsupported_files:
+            show_error(
+                f"The directory {project_path} contains unsupported files:\n"
+                + "\n".join(path.name for path in unsupported_files)
+            )
+            return False
+
+        return True
+
+    def _add_project_directory_button_pressed(self) -> None:
+        project_paths = get_directories(
+            self,
+            caption="Select project directories",
+        )
+        if project_paths is None:
+            return
+
+        valid_paths = [
+            project_path
+            for project_path in project_paths
+            if (
+                project_path
+                not in self._project_directories_list.get_project_paths()
+                and self._verify_project_directory(project_path)
+            )
+        ]
+        self._project_directories_list.add_project_paths(valid_paths)
+        self._manual_foci_count_widget._update_process_status_labels()
+
+    def _add_multigonad_config_button_pressed(self) -> None:
+        config_path = get_file(
+            self,
+            caption="Select a multigonad project configuration",
+            filters="Config files (*.config)",
+        )
+        if config_path is None:
+            return
+
+        config = load_multigonad_project(config_path)
+        if config is None:
+            show_error("Could not load the multigonad project configuration.")
+            return
+
+        try:
+            if config.get("project", "type") != "clsp":
+                show_error("The selected file is not a CLSP project.")
+                return
+            project_paths = [
+                Path(project_path)
+                for _, project_path in config.items("project_directories")
+            ]
+        except configparser.Error:
+            show_error(
+                "The multigonad project configuration is missing "
+                "required sections."
+            )
+            return
+
+        if not project_paths:
+            show_error("The multigonad project contains no directories.")
+            return
+
+        for project_path in project_paths:
+            if not project_path.is_dir():
+                show_error(f"Directory does not exist: {project_path}")
+                return
+            if not self._verify_project_directory(project_path):
+                return
+
+        self._project_directories_list.set_project_paths(project_paths)
+        self._manual_foci_count_widget._update_process_status_labels()
+
+    def _remove_project_directory_button_pressed(self) -> None:
+        self._project_directories_list.remove_selected_project_paths()
+        self._manual_foci_count_widget._update_process_status_labels()
 
     def _install_keybindings(self) -> None:
         self._napari_viewer.bind_key(
