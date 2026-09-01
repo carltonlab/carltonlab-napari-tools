@@ -37,10 +37,10 @@ from tifffile import imwrite
 from carltonlab_napari_tools._shared_variables import (
     AUTO_COUNT_DIR_NAME,
     CUT_SBS_DIR_NAME,
-    DEFAULT_PROJECT_NAME,
     EDITED_REGIONS_FILE_NAME,
     PICK_NUCLEI_DIR_NAME,
     POINTS_SUMMARY_FILE_NAME,
+    PROJECT_FILE_DIR_NAME,
     REGIONS_DIR_NAME,
     SBS_FILE_NAME_EXTENSION,
     SBS_METADATA_FILE_NAME,
@@ -774,9 +774,7 @@ def save_auto_scored_nuclei_files_from_region_records(
     tile_paths: list[Path],
     stitched_image_path: str | Path,
 ) -> bool:
-    project_files_dir = (
-        get_project_directory_path(directory_path) / DEFAULT_PROJECT_NAME
-    )
+    project_files_dir = _get_project_files_path(directory_path)
     metadata_path = (
         project_files_dir
         / PICK_NUCLEI_DIR_NAME
@@ -929,9 +927,7 @@ def _get_segmentation_output_path_for_tile(
 ) -> Path:
     tile_path_obj = Path(tile_path)
     segmentation_output_dir = (
-        get_project_directory_path(directory_path)
-        / DEFAULT_PROJECT_NAME
-        / SEGMENTATION_DIR_NAME
+        _get_project_files_path(directory_path) / SEGMENTATION_DIR_NAME
     )
     return segmentation_output_dir / (
         f"{tile_path_obj.name[: -len('.ome.zarr')]}_meiotic_3d_crops_masks.npy"
@@ -943,6 +939,23 @@ def _get_expected_source_image_count(directory_path: str | Path) -> int:
     return sum(
         1 for entry in directory.iterdir() if is_supported_image_entry(entry)
     )
+
+
+def _get_project_path(starting_path: str | Path) -> Path:
+    project_path = resolve_clsp_project_path(Path(starting_path))
+    if project_path is None:
+        raise ValueError(
+            f"No CLSP project found for starting path: {starting_path}"
+        )
+    return project_path
+
+
+def _get_project_files_path(starting_path: str | Path) -> Path:
+    return _get_project_path(starting_path) / PROJECT_FILE_DIR_NAME
+
+
+def _get_project_tiles_path(starting_path: str | Path) -> Path:
+    return _get_project_path(starting_path) / TILES_DIR_NAME
 
 
 class DirectoryListItemWidget(QWidget):
@@ -1064,9 +1077,7 @@ class DirectoryListItemWidget(QWidget):
 
     def refresh_project_status(self) -> None:
         try:
-            project_path = get_project_directory_path(
-                self._selected_directory_path
-            )
+            project_path = _get_project_path(self._selected_directory_path)
             project_exists = project_path.exists()
         except ValueError:
             project_exists = False
@@ -1114,9 +1125,7 @@ class DirectoryListItemWidget(QWidget):
         )
 
     def _get_tile_paths(self) -> list[Path]:
-        tiles_dir = get_project_tiles_directory_path(
-            self._selected_directory_path
-        )
+        tiles_dir = _get_project_tiles_path(self._selected_directory_path)
         if not tiles_dir.exists():
             return []
         return sorted(tiles_dir.glob("*.ome.zarr"))
@@ -1129,9 +1138,7 @@ class DirectoryListItemWidget(QWidget):
         return expected_count > 0 and len(tile_paths) == expected_count
 
     def _stitched_image_is_ready(self) -> bool:
-        tiles_dir = get_project_tiles_directory_path(
-            self._selected_directory_path
-        )
+        tiles_dir = _get_project_tiles_path(self._selected_directory_path)
         stitched_path = Path(get_stitched_output_path(tiles_dir))
         stitched_coords_path = Path(
             get_stitched_coordinates_path(tiles_dir, stitched_path)
@@ -1140,8 +1147,7 @@ class DirectoryListItemWidget(QWidget):
 
     def _get_segmentation_output_path(self, tile_path: Path) -> Path:
         segmentation_output_dir = (
-            get_project_directory_path(self._selected_directory_path)
-            / DEFAULT_PROJECT_NAME
+            _get_project_files_path(self._selected_directory_path)
             / SEGMENTATION_DIR_NAME
         )
         return segmentation_output_dir / (
@@ -1149,10 +1155,7 @@ class DirectoryListItemWidget(QWidget):
         )
 
     def _get_project_files_dir(self) -> Path:
-        return (
-            get_project_directory_path(self._selected_directory_path)
-            / DEFAULT_PROJECT_NAME
-        )
+        return _get_project_files_path(self._selected_directory_path)
 
     def _region_square_outputs_exist(self) -> bool:
         project_files_dir = self._get_project_files_dir()
@@ -1665,7 +1668,7 @@ class AutoFociCountWidget(QWidget):
     ) -> bool:
         print("")
         print(f"Building auto region square CSVs for {directory_path}")
-        tiles_dir = get_project_tiles_directory_path(directory_path)
+        tiles_dir = _get_project_tiles_path(directory_path)
         stitched_image_path = Path(get_stitched_output_path(tiles_dir))
         if not stitched_image_path.exists():
             show_warning(
@@ -1674,9 +1677,7 @@ class AutoFociCountWidget(QWidget):
             )
             return False
 
-        project_files_dir = (
-            get_project_directory_path(directory_path) / DEFAULT_PROJECT_NAME
-        )
+        project_files_dir = _get_project_files_path(directory_path)
         edited_regions_csv_path = (
             project_files_dir / REGIONS_DIR_NAME / EDITED_REGIONS_FILE_NAME
         )
@@ -1777,7 +1778,7 @@ class AutoFociCountWidget(QWidget):
     def _launch_regions_widget_for_directory(
         self, directory_path: str
     ) -> None:
-        tiles_dir = get_project_tiles_directory_path(directory_path)
+        tiles_dir = _get_project_tiles_path(directory_path)
         stitched_image_path = Path(get_stitched_output_path(tiles_dir))
         if not stitched_image_path.exists():
             show_warning(
@@ -1816,7 +1817,7 @@ class AutoFociCountWidget(QWidget):
     def _launch_contrasts_widget_for_directory(
         self, directory_path: str
     ) -> None:
-        tiles_dir = get_project_tiles_directory_path(directory_path)
+        tiles_dir = _get_project_tiles_path(directory_path)
         stitched_image_path = Path(get_stitched_output_path(tiles_dir))
         if not stitched_image_path.exists():
             show_warning(
@@ -1858,7 +1859,7 @@ class AutoFociCountWidget(QWidget):
         return expected_count > 0 and len(tile_paths) == expected_count
 
     def _get_ready_tile_paths(self, directory_path: str | Path) -> list[Path]:
-        tiles_dir = get_project_tiles_directory_path(directory_path)
+        tiles_dir = _get_project_tiles_path(directory_path)
         if not tiles_dir.exists():
             return []
         return sorted(tiles_dir.glob("*.ome.zarr"))
@@ -1866,9 +1867,7 @@ class AutoFociCountWidget(QWidget):
     def _get_project_files_dir_for_directory(
         self, directory_path: str | Path
     ) -> Path:
-        return (
-            get_project_directory_path(directory_path) / DEFAULT_PROJECT_NAME
-        )
+        return _get_project_files_path(directory_path)
 
     def _load_sbs_names_for_directory(
         self, directory_path: str | Path
@@ -1988,7 +1987,7 @@ class AutoFociCountWidget(QWidget):
         ).exists()
 
     def _stitched_image_is_ready(self, directory_path: str | Path) -> bool:
-        tiles_dir = get_project_tiles_directory_path(directory_path)
+        tiles_dir = _get_project_tiles_path(directory_path)
         stitched_path = Path(get_stitched_output_path(tiles_dir))
         stitched_coords_path = Path(
             get_stitched_coordinates_path(tiles_dir, stitched_path)
@@ -2045,7 +2044,7 @@ class AutoFociCountWidget(QWidget):
                     )
                     continue
                 stitched_tile_directories.append(
-                    str(get_project_tiles_directory_path(directory_path))
+                    str(_get_project_tiles_path(directory_path))
                 )
 
         if invalid_directory_messages:
@@ -2129,7 +2128,7 @@ class AutoFociCountWidget(QWidget):
         directory_paths = list(self._directory_item_widgets)
         plot_gonad_entries = [
             (
-                str(get_project_directory_path(directory_path)),
+                str(_get_project_path(directory_path)),
                 Path(directory_path).parent.name,
             )
             for directory_path in directory_paths
@@ -2167,10 +2166,7 @@ class AutoFociCountWidget(QWidget):
                     f"starting {directory_path}"
                 )
                 tile_paths = self._get_ready_tile_paths(directory_path)
-                project_files_dir = (
-                    get_project_directory_path(directory_path)
-                    / DEFAULT_PROJECT_NAME
-                )
+                project_files_dir = _get_project_files_path(directory_path)
                 edited_regions_csv_path = (
                     project_files_dir
                     / REGIONS_DIR_NAME
@@ -2178,7 +2174,7 @@ class AutoFociCountWidget(QWidget):
                 )
                 stitched_image_path = Path(
                     get_stitched_output_path(
-                        get_project_tiles_directory_path(directory_path)
+                        _get_project_tiles_path(directory_path)
                     )
                 )
                 need_region_stage = (
@@ -2253,7 +2249,7 @@ class AutoFociCountWidget(QWidget):
 
                 if need_summary_stage:
                     generate_scored_nuclei_foci_summary(
-                        str(get_project_directory_path(directory_path))
+                        str(_get_project_path(directory_path))
                     )
                 else:
                     print(
@@ -2361,9 +2357,7 @@ class AutoFociCountWidget(QWidget):
             return
 
         segmentation_output_dir = (
-            get_project_directory_path(directory_path)
-            / DEFAULT_PROJECT_NAME
-            / SEGMENTATION_DIR_NAME
+            _get_project_files_path(directory_path) / SEGMENTATION_DIR_NAME
         )
         total_tiles = len(tile_paths)
         print(
