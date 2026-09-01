@@ -34,7 +34,7 @@ from carltonlab_napari_tools._shared_widgets import (
 )
 from carltonlab_napari_tools._utils import (
     create_project_structure,
-    get_common_prefix,
+    get_clsp_project_path,
     parse_channel_string,
 )
 from carltonlab_napari_tools.channel_extraction import (
@@ -185,29 +185,6 @@ class StitchOmeZarrWidget(QWidget):
 
         self._main_layout.addStretch()
 
-    def _get_project_name(self, directory_path: Path) -> str:
-        image_names: list[str] = []
-
-        for image_path in directory_path.iterdir():
-            if not (
-                image_path.is_file() or image_path.name.endswith(".ome.zarr")
-            ):
-                continue
-
-            image_name = image_path.name
-            for extension in SUPPORTED_STITCH_EXTENSIONS:
-                if image_name.endswith(extension):
-                    image_name = image_name[: -len(extension)]
-                    break
-
-            image_names.append(image_name)
-
-        project_base_name = get_common_prefix(image_names)
-        if not project_base_name:
-            project_base_name = directory_path.name
-
-        return f"{project_base_name}{CLSP_PROJECT_SUFFIX}"
-
     @staticmethod
     def _get_extracted_tile_path(
         tile_path: Path,
@@ -240,18 +217,6 @@ class StitchOmeZarrWidget(QWidget):
             base_name += f"_kept_channels_{channel_string}"
 
         return tile_path.with_name(f"{base_name}.ome.zarr")
-
-    def _get_project_path(self, starting_project: Path) -> Path:
-        existing_projects = [
-            path
-            for path in starting_project.iterdir()
-            if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
-        ]
-
-        if existing_projects:
-            return existing_projects[0]
-
-        return starting_project / self._get_project_name(starting_project)
 
     def _has_stitched_image(self, project_path: Path) -> bool:
         stitched_dir = project_path / STITCHED_IMAGE_DIR_NAME
@@ -622,7 +587,7 @@ class StitchOmeZarrWidget(QWidget):
         project_paths: list[Path] = []
 
         for starting_project in starting_projects:
-            project_path = self._get_project_path(starting_project)
+            project_path = get_clsp_project_path(starting_project)
 
             if not create_project_structure(project_path, "clsp"):
                 continue
