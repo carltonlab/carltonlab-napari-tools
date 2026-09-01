@@ -89,6 +89,11 @@ from carltonlab_napari_tools.channel_extraction import extract_project_tiles
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
+from carltonlab_napari_tools.image_processing import (
+    crop_sbs_data,
+    get_sbs_crop_bounds,
+)
+from carltonlab_napari_tools.image_resolver import resolve_lazy_image_data
 from carltonlab_napari_tools.image_stitching import (
     get_stitched_output_path,
     stitch_ome_zarr_images,
@@ -1808,6 +1813,10 @@ class AutoFociCountWidget(QWidget):
                     tile_paths=tile_paths,
                     stitched_image_path=stitched_image_path,
                 )
+                self._create_auto_sbs_crops_from_features(
+                    project_path=project_path,
+                    stitched_image_path=stitched_image_path,
+                )
                 need_region_stage = (
                     not self._region_square_outputs_exist_for_directory(
                         directory_path
@@ -2077,6 +2086,82 @@ class AutoFociCountWidget(QWidget):
         print(
             f"Saved {len(candidates)} automatic nuclei features for {project_path}"
         )
+
+    def _create_auto_sbs_crops_from_features(
+        self,
+        project_path: Path,
+        stitched_image_path: Path,
+    ) -> None:
+        features_path = (
+            project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        )
+        if not features_path.exists():
+            raise FileNotFoundError(
+                f"Nuclei features table not found: {features_path}"
+            )
+
+        features = pd.read_csv(features_path)
+        stitched_data = resolve_lazy_image_data(stitched_image_path)
+        if stitched_data is None:
+            raise ValueError(
+                f"Could not load stitched image: {stitched_image_path}"
+            )
+
+        cut_sbs_directory = (
+            project_path
+            / PROJECT_FILE_DIR_NAME
+            / PICK_NUCLEI_DIR_NAME
+            / CUT_SBS_DIR_NAME
+        )
+        cut_sbs_directory.mkdir(parents=True, exist_ok=True)
+
+        metadata_rows: list[dict[str, int | str]] = []
+        project_name = project_path.name.removesuffix("_clsp_project")
+
+        for feature in features.to_dict(orient="records"):
+            sbs_number = int(feature["sbs_number"])
+            sbs_name = (
+                f"{project_name}_sbs{sbs_number}" f"{SBS_FILE_NAME_EXTENSION}"
+            )
+            output_path = cut_sbs_directory / sbs_name
+
+            crop_bounds = get_sbs_crop_bounds(feature, stitched_data)
+            if crop_bounds is None:
+                continue
+
+            if not output_path.exists():
+                cropped_data = crop_sbs_data(
+                    stitched_data,
+                    feature,
+                    crop_bounds,
+                )
+                if cropped_data is None:
+                    continue
+
+                imwrite(
+                    output_path,
+                    cropped_data.compute().values,
+                    imagej=True,
+                    metadata={"axes": "ZCYX"},
+                )
+
+            metadata_rows.append(
+                {
+                    "sbs_image_name": sbs_name,
+                    "z1": crop_bounds.z_start,
+                    "z2": crop_bounds.z_stop,
+                    "y1": crop_bounds.y_start,
+                    "y2": crop_bounds.y_stop,
+                    "x1": crop_bounds.x_start,
+                    "x2": crop_bounds.x_stop,
+                }
+            )
+
+        metadata_path = cut_sbs_directory / SBS_METADATA_FILE_NAME
+        pd.DataFrame(metadata_rows).to_csv(metadata_path, index=False)
 
     def _call_automatic_foci_count(
         self,
