@@ -3,7 +3,6 @@ from __future__ import annotations
 import csv
 import importlib
 import threading
-from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -15,17 +14,13 @@ from multiview_stitcher import ngff_utils
 from napari.layers import Image
 from napari.utils.notifications import show_warning
 from numpy.typing import NDArray
-from qtpy.QtCore import QMetaObject, QSize, Qt, Slot
-from qtpy.QtGui import QIcon
+from qtpy.QtCore import QMetaObject, Qt, Slot
 from qtpy.QtWidgets import (
-    QAbstractItemView,
     QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -51,10 +46,7 @@ from carltonlab_napari_tools._shared_variables import (
     SQUARES_FILE_NAME_EXTENSION,
     TILES_DIR_NAME,
 )
-from carltonlab_napari_tools._shared_widgets import (
-    get_directories,
-    get_directory,
-)
+from carltonlab_napari_tools._shared_widgets import get_directory
 from carltonlab_napari_tools._utils import (
     create_project_structure,
     get_clsp_project_path,
@@ -63,7 +55,6 @@ from carltonlab_napari_tools._utils import (
 )
 from carltonlab_napari_tools._viewer_utils import (
     close_image_layers,
-    validate_closed_layers,
 )
 from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
     auto_count_binary_mask_outputs_exist,
@@ -76,9 +67,6 @@ from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
 )
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
-)
-from carltonlab_napari_tools.general_widgets._set_contrast_widget import (
-    CLTSetContrastWidget as SetContrastWidget,
 )
 from carltonlab_napari_tools.image_stitching import (
     get_stitched_coordinates_path,
@@ -94,20 +82,9 @@ from carltonlab_napari_tools.segmentation import (
 from carltonlab_napari_tools.segmentation._segmentation import (
     load_ome_zarr_image_zyx,
 )
-from carltonlab_napari_tools.stitched_regions_widgets._stitched_regions_widget import (
-    CLTStitchedRegionsWidget,
-)
-from carltonlab_napari_tools.stitched_regions_widgets._stitched_regions_widget import (
-    CLTStitchedRegionsWidget as RegionWidget,
-)
 
 if TYPE_CHECKING:
     from napari.components import ViewerModel
-
-BUTTONS_WIDTH = 30
-ICONS_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons"
-ADD_DIR_ICON = ICONS_DIR / "add_dir.svg"
-REMOVE_ICON = ICONS_DIR / "remove.svg"
 
 
 def _get_ome_zarr_channel_count(image_path: str | Path) -> int:
@@ -963,302 +940,6 @@ def _get_project_tiles_path(starting_path: str | Path) -> Path:
     return _get_project_path(starting_path) / TILES_DIR_NAME
 
 
-class DirectoryListItemWidget(QWidget):
-    def __init__(
-        self,
-        selected_directory_path: str,
-        launch_regions_callback: Callable[[str], None],
-        launch_contrasts_callback: Callable[[str], None],
-        parent: QWidget | None = None,
-    ):
-        super().__init__(parent=parent)
-        self._selected_directory_path = selected_directory_path
-        self._launch_regions_callback = launch_regions_callback
-        self._launch_contrasts_callback = launch_contrasts_callback
-
-        layout = QHBoxLayout()
-        layout.setContentsMargins(4, 2, 4, 2)
-        layout.setSpacing(8)
-        self.setLayout(layout)
-
-        selected_directory = Path(self._selected_directory_path)
-        display_text = (
-            f"{selected_directory.parent.name}/{selected_directory.name}"
-        )
-
-        self._directory_path_label = QLabel(display_text, parent=self)
-        self._directory_path_label.setWordWrap(True)
-        self._directory_path_label.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
-        )
-        layout.addWidget(self._directory_path_label, 1)
-
-        self._segmentation_bt: QPushButton = QPushButton("NS", parent=self)
-        self._segmentation_bt.setSizePolicy(
-            QSizePolicy(
-                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
-            )
-        )
-        self._segmentation_bt.setToolTip("Nuclear segmentation")
-        layout.addWidget(self._segmentation_bt)
-
-        self._regions_bt: QPushButton = QPushButton("RE", parent=self)
-        self._regions_bt.setSizePolicy(
-            QSizePolicy(
-                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
-            )
-        )
-        self._regions_bt.setStyleSheet(
-            "QPushButton { border: 1px solid gray; border-radius: 4px; "
-            "background-color: palette(button); font-weight: bold; }"
-        )
-        self._regions_bt.setToolTip("Set the regions")
-        layout.addWidget(self._regions_bt)
-        self._regions_bt.clicked.connect(self._regions_button_pressed)
-
-        self._contrasts_bt: QPushButton = QPushButton("CO", parent=self)
-        self._contrasts_bt.setSizePolicy(
-            QSizePolicy(
-                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
-            )
-        )
-        self._contrasts_bt.setStyleSheet(
-            "QPushButton { border: 1px solid gray; border-radius: 4px; "
-            "background-color: palette(button); font-weight: bold; }"
-        )
-        self._contrasts_bt.setToolTip("Set the contrasts")
-        layout.addWidget(self._contrasts_bt)
-        self._contrasts_bt.clicked.connect(self._contrasts_button_pressed)
-
-        self._foci_count_bt: QPushButton = QPushButton("FC", parent=self)
-        self._foci_count_bt.setSizePolicy(
-            QSizePolicy(
-                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
-            )
-        )
-        self._foci_count_bt.setStyleSheet(
-            "QPushButton { border: 1px solid gray; border-radius: 4px; "
-            "background-color: palette(button); font-weight: bold; }"
-        )
-        self._foci_count_bt.setToolTip("Foci count")
-        layout.addWidget(self._foci_count_bt)
-
-        self.refresh_project_status()
-
-    def _update_status_button_colors(
-        self,
-        segmentation_exists: bool,
-        regions_exists: bool = False,
-        contrasts_exists: bool = False,
-        foci_count_exists: bool = False,
-    ) -> None:
-        segmentation_color = "darkgreen" if segmentation_exists else "red"
-        regions_color = "darkgreen" if regions_exists else "red"
-        contrasts_color = "darkgreen" if contrasts_exists else "red"
-        foci_count_color = "darkgreen" if foci_count_exists else "red"
-
-        self._segmentation_bt.setStyleSheet(
-            "QPushButton { border: 1px solid gray; border-radius: 4px; "
-            "background-color: palette(button); font-weight: bold; "
-            f"color: {segmentation_color}; }}"
-        )
-
-        self._regions_bt.setStyleSheet(
-            "QPushButton { border: 1px solid gray; border-radius: 4px; "
-            "background-color: palette(button); font-weight: bold; "
-            f"color: {regions_color}; }}"
-        )
-        self._contrasts_bt.setStyleSheet(
-            "QPushButton { border: 1px solid gray; border-radius: 4px; "
-            "background-color: palette(button); font-weight: bold; "
-            f"color: {contrasts_color}; }}"
-        )
-
-        self._foci_count_bt.setStyleSheet(
-            "QPushButton { border: 1px solid gray; border-radius: 4px; "
-            "background-color: palette(button); font-weight: bold; "
-            f"color: {foci_count_color}; }}"
-        )
-
-    def refresh_project_status(self) -> None:
-        try:
-            project_path = _get_project_path(self._selected_directory_path)
-            project_exists = project_path.exists()
-        except ValueError:
-            project_exists = False
-
-        segmentation_exists = False
-        regions_exists = False
-        contrasts_exists = False
-        foci_count_exists = False
-        if project_exists:
-            tiles_ready = self._tiles_are_ready()
-            stitched_ready = self._stitched_image_is_ready()
-            tile_paths = self._get_tile_paths()
-            segmentation_exists = (
-                tiles_ready
-                and stitched_ready
-                and len(tile_paths) > 0
-                and all(
-                    self._get_segmentation_output_path(tile_path).exists()
-                    and get_cleaned_segmentation_output_path(
-                        self._get_segmentation_output_path(tile_path)
-                    ).exists()
-                    for tile_path in tile_paths
-                )
-            )
-            regions_exists = self._regions_are_complete(
-                self._selected_directory_path
-            )
-            contrasts_exists = len(tile_paths) > 0 and all(
-                verify_image_contrasts_file(str(tile_path))
-                for tile_path in tile_paths
-            )
-            foci_count_exists = (
-                segmentation_exists
-                and regions_exists
-                and contrasts_exists
-                and self._region_square_outputs_exist()
-                and self._tile_auto_count_outputs_exist(tile_paths)
-            )
-
-        self._update_status_button_colors(
-            segmentation_exists,
-            regions_exists,
-            contrasts_exists,
-            foci_count_exists,
-        )
-
-    def _get_tile_paths(self) -> list[Path]:
-        tiles_dir = _get_project_tiles_path(self._selected_directory_path)
-        if not tiles_dir.exists():
-            return []
-        return sorted(tiles_dir.glob("*.ome.zarr"))
-
-    def _tiles_are_ready(self) -> bool:
-        tile_paths = self._get_tile_paths()
-        expected_count = _get_expected_source_image_count(
-            self._selected_directory_path
-        )
-        return expected_count > 0 and len(tile_paths) == expected_count
-
-    def _stitched_image_is_ready(self) -> bool:
-        tiles_dir = _get_project_tiles_path(self._selected_directory_path)
-        stitched_path = Path(get_stitched_output_path(tiles_dir))
-        stitched_coords_path = Path(
-            get_stitched_coordinates_path(tiles_dir, stitched_path)
-        )
-        return stitched_path.exists() and stitched_coords_path.exists()
-
-    def _get_segmentation_output_path(self, tile_path: Path) -> Path:
-        segmentation_output_dir = (
-            _get_project_files_path(self._selected_directory_path)
-            / SEGMENTATION_DIR_NAME
-        )
-        return segmentation_output_dir / (
-            f"{tile_path.name[: -len('.ome.zarr')]}_meiotic_3d_crops_masks.npy"
-        )
-
-    def _get_project_files_dir(self) -> Path:
-        return _get_project_files_path(self._selected_directory_path)
-
-    def _region_square_outputs_exist(self) -> bool:
-        project_files_dir = self._get_project_files_dir()
-        pick_nuclei_dir = project_files_dir / PICK_NUCLEI_DIR_NAME
-        if not pick_nuclei_dir.exists():
-            return False
-        if not (pick_nuclei_dir / POINTS_SUMMARY_FILE_NAME).exists():
-            return False
-
-        number_of_regions = get_number_of_saved_regions(str(project_files_dir))
-        if number_of_regions <= 0:
-            return False
-
-        return all(
-            (
-                pick_nuclei_dir
-                / f"region-{region_index + 1}{SQUARES_FILE_NAME_EXTENSION}"
-            ).exists()
-            for region_index in range(number_of_regions)
-        )
-
-    def _tile_auto_count_outputs_exist(self, tile_paths: list[Path]) -> bool:
-        if len(tile_paths) == 0:
-            return False
-
-        project_files_dir = self._get_project_files_dir()
-        scored_nuclei_dir = project_files_dir / SCORED_NUCLEI_DIR_NAME
-        metadata_path = (
-            project_files_dir
-            / PICK_NUCLEI_DIR_NAME
-            / CUT_SBS_DIR_NAME
-            / SBS_METADATA_FILE_NAME
-        )
-        if not scored_nuclei_dir.exists() or not metadata_path.exists():
-            return False
-
-        metadata_df = pd.read_csv(metadata_path)
-        if "sbs_image_name" not in metadata_df.columns:
-            return False
-
-        for sbs_name in metadata_df["sbs_image_name"].astype(str):
-            scored_points_path, zero_points_path = (
-                get_scored_nuclei_output_paths(scored_nuclei_dir, sbs_name)
-            )
-            if (
-                not scored_points_path.exists()
-                and not zero_points_path.exists()
-            ):
-                return False
-
-        foci_summary_path = (
-            scored_nuclei_dir / SCORED_NUCLEI_FOCI_SUMMARY_FILE_NAME
-        )
-        return foci_summary_path.exists()
-
-    def get_status_ready(self) -> tuple[bool, bool, bool]:
-        tile_paths = self._get_tile_paths()
-        segmentation_exists = (
-            self._tiles_are_ready()
-            and self._stitched_image_is_ready()
-            and len(tile_paths) > 0
-            and all(
-                self._get_segmentation_output_path(tile_path).exists()
-                and get_cleaned_segmentation_output_path(
-                    self._get_segmentation_output_path(tile_path)
-                ).exists()
-                for tile_path in tile_paths
-            )
-        )
-        regions_exists = self._regions_are_complete(
-            self._selected_directory_path
-        )
-        contrasts_exists = len(tile_paths) > 0 and all(
-            verify_image_contrasts_file(str(tile_path))
-            for tile_path in tile_paths
-        )
-        return segmentation_exists, regions_exists, contrasts_exists
-
-    def _regions_are_complete(self, directory_path: str | Path) -> bool:
-        project_path = resolve_clsp_project_path(Path(directory_path))
-        return (
-            project_path is not None
-            and CLTStitchedRegionsWidget.is_project_regions_complete(
-                project_path
-            )
-        )
-
-    def _regions_button_pressed(self) -> None:
-        self._launch_regions_callback(self._selected_directory_path)
-
-    def _contrasts_button_pressed(self) -> None:
-        self._launch_contrasts_callback(self._selected_directory_path)
-
-    def validate_property(self, image_path: str) -> None:
-        _ = image_path
-        self.refresh_project_status()
-
-
 class AutoFociCountWidget(QWidget):
     def __init__(
         self,
@@ -1279,8 +960,6 @@ class AutoFociCountWidget(QWidget):
         self._current_stitched_images: list[Image] = []
         self._current_tile_paths: dict[int, str] = {}
         self._current_tile_image_layers: list[Image] = []
-        self._directory_item_widgets: dict[str, DirectoryListItemWidget] = {}
-        self._image_directories: list[str] = []
         self._batch_fc_running = False
         self._spotiflow_model_name = "synth_3d"
 
@@ -1435,65 +1114,6 @@ class AutoFociCountWidget(QWidget):
         self._minimum_colocalization_intensity_ratio_layout.addStretch()
         self._binary_mask_filter_ts_toggled()
 
-        self._image_dir_c: QWidget = QWidget(parent=self)
-        self._layout.addWidget(self._image_dir_c)
-        self._image_dir_layout: QVBoxLayout = QVBoxLayout()
-        self._image_dir_layout.setContentsMargins(0, 0, 0, 0)
-        self._image_dir_c.setLayout(self._image_dir_layout)
-
-        self._add_remove_container: QWidget = QWidget(parent=self)
-        self._image_dir_layout.addWidget(self._add_remove_container)
-        self._add_remove_container_layout: QHBoxLayout = QHBoxLayout()
-        self._add_remove_container_layout.setContentsMargins(0, 0, 0, 0)
-        self._add_remove_container_layout.setSpacing(6)
-        self._add_remove_container.setLayout(self._add_remove_container_layout)
-
-        self._image_dir_l: QLabel = QLabel("Image directories", parent=self)
-        self._image_dir_l.setStyleSheet("font-weight: bold")
-        self._image_dir_l.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        self._add_remove_container_layout.addWidget(self._image_dir_l)
-
-        self._add_directory_button: QPushButton = QPushButton("", parent=self)
-        self._add_directory_button.setIcon(QIcon(str(ADD_DIR_ICON)))
-        self._add_directory_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
-        self._add_directory_button.setIconSize(
-            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
-        )
-        self._add_directory_button.clicked.connect(
-            self._add_directory_button_pressed
-        )
-        self._add_remove_container_layout.addWidget(self._add_directory_button)
-
-        self._remove_selected_button: QPushButton = QPushButton(
-            "", parent=self
-        )
-        self._remove_selected_button.setIcon(QIcon(str(REMOVE_ICON)))
-        self._remove_selected_button.setFixedSize(BUTTONS_WIDTH, BUTTONS_WIDTH)
-        self._remove_selected_button.setIconSize(
-            QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
-        )
-        self._remove_selected_button.clicked.connect(
-            self._remove_selected_button_pressed
-        )
-        self._add_remove_container_layout.addWidget(
-            self._remove_selected_button
-        )
-
-        self._image_dir_q_list: QListWidget = QListWidget(parent=self)
-        self._image_dir_q_list.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self._image_dir_q_list.setSelectionMode(
-            QAbstractItemView.SelectionMode.MultiSelection
-        )
-        self._image_dir_q_list.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
-        self._image_dir_q_list.setMaximumHeight(160)
-        self._image_dir_layout.addWidget(self._image_dir_q_list)
-
         self._start_ns_b: QPushButton = QPushButton(
             "Run batch NS", parent=self
         )
@@ -1548,66 +1168,9 @@ class AutoFociCountWidget(QWidget):
         self._helper_widget.setLayout(self._helper_widget_layout)
         self._layout.addWidget(self._helper_widget, 1)
 
-    def _add_directory_button_pressed(self) -> None:
-        directories_path_list: list[str] | None = get_directories(
-            self, caption="Select the directories"
-        )
-        if directories_path_list is None:
-            return
-
-        invalid_directory_messages: list[str] = []
-
-        for directory_path in directories_path_list:
-            is_valid, error_message = validate_auto_prepare_directory(
-                directory_path
-            )
-            if not is_valid:
-                if error_message is not None:
-                    invalid_directory_messages.append(error_message)
-                continue
-
-            if directory_path not in self._image_directories:
-                self._image_directories.append(directory_path)
-        self._update_qlist()
-
-        if invalid_directory_messages:
-            invalid_directory_text = "\n\n".join(invalid_directory_messages)
-            show_warning(
-                f"{len(invalid_directory_messages)} invalid directories:\n\n"
-                f"{invalid_directory_text}"
-            )
-
-    def _remove_selected_button_pressed(self) -> None:
-        selected_items = self._image_dir_q_list.selectedItems()
-        if not selected_items:
-            return
-        for item in selected_items:
-            item_path = item.data(Qt.ItemDataRole.UserRole)
-            if item_path in self._image_directories:
-                self._image_directories.remove(item_path)
-        self._update_qlist()
-
-    def _update_qlist(self) -> None:
-        self._image_dir_q_list.clear()
-        self._directory_item_widgets = {}
-        for directory_path in self._image_directories:
-            q_list_item = QListWidgetItem()
-            q_list_item.setData(Qt.ItemDataRole.UserRole, directory_path)
-            item_widget = DirectoryListItemWidget(
-                directory_path,
-                self._launch_regions_widget_for_directory,
-                self._launch_contrasts_widget_for_directory,
-                self,
-            )
-            self._directory_item_widgets[directory_path] = item_widget
-            item_widget.adjustSize()
-            q_list_item.setSizeHint(item_widget.sizeHint())
-            self._image_dir_q_list.addItem(q_list_item)
-            self._image_dir_q_list.setItemWidget(q_list_item, item_widget)
-
     @Slot()
     def _refresh_qlist_on_gui_thread(self) -> None:
-        self._update_qlist()
+        self._project_list_widget.refresh_rows()
 
     def _clear_helper_widget(self) -> None:
         while self._helper_widget_layout.count():
@@ -1779,84 +1342,6 @@ class AutoFociCountWidget(QWidget):
             f"{directory_path}. Unassigned squares: {len(unassigned_records)}"
         )
         return True
-
-    def _launch_regions_widget_for_directory(
-        self, directory_path: str
-    ) -> None:
-        tiles_dir = _get_project_tiles_path(directory_path)
-        stitched_image_path = Path(get_stitched_output_path(tiles_dir))
-        if not stitched_image_path.exists():
-            show_warning(
-                "Stitched image not found for "
-                f"{directory_path}: {stitched_image_path}"
-            )
-            return
-
-        if not validate_closed_layers(self._viewer):
-            return
-
-        open_answer = open_project_image(
-            self._viewer, str(stitched_image_path)
-        )
-        if open_answer is None:
-            return
-
-        item_widget = self._directory_item_widgets.get(directory_path)
-        image_path, image_layers, _, project_files_dir = open_answer
-        self._current_image_path = image_path
-        self._current_stitched_images = image_layers
-        self._current_tile_paths = self._get_directory_tile_paths(
-            directory_path
-        )
-        self._current_project_files_dir = project_files_dir
-        self._clear_helper_widget()
-        self._helper_content_widget = RegionWidget(
-            self._viewer,
-            self,  # type: ignore[arg-type]
-            tuple(self._current_stitched_images),
-            image_path,
-            item_widget,
-        )
-        self._helper_widget_layout.addWidget(self._helper_content_widget)
-
-    def _launch_contrasts_widget_for_directory(
-        self, directory_path: str
-    ) -> None:
-        tiles_dir = _get_project_tiles_path(directory_path)
-        stitched_image_path = Path(get_stitched_output_path(tiles_dir))
-        if not stitched_image_path.exists():
-            show_warning(
-                "Stitched image not found for "
-                f"{directory_path}: {stitched_image_path}"
-            )
-            return
-
-        if not validate_closed_layers(self._viewer):
-            return
-
-        open_answer = open_project_image(
-            self._viewer, str(stitched_image_path)
-        )
-        if open_answer is None:
-            return
-
-        item_widget = self._directory_item_widgets.get(directory_path)
-        image_path, image_layers, _, project_files_dir = open_answer
-        self._current_image_path = image_path
-        self._current_stitched_images = image_layers
-        self._current_tile_paths = self._get_directory_tile_paths(
-            directory_path
-        )
-        self._current_project_files_dir = project_files_dir
-        self._clear_helper_widget()
-        self._helper_content_widget = SetContrastWidget(
-            self._viewer,
-            self,  # type: ignore[arg-type]
-            tuple(self._current_stitched_images),
-            image_path,
-            item_widget,
-        )
-        self._helper_widget_layout.addWidget(self._helper_content_widget)
 
     def _tiles_are_ready(self, directory_path: str | Path) -> bool:
         tile_paths = self._get_ready_tile_paths(directory_path)
@@ -2068,7 +1553,7 @@ class AutoFociCountWidget(QWidget):
             for project_path in ready_project_paths:
                 self._call_segmentation(project_path)
 
-        self._update_qlist()
+        self._project_list_widget.refresh_rows()
 
     def _get_project_status_ready(
         self, directory_path: str | Path
