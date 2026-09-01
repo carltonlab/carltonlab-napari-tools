@@ -802,6 +802,7 @@ class ManualFociCountWidget(QWidget):
         config_path = get_file(
             self,
             caption="Select a multigonad project configuration",
+            filters="Config files (*.config)",
         )
         if config_path is None:
             return
