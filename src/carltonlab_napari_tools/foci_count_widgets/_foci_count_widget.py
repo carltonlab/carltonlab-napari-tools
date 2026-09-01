@@ -1,16 +1,14 @@
 import configparser
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from napari.layers import Image
-from napari.utils.notifications import show_error, show_info
+from napari.utils.notifications import show_error
 from qtpy.QtCore import QSize, Qt, QTimer
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -20,12 +18,6 @@ from qtpy.QtWidgets import (
     QWidget,
 )
 
-from carltonlab_napari_tools._model import (
-    close_image_layers,
-    open_project_image,
-    open_tile_image,
-    validate_closed_layers,
-)
 from carltonlab_napari_tools._multigonad_project import (
     load_multigonad_project,
     save_multigonad_project,
@@ -40,7 +32,6 @@ from carltonlab_napari_tools._shared_widgets import (
     KeepChannelsWidget,
     ToggleVisibilityButton,
     get_directories,
-    get_directory,
     get_file,
 )
 from carltonlab_napari_tools.foci_count_widgets._generate_plots_widget import (
@@ -76,10 +67,6 @@ if TYPE_CHECKING:
     import napari
     from napari.components import ViewerModel
 
-from carltonlab_napari_tools._protocols import (
-    MainWidgetCallBacks,
-    ProcessWidgetAPI,
-)
 
 BUTTONS_WIDTH = 30
 ICONS_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons"
@@ -859,225 +846,6 @@ class IntegrationWidget(QWidget):
         self._project_directories_list.remove_selected_project_paths()
         self._update_process_status_labels()
         self._refresh_score_nuclei_widget()
-
-
-class GonadControlWidget(QWidget):
-    def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
-    ) -> None:
-        super().__init__(main_widget)
-
-        self._napari_viewer = napari_viewer
-        self._main_widget = main_widget
-
-        self._image_path: str | None = None
-        self._image_layers: list[Image] | None = None
-        self._tile_image_layers: list[Image] = []
-        self._image_tiles: dict[int, str] = {}
-        self._project_files_dir: str | None = None
-
-        self._layout = QVBoxLayout()
-        self.setLayout(self._layout)
-        self._layout.setContentsMargins(0, 0, 0, 5)
-
-        self._image_container: QWidget = QWidget()
-        self._image_container_layout: QHBoxLayout = QHBoxLayout()
-        self._image_container.setLayout(self._image_container_layout)
-        self._layout.addWidget(self._image_container)
-
-        self._open_image_title: QLabel = QLabel("Image")
-        self._open_image_title.setStyleSheet("font-weight: bold")
-        self._image_container_layout.addWidget(self._open_image_title)
-
-        self._open_image_line_edit: QLineEdit = QLineEdit("")
-        self._image_container_layout.addWidget(self._open_image_line_edit)
-
-        self._open_image_button: QPushButton = QPushButton("Open image")
-        self._open_image_button.clicked.connect(
-            self._open_image_button_pressed
-        )
-        self._layout.addWidget(self._open_image_button)
-
-        self._open_zarr_button: QPushButton = QPushButton(
-            "Open OME.zarr image"
-        )
-        self._open_zarr_button.clicked.connect(self._open_zarr_button_pressed)
-        self._layout.addWidget(self._open_zarr_button)
-
-        self._open_image_status_label: QLabel = QLabel("")
-        self._layout.addWidget(self._open_image_status_label)
-        self._set_open_image_status(False)
-
-    def _open_image_button_pressed(self) -> None:
-        validated_closed_layers: bool = validate_closed_layers(
-            self._napari_viewer
-        )
-        if not validated_closed_layers:
-            return
-        image_path: str | None = get_file(
-            self, "Select the project image file"
-        )
-        self._open_image_from_path(
-            image_path, validated_closed_layers=validated_closed_layers
-        )
-
-    def _open_zarr_button_pressed(self) -> None:
-        validated_closed_layers: bool = validate_closed_layers(
-            self._napari_viewer
-        )
-        if not validated_closed_layers:
-            return
-        image_path: str | None = get_directory(
-            self, "Select the OME.zarr directory"
-        )
-        if image_path is not None and not image_path.endswith(".zarr"):
-            show_info("Please select a directory ending in .zarr")
-            return
-        self._open_image_from_path(
-            image_path, validated_closed_layers=validated_closed_layers
-        )
-
-    def _open_image_from_path(
-        self, image_path: str | None, validated_closed_layers: bool = False
-    ) -> None:
-        if not validated_closed_layers:
-            validated_closed_layers = validate_closed_layers(
-                self._napari_viewer
-            )
-        if not validated_closed_layers:
-            return
-        self._image_path = None
-        self._image_layers = None
-        self._image_tiles = {}
-        self._project_files_dir = None
-        main_widget_callbacks: MainWidgetCallBacks = cast(
-            MainWidgetCallBacks, self._main_widget
-        )
-        if image_path is None:
-            self.open_new_image_process_widget(
-                main_widget_callbacks, self._image_layers, self._image_path
-            )
-            self.validate_process_results_widgets(
-                main_widget_callbacks, self._image_path
-            )
-            self._open_image_line_edit.setText("")
-            self._set_open_image_status(False)
-            return
-        image_path_str: str = image_path
-        open_answer: tuple[str, list[Image], dict[int, str], str] | None = (
-            open_project_image(self._napari_viewer, image_path_str)
-        )
-        if open_answer is None:
-            self.open_new_image_process_widget(
-                main_widget_callbacks, None, None
-            )
-            self.validate_process_results_widgets(
-                main_widget_callbacks, self._image_path
-            )
-            self._open_image_line_edit.setText("")
-            self._set_open_image_status(False)
-            return
-        self._image_path = open_answer[0]
-        self._image_layers = open_answer[1]
-        self._image_tiles = open_answer[2]
-        self._project_files_dir = open_answer[3]
-        self.update_line_edit()
-        self.open_new_image_process_widget(
-            main_widget_callbacks, tuple(self._image_layers), self._image_path
-        )
-        self.validate_process_results_widgets(
-            main_widget_callbacks, self._image_path
-        )
-        return
-
-    def open_new_image_process_widget(
-        self,
-        main_widget_callbacks: MainWidgetCallBacks,
-        images: tuple[Image, ...] | None,
-        image_path: str | None,
-    ) -> None:
-        process_widget: ProcessWidgetAPI | None = (
-            main_widget_callbacks.get_process_widget()
-        )
-        if process_widget is None:
-            return
-        process_widget.new_image_open(images, image_path)
-
-    def get_images_and_paths(self) -> tuple[str, str, list[Image]] | None:
-        if (
-            self._image_path is None
-            or self._image_layers is None
-            or self._project_files_dir is None
-        ):
-            return None
-        return (self._image_path, self._project_files_dir, self._image_layers)
-
-    def get_image_tiles(self) -> dict[int, str]:
-        return self._image_tiles
-
-    def open_tile_images(self, tile_index: int) -> list[Image] | None:
-        tile_image_path = self._image_tiles.get(tile_index)
-        if tile_image_path is None:
-            return None
-        opened_tile_layers = self._open_tile_image(tile_image_path)
-        if opened_tile_layers is None:
-            return None
-        for layer_index, image_layer in enumerate(opened_tile_layers):
-            image_layer.name = f"Tile[{tile_index}] - c{layer_index + 1}"
-        return opened_tile_layers
-
-    def close_tile_images(self) -> None:
-        if len(self._tile_image_layers) > 0:
-            close_image_layers(self._napari_viewer, self._tile_image_layers)
-            self._tile_image_layers = []
-
-    def _open_tile_image(self, tile_image_path: str) -> list[Image] | None:
-        if len(self._tile_image_layers) > 0:
-            close_image_layers(self._napari_viewer, self._tile_image_layers)
-            self._tile_image_layers = []
-        opened_tile_layers = open_tile_image(
-            self._napari_viewer, tile_image_path
-        )
-        if opened_tile_layers is None:
-            return None
-        self._tile_image_layers = opened_tile_layers
-        return self._tile_image_layers
-
-    def _set_open_image_status(self, status: bool) -> None:
-        if status:
-            self._open_image_status_label.setText("Image opened")
-            self._open_image_status_label.setStyleSheet("color: green")
-        else:
-            self._open_image_status_label.setText("Image not opened")
-            self._open_image_status_label.setStyleSheet("color: red")
-
-    def _close_current_counting_widget(self) -> None:
-        self._main_widget.close_current_widget()  # type: ignore
-
-    def update_line_edit(self) -> None:
-        if self._image_path is None:
-            self._open_image_line_edit.setText("")
-            self._set_open_image_status(False)
-            return
-        self._open_image_line_edit.setText(self._image_path)
-        self._set_open_image_status(True)
-
-    def set_image_closed(self) -> None:
-        self._image_path = None
-        self._image_layers = None
-        self.close_tile_images()
-        self._project_files_dir = None
-        self._open_image_line_edit.setText("")
-        self._set_open_image_status(False)
-
-    def validate_process_results_widgets(
-        self,
-        main_widget_callbacks: MainWidgetCallBacks,
-        image_path: str | None,
-    ):
-        if image_path is None:
-            return
-        main_widget_callbacks.validate_process_results(image_path)
 
 
 class CarltonLabCountTool(QWidget):
