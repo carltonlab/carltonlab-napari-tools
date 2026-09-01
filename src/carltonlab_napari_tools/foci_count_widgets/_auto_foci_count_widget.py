@@ -59,6 +59,7 @@ from carltonlab_napari_tools._tile_utils import (
 from carltonlab_napari_tools._utils import (
     create_project_structure,
     get_clsp_project_path,
+    get_project_stitched_image_path,
     is_supported_image_entry,
     parse_channel_string,
     resolve_clsp_project_path,
@@ -1666,19 +1667,26 @@ class AutoFociCountWidget(QWidget):
         directory_paths = self._project_list_widget.get_project_paths()
 
         for directory_path in directory_paths:
-            ns_ready, re_ready, co_ready = self._get_project_status_ready(
-                directory_path
-            )
-            if not (ns_ready and re_ready and co_ready):
-                invalid_states: list[str] = []
-                if not ns_ready:
-                    invalid_states.append("NS")
-                if not re_ready:
-                    invalid_states.append("RE")
-                if not co_ready:
-                    invalid_states.append("CO")
+            project_path = _get_project_path(directory_path)
+            tile_paths = self._get_ready_tile_paths(project_path)
+            missing_requirements: list[str] = []
+
+            if not self._stitched_image_is_ready(project_path):
+                missing_requirements.append(
+                    "stitched image or tile coordinates"
+                )
+            if not tile_paths:
+                missing_requirements.append("prepared tiles")
+            elif not all(
+                bool(load_tile_contrasts(tile_path))
+                for tile_path in tile_paths
+            ):
+                missing_requirements.append("tile contrasts")
+
+            if missing_requirements:
                 invalid_directories.append(
-                    f"{Path(directory_path).name}: missing {', '.join(invalid_states)}"
+                    f"{project_path.name}: missing "
+                    f"{', '.join(missing_requirements)}"
                 )
 
         if invalid_directories:
@@ -1737,11 +1745,13 @@ class AutoFociCountWidget(QWidget):
                     / REGIONS_DIR_NAME
                     / EDITED_REGIONS_FILE_NAME
                 )
-                stitched_image_path = Path(
-                    get_stitched_output_path(
-                        _get_project_tiles_path(directory_path)
-                    )
+                stitched_image_path = get_project_stitched_image_path(
+                    _get_project_path(directory_path)
                 )
+                if stitched_image_path is None:
+                    raise ValueError(
+                        f"No stitched image found for {directory_path}"
+                    )
                 need_region_stage = (
                     not self._region_square_outputs_exist_for_directory(
                         directory_path
