@@ -6,14 +6,10 @@ from typing import TYPE_CHECKING
 from napari.utils.notifications import show_error
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
-    QCheckBox,
-    QFormLayout,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -50,6 +46,9 @@ from carltonlab_napari_tools.general_widgets._project_list_widget import (
 )
 from carltonlab_napari_tools.image_stitching import (
     stitch_ome_zarr_images,
+)
+from carltonlab_napari_tools.image_stitching._stitching_options_widget import (
+    CLTStitchingOptionsWidget,
 )
 
 if TYPE_CHECKING:
@@ -109,75 +108,10 @@ class StitchOmeZarrWidget(QWidget):
 
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
-        self._registration_container = QWidget()
-        self._registration_layout = QFormLayout()
-        self._registration_layout.setContentsMargins(0, 0, 0, 0)
-        self._registration_container.setLayout(self._registration_layout)
-
-        self._registration_channel_spinbox = QSpinBox()
-        self._registration_channel_spinbox.setMinimum(1)
-        self._registration_channel_spinbox.setMaximum(9999)
-        self._registration_channel_spinbox.setValue(1)
-
-        registration_channel_widget = QWidget()
-        registration_channel_layout = QHBoxLayout()
-        registration_channel_layout.setContentsMargins(0, 0, 0, 0)
-        registration_channel_widget.setLayout(registration_channel_layout)
-        registration_channel_layout.addWidget(
-            self._registration_channel_spinbox
+        self._stitching_options_widget = CLTStitchingOptionsWidget(
+            parent=self._main_container
         )
-
-        registration_channel_help = QLabel("?")
-        registration_channel_help.setToolTip("Channel number is 1-based.")
-        registration_channel_layout.addWidget(registration_channel_help)
-
-        self._registration_layout.addRow(
-            "Registration channel",
-            registration_channel_widget,
-        )
-
-        self._registration_scale_spinbox = QSpinBox()
-        self._registration_scale_spinbox.setMinimum(-1)
-        self._registration_scale_spinbox.setMaximum(9999)
-        self._registration_scale_spinbox.setValue(-1)
-        self._registration_scale_spinbox.setSpecialValueText("Automatic")
-        self._registration_layout.addRow(
-            "Registration scale",
-            self._registration_scale_spinbox,
-        )
-
-        self._main_layout.addWidget(self._registration_container)
-        self._main_layout.addWidget(FrameSeparator(parent=self))
-
-        self._fusion_container = QWidget()
-        self._fusion_layout = QFormLayout()
-        self._fusion_layout.setContentsMargins(0, 0, 0, 0)
-        self._fusion_container.setLayout(self._fusion_layout)
-
-        self._use_gpu_checkbox = QCheckBox("Use GPU")
-        self._fusion_layout.addRow(self._use_gpu_checkbox)
-
-        self._num_workers_spinbox = QSpinBox()
-        self._num_workers_spinbox.setMinimum(0)
-        self._num_workers_spinbox.setMaximum(9999)
-        self._num_workers_spinbox.setValue(0)
-        self._num_workers_spinbox.setSpecialValueText("Automatic")
-        self._fusion_layout.addRow(
-            "Number of workers",
-            self._num_workers_spinbox,
-        )
-
-        self._n_batch_spinbox = QSpinBox()
-        self._n_batch_spinbox.setMinimum(0)
-        self._n_batch_spinbox.setMaximum(9999)
-        self._n_batch_spinbox.setValue(0)
-        self._n_batch_spinbox.setSpecialValueText("Automatic")
-        self._fusion_layout.addRow(
-            "Batch count",
-            self._n_batch_spinbox,
-        )
-
-        self._main_layout.addWidget(self._fusion_container)
+        self._main_layout.addWidget(self._stitching_options_widget)
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
         self._stitch_button: QPushButton = QPushButton("Stitch gonads")
@@ -621,21 +555,7 @@ class StitchOmeZarrWidget(QWidget):
     def get_stitching_options(
         self,
     ) -> dict[str, int | bool | None]:
-        registration_scale = self._registration_scale_spinbox.value()
-        num_workers = self._num_workers_spinbox.value()
-        n_batch = self._n_batch_spinbox.value()
-
-        return {
-            "registration_channel": (
-                self._registration_channel_spinbox.value() - 1
-            ),
-            "registration_scale": (
-                None if registration_scale < 0 else registration_scale
-            ),
-            "num_workers": None if num_workers == 0 else num_workers,
-            "n_batch": None if n_batch == 0 else n_batch,
-            "use_gpu": self._use_gpu_checkbox.isChecked(),
-        }
+        return self._stitching_options_widget.get_stitching_options()
 
     def _set_files_created_label_state(self, state: bool) -> None:
         if state:

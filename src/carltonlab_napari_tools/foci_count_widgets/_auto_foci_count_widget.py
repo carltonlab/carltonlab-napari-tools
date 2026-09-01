@@ -28,7 +28,6 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from superqt import QToggleSwitch
 from tifffile import imwrite
 
 from carltonlab_napari_tools._shared_variables import (
@@ -81,10 +80,11 @@ from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
 from carltonlab_napari_tools.image_stitching import (
-    get_stitched_coordinates_path,
     get_stitched_output_path,
-    stitch_directories,
     stitch_ome_zarr_images,
+)
+from carltonlab_napari_tools.image_stitching._stitching_options_widget import (
+    CLTStitchingOptionsWidget,
 )
 from carltonlab_napari_tools.segmentation import (
     clean_segmentation_file,
@@ -1042,22 +1042,12 @@ class AutoFociCountWidget(QWidget):
         )
         self._channel_edit_layout.addWidget(self._keep_channel_ex_l)
 
-        self._gpu_c: QWidget = QWidget(parent=self)
-        self._layout.addWidget(self._gpu_c)
-        self._gpu_layout: QHBoxLayout = QHBoxLayout()
-        self._gpu_layout.setContentsMargins(0, 0, 0, 0)
-        self._gpu_layout.setSpacing(6)
-        self._gpu_c.setLayout(self._gpu_layout)
-
-        self._use_gpu_ts: QToggleSwitch = QToggleSwitch(parent=self)
-        self._use_gpu_l: QLabel = QLabel(
-            "Use GPU for stitching and foci count", parent=self
+        self._stitching_options_widget = CLTStitchingOptionsWidget(parent=self)
+        self._stitching_options_widget.set_gpu_enabled(True)
+        self._stitching_options_widget.connect_gpu_toggle(
+            self._use_gpu_ts_toggled
         )
-        self._use_gpu_ts.setChecked(True)
-        self._use_gpu_ts.clicked.connect(self._use_gpu_ts_toggled)
-        self._gpu_layout.addWidget(self._use_gpu_ts)
-        self._gpu_layout.addWidget(self._use_gpu_l)
-        self._gpu_layout.addStretch()
+        self._layout.addWidget(self._stitching_options_widget)
 
         self._binary_mask_filter_c: QWidget = QWidget(parent=self)
         self._layout.addWidget(self._binary_mask_filter_c)
@@ -1229,7 +1219,7 @@ class AutoFociCountWidget(QWidget):
             stitching_succeeded = stitch_ome_zarr_images(
                 image_list=tile_paths,
                 output_dir=stitched_path,
-                use_gpu=self._use_gpu_ts.isChecked(),
+                **self._stitching_options_widget.get_stitching_options(),
             )
             self._project_list_widget.refresh_rows()
             return stitching_succeeded
@@ -1601,12 +1591,8 @@ class AutoFociCountWidget(QWidget):
         ).exists()
 
     def _stitched_image_is_ready(self, directory_path: str | Path) -> bool:
-        tiles_dir = _get_project_tiles_path(directory_path)
-        stitched_path = Path(get_stitched_output_path(tiles_dir))
-        stitched_coords_path = Path(
-            get_stitched_coordinates_path(tiles_dir, stitched_path)
-        )
-        return stitched_path.exists() and stitched_coords_path.exists()
+        stitched_directory = Path(directory_path) / STITCHED_IMAGE_DIR_NAME
+        return any(stitched_directory.glob("*.ome.zarr"))
 
     def _start_ns_button_pressed(self) -> None:
         project_paths = self._project_list_widget.get_project_paths()
@@ -1615,7 +1601,7 @@ class AutoFociCountWidget(QWidget):
 
         invalid_directory_messages: list[str] = []
         ready_project_paths: list[Path] = []
-        stitching_tile_directories: list[Path] = []
+        stitching_projects: list[tuple[Path, list[Path]]] = []
 
         for directory_path in project_paths:
             try:
@@ -1684,9 +1670,7 @@ class AutoFociCountWidget(QWidget):
                         f"Stitched image already exists for {directory_path}; skipping stitching"
                     )
                     continue
-                stitching_tile_directories.append(
-                    _get_project_tiles_path(project_path)
-                )
+                stitching_projects.append((project_path, created_tile_paths))
 
         if invalid_directory_messages:
             invalid_directory_text = "\n\n".join(invalid_directory_messages)
@@ -1696,10 +1680,11 @@ class AutoFociCountWidget(QWidget):
             )
             return
 
-        if stitching_tile_directories:
-            stitched_ok = stitch_directories(
-                [str(path) for path in stitching_tile_directories],
-                use_gpu=self._use_gpu_ts.isChecked(),
+        for project_path, tile_paths in stitching_projects:
+            stitched_ok = stitch_ome_zarr_images(
+                image_list=tile_paths,
+                output_dir=project_path / STITCHED_IMAGE_DIR_NAME,
+                **self._stitching_options_widget.get_stitching_options(),
             )
             if not stitched_ok:
                 return
@@ -1982,7 +1967,7 @@ class AutoFociCountWidget(QWidget):
         return [str(channel) for channel in positive_channels]
 
     def _use_gpu_ts_toggled(self) -> None:
-        if not self._use_gpu_ts.isChecked():
+        if not self._stitching_options_widget.is_gpu_enabled():
             return
 
         if importlib.util.find_spec("cupy") is None:
@@ -1990,7 +1975,7 @@ class AutoFociCountWidget(QWidget):
                 "CuPy is not installed in the current environment. "
                 "GPU stitching has been disabled."
             )
-            self._use_gpu_ts.setChecked(False)
+            self._stitching_options_widget.set_gpu_enabled(False)
             return
 
         try:
@@ -1999,7 +1984,7 @@ class AutoFociCountWidget(QWidget):
             show_warning(
                 f"GPU stitching is not available in this environment: {exc}"
             )
-            self._use_gpu_ts.setChecked(False)
+            self._stitching_options_widget.set_gpu_enabled(False)
             return
 
         try:
@@ -2007,12 +1992,12 @@ class AutoFociCountWidget(QWidget):
                 show_warning(
                     "No CUDA-capable GPU was detected. GPU stitching has been disabled."
                 )
-                self._use_gpu_ts.setChecked(False)
+                self._stitching_options_widget.set_gpu_enabled(False)
         except cupy.cuda.runtime.CUDARuntimeError as exc:
             show_warning(
                 f"GPU stitching is not available in this environment: {exc}"
             )
-            self._use_gpu_ts.setChecked(False)
+            self._stitching_options_widget.set_gpu_enabled(False)
 
     def _call_segmentation(self, directory_path: str | Path) -> None:
         tile_paths = self._get_ready_tile_paths(directory_path)
@@ -2099,7 +2084,7 @@ class AutoFociCountWidget(QWidget):
             image_path=image_path,
             segmentation_path=segmentation_path,
             output_dir=auto_count_output_dir,
-            use_gpu=self._use_gpu_ts.isChecked(),
+            use_gpu=self._stitching_options_widget.is_gpu_enabled(),
             model_name=self._spotiflow_model_name,
             colocalization_channels_filter=colocalization_channels_filter,
             minimum_colocalization_intensity_ratio=(
