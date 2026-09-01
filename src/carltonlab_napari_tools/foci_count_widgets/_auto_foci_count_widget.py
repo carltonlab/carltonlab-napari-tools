@@ -34,6 +34,7 @@ from carltonlab_napari_tools._shared_variables import (
     AUTO_COUNT_DIR_NAME,
     CUT_SBS_DIR_NAME,
     EDITED_REGIONS_FILE_NAME,
+    EXTRACTED_CHANNELS_FILE_NAME,
     PICK_NUCLEI_DIR_NAME,
     POINTS_SUMMARY_FILE_NAME,
     PROJECT_FILE_DIR_NAME,
@@ -53,6 +54,7 @@ from carltonlab_napari_tools._shared_variables import (
 from carltonlab_napari_tools._shared_widgets import get_directory
 from carltonlab_napari_tools._tile_utils import (
     ensure_tiles_config,
+    get_extracted_tile_path,
     load_tile_contrasts,
     move_tiles,
 )
@@ -1454,9 +1456,43 @@ class AutoFociCountWidget(QWidget):
 
     def _get_ready_tile_paths(self, directory_path: str | Path) -> list[Path]:
         tiles_dir = _get_project_tiles_path(directory_path)
-        if not tiles_dir.exists():
+        tiles_config_path = tiles_dir / TILES_CONFIG_FILE_NAME
+        channels_config_path = tiles_dir / EXTRACTED_CHANNELS_FILE_NAME
+        if not tiles_dir.is_dir():
             return []
-        return sorted(tiles_dir.glob("*.ome.zarr"))
+
+        tiles_config = configparser.ConfigParser()
+        channels_config = configparser.ConfigParser()
+        try:
+            tiles_config.read(tiles_config_path)
+            channels_config.read(channels_config_path)
+            tile_names = [
+                tile_name for _, tile_name in tiles_config.items("tiles")
+            ]
+            stored_channels = channels_config.get(
+                "channels",
+                "kept",
+            ).strip()
+        except (configparser.Error, OSError, ValueError):
+            return []
+
+        if stored_channels == "all":
+            channels: list[int] = []
+        else:
+            channels = parse_channel_string(stored_channels)
+            if not channels:
+                return []
+
+        ready_tile_paths: list[Path] = []
+        for tile_name in tile_names:
+            tile_path = get_extracted_tile_path(
+                tiles_dir / tile_name,
+                channels,
+            )
+            if tile_path.is_dir() and tile_path.name.endswith(".ome.zarr"):
+                ready_tile_paths.append(tile_path)
+
+        return sorted(ready_tile_paths)
 
     def _get_project_files_dir_for_directory(
         self, directory_path: str | Path

@@ -18,7 +18,6 @@ from carltonlab_napari_tools._shared_variables import (
     CLSP_PROJECT_SUFFIX,
     EXTRACTED_CHANNELS_FILE_NAME,
     STITCHED_IMAGE_DIR_NAME,
-    SUPPORTED_STITCH_EXTENSIONS,
     TILE_CONTRASTS_FILE_NAME_SUFFIX,
     TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
@@ -38,7 +37,6 @@ from carltonlab_napari_tools._utils import (
     parse_channel_string,
 )
 from carltonlab_napari_tools.channel_extraction import (
-    extract_channels_to_ome_zarr,
     extract_project_tiles,
 )
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
@@ -123,39 +121,6 @@ class StitchOmeZarrWidget(QWidget):
         self._set_files_created_label_state(False)
 
         self._main_layout.addStretch()
-
-    @staticmethod
-    def _get_extracted_tile_path(
-        tile_path: Path,
-        channels: list[int],
-    ) -> Path:
-        """Return the OME-Zarr path for a tile and channel selection."""
-        if tile_path.name.endswith(".ome.zarr") and not channels:
-            return tile_path
-
-        tile_name = tile_path.name
-
-        if tile_name.endswith(".ome.zarr"):
-            base_name = tile_name.removesuffix(".ome.zarr")
-        else:
-            base_name = tile_name
-            for extension in sorted(
-                SUPPORTED_STITCH_EXTENSIONS,
-                key=len,
-                reverse=True,
-            ):
-                if base_name.endswith(extension):
-                    base_name = base_name[: -len(extension)]
-                    break
-
-        if "_kept_channels_" in base_name:
-            base_name = base_name.split("_kept_channels_", 1)[0]
-
-        if channels:
-            channel_string = "-".join(str(channel) for channel in channels)
-            base_name += f"_kept_channels_{channel_string}"
-
-        return tile_path.with_name(f"{base_name}.ome.zarr")
 
     def _has_stitched_image(self, project_path: Path) -> bool:
         stitched_dir = project_path / STITCHED_IMAGE_DIR_NAME
@@ -317,109 +282,6 @@ class StitchOmeZarrWidget(QWidget):
                 tile_paths.append(tile_path)
 
         return tile_paths
-
-    def _write_extracted_channels_config(
-        self,
-        project_path: Path,
-        channels: list[int],
-    ) -> bool:
-        """Write the channel selection used for project extraction."""
-        config = configparser.ConfigParser()
-        config["channels"] = {
-            "kept": (
-                "all"
-                if not channels
-                else ",".join(str(channel) for channel in channels)
-            )
-        }
-
-        config_path = (
-            project_path / TILES_DIR_NAME / EXTRACTED_CHANNELS_FILE_NAME
-        )
-        try:
-            with config_path.open("w", encoding="utf-8") as config_file:
-                config.write(config_file)
-        except OSError as exc:
-            show_error(
-                f"Could not write {config_path.name} in "
-                f"{config_path.parent}: {exc}"
-            )
-            return False
-
-        return True
-
-    def _extract_project_tiles(
-        self,
-        project_path: Path,
-        channels: list[int],
-    ) -> list[Path] | None:
-        """Extract project tiles and return their OME-Zarr paths."""
-        tiles_path = project_path / TILES_DIR_NAME
-        config_path = tiles_path / TILES_CONFIG_FILE_NAME
-
-        if not config_path.exists():
-            show_error(f"Missing {config_path.name} in {tiles_path}.")
-            return None
-
-        config = configparser.ConfigParser()
-        try:
-            config.read(config_path)
-            tile_names = [filename for _, filename in config.items("tiles")]
-        except (configparser.Error, OSError, ValueError) as exc:
-            show_error(f"Could not read {config_path.name}: {exc}")
-            return None
-
-        if not tile_names:
-            show_error(f"No tiles listed in {config_path.name}.")
-            return None
-
-        tile_paths = [tiles_path / filename for filename in tile_names]
-        missing_paths = [
-            tile_path for tile_path in tile_paths if not tile_path.exists()
-        ]
-        if missing_paths:
-            show_error(
-                "The tile configuration contains missing files:\n"
-                + "\n".join(str(path) for path in missing_paths)
-            )
-            return None
-
-        extracted_paths: list[Path] = []
-        for tile_number, tile_path in enumerate(tile_paths, start=1):
-            output_path = self._get_extracted_tile_path(
-                tile_path,
-                channels,
-            )
-
-            if output_path in extracted_paths:
-                continue
-
-            if output_path.exists():
-                extracted_paths.append(output_path)
-                continue
-
-            print(
-                f"\nExtracting tile: {output_path.name} "
-                f"({tile_number}/{len(tile_paths)})",
-                flush=True,
-            )
-            if not extract_channels_to_ome_zarr(
-                tile_path,
-                output_path,
-                channels,
-            ):
-                return None
-
-            print("Done extracting tile\n", flush=True)
-            extracted_paths.append(output_path)
-
-        if not self._write_extracted_channels_config(
-            project_path,
-            channels,
-        ):
-            return None
-
-        return extracted_paths
 
     def _on_stitch_button_pressed(self) -> None:
         starting_projects = self._project_list_widget.get_project_paths()
