@@ -101,6 +101,10 @@ from carltonlab_napari_tools.image_stitching import (
 from carltonlab_napari_tools.image_stitching._stitching_options_widget import (
     CLTStitchingOptionsWidget,
 )
+from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
+    SBSFlag,
+    SBSFlagsManager,
+)
 from carltonlab_napari_tools.segmentation import (
     clean_segmentation_file,
     get_cleaned_segmentation_output_path,
@@ -2118,11 +2122,16 @@ class AutoFociCountWidget(QWidget):
         )
         cut_sbs_directory.mkdir(parents=True, exist_ok=True)
 
+        flags_manager = SBSFlagsManager(project_path)
+        if not flags_manager.load():
+            raise ValueError(f"Could not load SBS flags for {project_path}")
+
         metadata_rows: list[dict[str, int | str]] = []
         project_name = project_path.name.removesuffix("_clsp_project")
 
         for feature in features.to_dict(orient="records"):
             sbs_number = int(feature["sbs_number"])
+            sbs_key = f"sbs{sbs_number}"
             sbs_name = (
                 f"{project_name}_sbs{sbs_number}" f"{SBS_FILE_NAME_EXTENSION}"
             )
@@ -2132,20 +2141,42 @@ class AutoFociCountWidget(QWidget):
             if crop_bounds is None:
                 continue
 
-            if not output_path.exists():
-                cropped_data = crop_sbs_data(
-                    stitched_data,
-                    feature,
-                    crop_bounds,
+            needs_recalculation = (
+                SBSFlag.COORD_RECALC_NEEDED.value
+                in flags_manager.get_flags(sbs_key)
+            )
+            if output_path.exists() and not needs_recalculation:
+                metadata_rows.append(
+                    {
+                        "sbs_image_name": sbs_name,
+                        "z1": crop_bounds.z_start,
+                        "z2": crop_bounds.z_stop,
+                        "y1": crop_bounds.y_start,
+                        "y2": crop_bounds.y_stop,
+                        "x1": crop_bounds.x_start,
+                        "x2": crop_bounds.x_stop,
+                    }
                 )
-                if cropped_data is None:
-                    continue
+                continue
 
-                imwrite(
-                    output_path,
-                    cropped_data.compute().values,
-                    imagej=True,
-                    metadata={"axes": "ZCYX"},
+            cropped_data = crop_sbs_data(
+                stitched_data,
+                feature,
+                crop_bounds,
+            )
+            if cropped_data is None:
+                continue
+
+            imwrite(
+                output_path,
+                cropped_data.compute().values,
+                imagej=True,
+                metadata={"axes": "ZCYX"},
+            )
+            if needs_recalculation:
+                flags_manager.remove_flag(
+                    sbs_key,
+                    SBSFlag.COORD_RECALC_NEEDED,
                 )
 
             metadata_rows.append(
@@ -2162,6 +2193,8 @@ class AutoFociCountWidget(QWidget):
 
         metadata_path = cut_sbs_directory / SBS_METADATA_FILE_NAME
         pd.DataFrame(metadata_rows).to_csv(metadata_path, index=False)
+        if not flags_manager.save():
+            raise OSError(f"Could not save SBS flags for {project_path}")
 
     def _call_automatic_foci_count(
         self,
