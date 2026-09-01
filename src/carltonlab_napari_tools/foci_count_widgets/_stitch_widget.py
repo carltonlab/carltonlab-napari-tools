@@ -33,6 +33,7 @@ from carltonlab_napari_tools._shared_widgets import (
 )
 from carltonlab_napari_tools._tile_utils import (
     ensure_tiles_config,
+    get_extracted_tile_path,
     move_tiles,
 )
 from carltonlab_napari_tools._utils import (
@@ -42,6 +43,7 @@ from carltonlab_napari_tools._utils import (
 )
 from carltonlab_napari_tools.channel_extraction import (
     extract_channels_to_ome_zarr,
+    extract_project_tiles,
 )
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
@@ -372,7 +374,7 @@ class StitchOmeZarrWidget(QWidget):
                     continue
                 tile_path = original_tile_path
             else:
-                tile_path = StitchOmeZarrWidget._get_extracted_tile_path(
+                tile_path = get_extracted_tile_path(
                     original_tile_path,
                     kept_channels,
                 )
@@ -592,7 +594,7 @@ class StitchOmeZarrWidget(QWidget):
                 f"({project_number}/{len(project_paths)})",
                 flush=True,
             )
-            extracted_paths = self._extract_project_tiles(
+            extracted_paths = extract_project_tiles(
                 project_path,
                 requested_channels,
             )

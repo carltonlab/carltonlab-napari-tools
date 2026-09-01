@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import configparser
 import csv
 import importlib
 import threading
@@ -36,6 +37,7 @@ from carltonlab_napari_tools._shared_variables import (
     PICK_NUCLEI_DIR_NAME,
     POINTS_SUMMARY_FILE_NAME,
     PROJECT_FILE_DIR_NAME,
+    REGIONS_CONFIGURATION_FILE_NAME,
     REGIONS_DIR_NAME,
     SBS_FILE_NAME_EXTENSION,
     SBS_METADATA_FILE_NAME,
@@ -44,13 +46,20 @@ from carltonlab_napari_tools._shared_variables import (
     SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION,
     SEGMENTATION_DIR_NAME,
     SQUARES_FILE_NAME_EXTENSION,
+    TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
 )
 from carltonlab_napari_tools._shared_widgets import get_directory
+from carltonlab_napari_tools._tile_utils import (
+    ensure_tiles_config,
+    load_tile_contrasts,
+    move_tiles,
+)
 from carltonlab_napari_tools._utils import (
     create_project_structure,
     get_clsp_project_path,
     is_supported_image_entry,
+    parse_channel_string,
     resolve_clsp_project_path,
 )
 from carltonlab_napari_tools._viewer_utils import (
@@ -65,6 +74,7 @@ from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
     run_auto_count_on_paths,
     save_points_csv_for_napari,
 )
+from carltonlab_napari_tools.channel_extraction import extract_project_tiles
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
@@ -81,6 +91,9 @@ from carltonlab_napari_tools.segmentation import (
 )
 from carltonlab_napari_tools.segmentation._segmentation import (
     load_ome_zarr_image_zyx,
+)
+from carltonlab_napari_tools.spline_manager._spline_manager import (
+    load_regions_configuration,
 )
 
 if TYPE_CHECKING:
@@ -1345,8 +1358,17 @@ class AutoFociCountWidget(QWidget):
 
     def _tiles_are_ready(self, directory_path: str | Path) -> bool:
         tile_paths = self._get_ready_tile_paths(directory_path)
-        expected_count = _get_expected_source_image_count(directory_path)
-        return expected_count > 0 and len(tile_paths) == expected_count
+        tiles_config_path = (
+            _get_project_tiles_path(directory_path) / TILES_CONFIG_FILE_NAME
+        )
+        config = configparser.ConfigParser()
+        try:
+            config.read(tiles_config_path)
+            expected_count = len(config.items("tiles"))
+        except (configparser.Error, OSError, ValueError):
+            return False
+
+        return expected_count > 0 and len(tile_paths) >= expected_count
 
     def _get_ready_tile_paths(self, directory_path: str | Path) -> list[Path]:
         tiles_dir = _get_project_tiles_path(directory_path)
@@ -1386,8 +1408,19 @@ class AutoFociCountWidget(QWidget):
             return False
         if not (pick_nuclei_dir / POINTS_SUMMARY_FILE_NAME).exists():
             return False
-        number_of_regions = get_number_of_saved_regions(str(project_files_dir))
-        if number_of_regions <= 0:
+        regions_configuration_path = (
+            project_files_dir
+            / REGIONS_DIR_NAME
+            / REGIONS_CONFIGURATION_FILE_NAME
+        )
+        regions_configuration = load_regions_configuration(
+            regions_configuration_path
+        )
+        if regions_configuration is None:
+            return False
+
+        _, number_of_regions, _ = regions_configuration
+        if number_of_regions is None or number_of_regions <= 0:
             return False
         return all(
             (
@@ -1506,32 +1539,62 @@ class AutoFociCountWidget(QWidget):
                 invalid_directory_messages.append(str(exc))
                 continue
 
-            try:
-                created_tile_paths = prepare_project_tiles(
-                    directory_path,
-                    self._keep_channel_ts.isChecked(),
-                    self._keep_channel_le.text(),
+            starting_path = Path(directory_path)
+            project_path = project_directory
+            tiles_path = project_path / TILES_DIR_NAME
+            if (
+                tiles_path.is_dir()
+                and not any(tiles_path.iterdir())
+                and not move_tiles(starting_path, project_path)
+            ):
+                invalid_directory_messages.append(
+                    f"Could not move tiles into {tiles_path} "
+                    f"for {directory_path}"
                 )
-            except (FileNotFoundError, ValueError) as exc:
-                invalid_directory_messages.append(str(exc))
                 continue
 
-            if not self._tiles_are_ready(directory_path):
+            if not ensure_tiles_config(project_path):
+                invalid_directory_messages.append(
+                    f"Could not create or read tiles.config in {tiles_path}"
+                )
+                continue
+
+            if self._keep_channel_ts.isChecked():
+                channels = parse_channel_string(self._keep_channel_le.text())
+                if not channels:
+                    invalid_directory_messages.append(
+                        f"Invalid channel selection for {directory_path}"
+                    )
+                    continue
+            else:
+                channels = []
+
+            created_tile_paths = extract_project_tiles(
+                project_path,
+                channels,
+            )
+            if created_tile_paths is None:
+                invalid_directory_messages.append(
+                    f"Could not prepare tiles for {directory_path}"
+                )
+                continue
+
+            if not self._tiles_are_ready(project_path):
                 invalid_directory_messages.append(
                     "Not all expected tiles exist for "
                     f"{directory_path} after tile preparation"
                 )
                 continue
 
-            if self._tiles_are_ready(directory_path):
-                ready_project_paths.append(project_directory)
-                if self._stitched_image_is_ready(directory_path):
+            if self._tiles_are_ready(project_path):
+                ready_project_paths.append(project_path)
+                if self._stitched_image_is_ready(project_path):
                     print(
                         f"Stitched image already exists for {directory_path}; skipping stitching"
                     )
                     continue
                 stitching_tile_directories.append(
-                    _get_project_tiles_path(directory_path)
+                    _get_project_tiles_path(project_path)
                 )
 
         if invalid_directory_messages:
@@ -1581,8 +1644,7 @@ class AutoFociCountWidget(QWidget):
         regions_ready = self._regions_are_complete(directory_path)
 
         contrasts_ready = len(tile_paths) > 0 and all(
-            verify_image_contrasts_file(str(tile_path))
-            for tile_path in tile_paths
+            bool(load_tile_contrasts(tile_path)) for tile_path in tile_paths
         )
 
         return segmentation_ready, regions_ready, contrasts_ready
