@@ -56,6 +56,8 @@ from carltonlab_napari_tools._shared_widgets import (
     get_directory,
 )
 from carltonlab_napari_tools._utils import (
+    create_project_structure,
+    get_clsp_project_path,
     is_supported_image_entry,
     resolve_clsp_project_path,
 )
@@ -2000,20 +2002,21 @@ class AutoFociCountWidget(QWidget):
 
         invalid_directory_messages: list[str] = []
         created_project_directories: list[str] = []
-        extracted_tile_messages: list[str] = []
-        stitch_source_directories: list[str] = []
-        stitched_tile_directories: list[str] = []
+        ready_project_paths: list[Path] = []
+        stitching_tile_directories: list[Path] = []
 
-        for directory_path in self._image_directories:
+        for directory_path in self._project_list_widget.get_project_paths():
             try:
-                project_directory = create_project_dir_structure(
-                    directory_path
-                )
-            except (FileNotFoundError, ValueError, FileExistsError) as exc:
+                project_directory = get_clsp_project_path(Path(directory_path))
+                if not create_project_structure(project_directory, "clsp"):
+                    invalid_directory_messages.append(
+                        f"Could not create project structure for "
+                        f"{directory_path}"
+                    )
+                    continue
+            except (OSError, ValueError) as exc:
                 invalid_directory_messages.append(str(exc))
                 continue
-
-            created_project_directories.append(project_directory)
 
             try:
                 created_tile_paths = prepare_project_tiles(
@@ -2025,11 +2028,7 @@ class AutoFociCountWidget(QWidget):
                 invalid_directory_messages.append(str(exc))
                 continue
 
-            if created_tile_paths:
-                extracted_tile_messages.append(
-                    f"{Path(directory_path).name} prepared {len(created_tile_paths)} tiles"
-                )
-            elif not self._tiles_are_ready(directory_path):
+            if not self._tiles_are_ready(directory_path):
                 invalid_directory_messages.append(
                     "Not all expected tiles exist for "
                     f"{directory_path} after tile preparation"
@@ -2037,14 +2036,14 @@ class AutoFociCountWidget(QWidget):
                 continue
 
             if self._tiles_are_ready(directory_path):
-                stitch_source_directories.append(directory_path)
+                ready_project_paths.append(project_directory)
                 if self._stitched_image_is_ready(directory_path):
                     print(
                         f"Stitched image already exists for {directory_path}; skipping stitching"
                     )
                     continue
-                stitched_tile_directories.append(
-                    str(_get_project_tiles_path(directory_path))
+                stitching_tile_directories.append(
+                    _get_project_tiles_path(directory_path)
                 )
 
         if invalid_directory_messages:
@@ -2055,22 +2054,16 @@ class AutoFociCountWidget(QWidget):
             )
             return
 
-        if stitched_tile_directories:
+        if stitching_tile_directories:
             stitched_ok = stitch_directories(
-                stitched_tile_directories,
+                [str(path) for path in stitching_tile_directories],
                 use_gpu=self._use_gpu_ts.isChecked(),
             )
             if not stitched_ok:
                 return
         if self._run_all_ts.isChecked():
-            for directory_path in stitch_source_directories:
-                if self._tiles_are_ready(directory_path):
-                    self._call_segmentation(directory_path)
-
-        if extracted_tile_messages:
-            print("\n\n".join(extracted_tile_messages))
-            self._update_qlist()
-            return
+            for project_path in ready_project_paths:
+                self._call_segmentation(project_path)
 
         self._update_qlist()
 
