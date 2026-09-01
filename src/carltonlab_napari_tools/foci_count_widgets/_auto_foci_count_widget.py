@@ -35,6 +35,8 @@ from carltonlab_napari_tools._shared_variables import (
     CUT_SBS_DIR_NAME,
     EDITED_REGIONS_FILE_NAME,
     EXTRACTED_CHANNELS_FILE_NAME,
+    NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
+    NUCLEI_POINTS_LAYER_FILE_NAME,
     PICK_NUCLEI_DIR_NAME,
     POINTS_SUMMARY_FILE_NAME,
     PROJECT_FILE_DIR_NAME,
@@ -77,6 +79,11 @@ from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
     get_auto_count_output_paths,
     run_auto_count_on_paths,
     save_points_csv_for_napari,
+)
+from carltonlab_napari_tools.automatic_foci_count._nuclei_features import (
+    build_nucleus_candidates,
+    deduplicate_nucleus_candidates,
+    save_nucleus_features_and_points,
 )
 from carltonlab_napari_tools.channel_extraction import extract_project_tiles
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
@@ -1781,8 +1788,6 @@ class AutoFociCountWidget(QWidget):
                         f"No prepared tiles found for {project_path}"
                     )
 
-                self._call_segmentation(project_path)
-
                 project_files_dir = _get_project_files_path(directory_path)
                 edited_regions_csv_path = (
                     project_files_dir
@@ -1796,6 +1801,13 @@ class AutoFociCountWidget(QWidget):
                     raise ValueError(
                         f"No stitched image found for {directory_path}"
                     )
+
+                self._call_segmentation(project_path)
+                self._create_auto_nuclei_features(
+                    project_path=project_path,
+                    tile_paths=tile_paths,
+                    stitched_image_path=stitched_image_path,
+                )
                 need_region_stage = (
                     not self._region_square_outputs_exist_for_directory(
                         directory_path
@@ -2014,6 +2026,56 @@ class AutoFociCountWidget(QWidget):
             )
         print(
             f"Finished segmentation for all {total_tiles} tiles in {directory_path}"
+        )
+
+    def _create_auto_nuclei_features(
+        self,
+        project_path: Path,
+        tile_paths: list[Path],
+        stitched_image_path: Path,
+    ) -> None:
+        pick_nuclei_directory = (
+            project_path / PROJECT_FILE_DIR_NAME / PICK_NUCLEI_DIR_NAME
+        )
+        points_path = pick_nuclei_directory / NUCLEI_POINTS_LAYER_FILE_NAME
+        features_path = (
+            pick_nuclei_directory / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+        )
+        if points_path.exists() and features_path.exists():
+            print(
+                "Automatic nuclei features already exist for "
+                f"{project_path}; skipping"
+            )
+            return
+
+        labels_by_tile: dict[int, NDArray[np.uint32]] = {}
+        tile_offsets_yx: dict[int, tuple[float, float]] = {}
+        for tile_index, tile_path in enumerate(tile_paths):
+            segmentation_path = _get_segmentation_output_path_for_tile(
+                project_path, tile_path
+            )
+            labels_by_tile[tile_index] = load_cleaned_segmentation_labels(
+                segmentation_path
+            )
+            tile_offsets_yx[tile_index] = get_tile_stitched_pixel_offsets(
+                stitched_image_path, tile_index
+            )
+
+        candidates = build_nucleus_candidates(
+            labels_by_tile=labels_by_tile,
+            tile_offsets_yx=tile_offsets_yx,
+        )
+        candidates = deduplicate_nucleus_candidates(
+            candidates=candidates,
+            labels_by_tile=labels_by_tile,
+            tile_offsets_yx=tile_offsets_yx,
+        )
+        save_nucleus_features_and_points(
+            candidates=candidates,
+            project_path=project_path,
+        )
+        print(
+            f"Saved {len(candidates)} automatic nuclei features for {project_path}"
         )
 
     def _call_automatic_foci_count(
