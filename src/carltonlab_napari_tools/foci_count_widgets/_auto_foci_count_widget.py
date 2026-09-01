@@ -34,18 +34,6 @@ from qtpy.QtWidgets import (
 from superqt import QToggleSwitch
 from tifffile import imwrite
 
-from carltonlab_napari_tools._generate_results_widget_model import (
-    generate_foci_count_plot_pdf,
-    generate_scored_nuclei_foci_summary,
-)
-from carltonlab_napari_tools._pick_nuclei_widget_model import (
-    get_points_saved_list,
-    save_points_summary_file,
-)
-from carltonlab_napari_tools._regions_widget import RegionWidget
-from carltonlab_napari_tools._set_contrast_widget import (
-    SetContrastWidget,
-)
 from carltonlab_napari_tools._shared_variables import (
     AUTO_COUNT_DIR_NAME,
     CUT_SBS_DIR_NAME,
@@ -67,7 +55,10 @@ from carltonlab_napari_tools._shared_widgets import (
     get_directories,
     get_directory,
 )
-from carltonlab_napari_tools._utils import is_supported_image_entry
+from carltonlab_napari_tools._utils import (
+    is_supported_image_entry,
+    resolve_clsp_project_path,
+)
 from carltonlab_napari_tools._viewer_utils import (
     close_image_layers,
     validate_closed_layers,
@@ -81,13 +72,8 @@ from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
     run_auto_count_on_paths,
     save_points_csv_for_napari,
 )
-from carltonlab_napari_tools.foci_count_widget._utils import (
-    create_project_dir_structure,
-    get_project_directory_path,
-    get_project_tiles_directory_path,
-    prepare_project_tiles,
-    resolve_channel_extraction_mode,
-    validate_auto_prepare_directory,
+from carltonlab_napari_tools.general_widgets._set_contrast_widget import (
+    CLTSetContrastWidget as SetContrastWidget,
 )
 from carltonlab_napari_tools.image_stitching import (
     get_stitched_coordinates_path,
@@ -102,6 +88,12 @@ from carltonlab_napari_tools.segmentation import (
 )
 from carltonlab_napari_tools.segmentation._segmentation import (
     load_ome_zarr_image_zyx,
+)
+from carltonlab_napari_tools.stitched_regions_widgets._stitched_regions_widget import (
+    CLTStitchedRegionsWidget,
+)
+from carltonlab_napari_tools.stitched_regions_widgets._stitched_regions_widget import (
+    CLTStitchedRegionsWidget as RegionWidget,
 )
 
 if TYPE_CHECKING:
@@ -1099,10 +1091,9 @@ class DirectoryListItemWidget(QWidget):
                     for tile_path in tile_paths
                 )
             )
-            stitched_image_path = get_stitched_output_path(
-                get_project_tiles_directory_path(self._selected_directory_path)
+            regions_exists = self._regions_are_complete(
+                self._selected_directory_path
             )
-            regions_exists = verify_edited_regions_file(stitched_image_path)
             contrasts_exists = len(tile_paths) > 0 and all(
                 verify_image_contrasts_file(str(tile_path))
                 for tile_path in tile_paths
@@ -1231,15 +1222,23 @@ class DirectoryListItemWidget(QWidget):
                 for tile_path in tile_paths
             )
         )
-        stitched_image_path = get_stitched_output_path(
-            get_project_tiles_directory_path(self._selected_directory_path)
+        regions_exists = self._regions_are_complete(
+            self._selected_directory_path
         )
-        regions_exists = verify_edited_regions_file(stitched_image_path)
         contrasts_exists = len(tile_paths) > 0 and all(
             verify_image_contrasts_file(str(tile_path))
             for tile_path in tile_paths
         )
         return segmentation_exists, regions_exists, contrasts_exists
+
+    def _regions_are_complete(self, directory_path: str | Path) -> bool:
+        project_path = resolve_clsp_project_path(Path(directory_path))
+        return (
+            project_path is not None
+            and CLTStitchedRegionsWidget.is_project_regions_complete(
+                project_path
+            )
+        )
 
     def _regions_button_pressed(self) -> None:
         self._launch_regions_callback(self._selected_directory_path)
@@ -1253,10 +1252,16 @@ class DirectoryListItemWidget(QWidget):
 
 
 class AutoFociCountWidget(QWidget):
-    def __init__(self, viewer: ViewerModel, parent: QWidget):
+    def __init__(
+        self,
+        viewer: ViewerModel,
+        parent: QWidget,
+        project_list_widget: CLTProjectListWidget,
+    ):
         super().__init__(parent=parent)
         self._viewer: ViewerModel = viewer
         self._parent: QWidget = parent
+        self._project_list_widget = project_list_widget
 
         self._helper_widget: QWidget
         self._helper_widget_layout: QVBoxLayout
@@ -2398,16 +2403,6 @@ class AutoFociCountWidget(QWidget):
         print(
             f"Finished segmentation for all {total_tiles} tiles in {directory_path}"
         )
-        if verify_edited_regions_file(
-            str(
-                Path(
-                    get_stitched_output_path(
-                        get_project_tiles_directory_path(directory_path)
-                    )
-                )
-            )
-        ):
-            self._build_auto_region_square_csvs(directory_path)
 
     def _call_automatic_foci_count(
         self,

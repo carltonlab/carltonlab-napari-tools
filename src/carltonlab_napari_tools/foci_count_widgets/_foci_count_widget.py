@@ -34,6 +34,9 @@ from carltonlab_napari_tools._shared_widgets import (
     get_directories,
     get_file,
 )
+from carltonlab_napari_tools.foci_count_widgets._auto_foci_count_widget import (
+    AutoFociCountWidget,
+)
 from carltonlab_napari_tools.foci_count_widgets._generate_plots_widget import (
     CLTGeneratePlotsWidget,
 )
@@ -938,7 +941,11 @@ class CarltonLabCountTool(QWidget):
         self._auto_scroll_area.setWidgetResizable(True)
         self._auto_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
 
-        self._auto_widget = QWidget(self._auto_scroll_area)
+        self._auto_widget = AutoFociCountWidget(
+            viewer=self._napari_viewer,
+            parent=self._auto_scroll_area,
+            project_list_widget=self._manual_foci_count_widget._project_directories_list,
+        )
         self._auto_scroll_area.setWidget(self._auto_widget)
         self._workflow_tabs.addTab(self._auto_scroll_area, "Auto")
 
