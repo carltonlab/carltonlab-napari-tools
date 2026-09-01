@@ -3,9 +3,9 @@ from __future__ import annotations
 import configparser
 import csv
 import importlib
+import json
 import threading
 from collections.abc import Callable
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,32 +28,26 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from superqt import QToggleSwitch
 from tifffile import imwrite
 
 from carltonlab_napari_tools._shared_variables import (
     AUTO_COUNT_DIR_NAME,
     CUT_SBS_DIR_NAME,
-    EDITED_REGIONS_FILE_NAME,
     EXTRACTED_CHANNELS_FILE_NAME,
     NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
     NUCLEI_POINTS_LAYER_FILE_NAME,
     PICK_NUCLEI_DIR_NAME,
-    POINTS_SUMMARY_FILE_NAME,
     PROJECT_FILE_DIR_NAME,
-    REGIONS_CONFIGURATION_FILE_NAME,
-    REGIONS_DIR_NAME,
     SBS_FILE_NAME_EXTENSION,
     SBS_METADATA_FILE_NAME,
     SCORED_NUCLEI_DIR_NAME,
-    SCORED_NUCLEI_FOCI_SUMMARY_FILE_NAME,
     SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION,
     SEGMENTATION_DIR_NAME,
-    SQUARES_FILE_NAME_EXTENSION,
     STITCHED_IMAGE_DIR_NAME,
     TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
 )
-from carltonlab_napari_tools._shared_widgets import get_directory
 from carltonlab_napari_tools._tile_utils import (
     ensure_tiles_config,
     get_extracted_tile_path,
@@ -67,9 +61,6 @@ from carltonlab_napari_tools._utils import (
     is_supported_image_entry,
     parse_channel_string,
     resolve_clsp_project_path,
-)
-from carltonlab_napari_tools._viewer_utils import (
-    close_image_layers,
 )
 from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
     auto_count_binary_mask_outputs_exist,
@@ -86,6 +77,10 @@ from carltonlab_napari_tools.automatic_foci_count._nuclei_features import (
     save_nucleus_features_and_points,
 )
 from carltonlab_napari_tools.channel_extraction import extract_project_tiles
+from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
+    SBSFlag,
+    SBSFlagsManager,
+)
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
@@ -95,27 +90,17 @@ from carltonlab_napari_tools.image_processing import (
 )
 from carltonlab_napari_tools.image_resolver import resolve_lazy_image_data
 from carltonlab_napari_tools.image_stitching import (
-    get_stitched_output_path,
+    get_stitched_coordinates_path,
     stitch_ome_zarr_images,
 )
 from carltonlab_napari_tools.image_stitching._stitching_options_widget import (
     CLTStitchingOptionsWidget,
-)
-from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
-    SBSFlag,
-    SBSFlagsManager,
 )
 from carltonlab_napari_tools.segmentation import (
     clean_segmentation_file,
     get_cleaned_segmentation_output_path,
     load_segmentation_npy,
     run_segmentation_subprocess,
-)
-from carltonlab_napari_tools.segmentation._segmentation import (
-    load_ome_zarr_image_zyx,
-)
-from carltonlab_napari_tools.spline_manager._spline_manager import (
-    load_regions_configuration,
 )
 
 if TYPE_CHECKING:
@@ -618,171 +603,138 @@ def build_region_square_records_from_cleaned_segmentations(
     return region_record_batches, all_unassigned_records
 
 
-def save_region_squares_csvs(
-    region_squares_by_index: dict[int, NDArray[np.float32]],
-    pick_nuclei_directory: str | Path,
-) -> list[tuple[int, bool, bool, bool]]:
-    pick_nuclei_path = Path(pick_nuclei_directory)
-    pick_nuclei_path.mkdir(parents=True, exist_ok=True)
-    points_saved_list = get_points_saved_list(
-        str(pick_nuclei_path),
-        number_of_regions=len(region_squares_by_index),
-    )
-    updated_points_saved_list: list[tuple[int, bool, bool, bool]] = []
-
-    for region_index in range(len(region_squares_by_index)):
-        region_string = f"region-{region_index + 1}"
-        region_squares = np.asarray(
-            region_squares_by_index[region_index],
-            dtype=np.float32,
+def save_auto_scored_nuclei_files_from_features(
+    project_path: Path,
+    tile_paths: list[Path],
+    stitched_image_path: Path,
+) -> bool:
+    project_files_path = project_path / PROJECT_FILE_DIR_NAME
+    pick_nuclei_path = project_files_path / PICK_NUCLEI_DIR_NAME
+    features_path = pick_nuclei_path / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+    if not features_path.exists():
+        raise FileNotFoundError(
+            f"Nuclei features table not found: {features_path}"
         )
-        previous_state = points_saved_list[region_index]
-        if previous_state is None:
-            saved_points = False
-            saved_sbs = False
+
+    features = pd.read_csv(features_path)
+    stitched_data = resolve_lazy_image_data(stitched_image_path)
+    if stitched_data is None:
+        raise ValueError(
+            f"Could not load stitched image: {stitched_image_path}"
+        )
+
+    required_columns = {
+        "sbs_number",
+        "source_tile_index",
+        "source_label_id",
+    }
+    missing_columns = required_columns.difference(features.columns)
+    if missing_columns:
+        raise ValueError(
+            "Automatic nuclei features table is missing source columns: "
+            f"{sorted(missing_columns)}"
+        )
+
+    auto_count_output_dir = project_files_path / AUTO_COUNT_DIR_NAME
+    filtered_points_by_tile: dict[int, NDArray[np.float32]] = {}
+    labels_by_tile: dict[int, NDArray[np.uint32]] = {}
+    scored_nuclei_path = project_files_path / SCORED_NUCLEI_DIR_NAME
+    scored_nuclei_path.mkdir(parents=True, exist_ok=True)
+    project_name = project_path.name.removesuffix("_clsp_project")
+
+    for feature_index, feature in features.iterrows():
+        sbs_number = int(feature["sbs_number"])
+        tile_index = int(feature["source_tile_index"])
+        label_id = int(feature["source_label_id"])
+        if not 0 <= tile_index < len(tile_paths):
+            raise ValueError(
+                f"SBS {sbs_number} has invalid source tile index: {tile_index}"
+            )
+
+        tile_path = tile_paths[tile_index]
+        if tile_index not in filtered_points_by_tile:
+            _, _, filtered_points_path = get_auto_count_output_paths(
+                tile_path,
+                auto_count_output_dir,
+            )
+            filtered_points_by_tile[tile_index] = (
+                load_napari_points_csv(filtered_points_path)
+                if filtered_points_path.exists()
+                else np.empty((0, 3), dtype=np.float32)
+            )
+        if tile_index not in labels_by_tile:
+            segmentation_path = _get_segmentation_output_path_for_tile(
+                project_path,
+                tile_path,
+            )
+            labels_by_tile[tile_index] = load_cleaned_segmentation_labels(
+                segmentation_path
+            )
+
+        label_points, rejected_label_points = (
+            filter_points_inside_label_with_rejections(
+                filtered_points_by_tile[tile_index],
+                labels_by_tile[tile_index],
+                label_id,
+            )
+        )
+        stitched_label_points = map_tile_local_points_to_stitched_image(
+            label_points,
+            stitched_image_path=stitched_image_path,
+            tile_index=tile_index,
+        )
+        feature_data = feature.to_dict()
+        crop_bounds = get_sbs_crop_bounds(feature_data, stitched_data)
+        if crop_bounds is None:
+            raise ValueError(
+                f"Could not make crop bounds for SBS {sbs_number}"
+            )
+
+        inside_crop = (
+            (stitched_label_points[:, 0] >= crop_bounds.z_start)
+            & (stitched_label_points[:, 0] < crop_bounds.z_stop)
+            & (stitched_label_points[:, 1] >= crop_bounds.y_start)
+            & (stitched_label_points[:, 1] < crop_bounds.y_stop)
+            & (stitched_label_points[:, 2] >= crop_bounds.x_start)
+            & (stitched_label_points[:, 2] < crop_bounds.x_stop)
+        )
+        kept_stitched_points = stitched_label_points[inside_crop]
+        rejected_crop_points = stitched_label_points[~inside_crop]
+        local_points = kept_stitched_points.copy()
+        local_points[:, 0] -= crop_bounds.z_start
+        local_points[:, 1] -= crop_bounds.y_start
+        local_points[:, 2] -= crop_bounds.x_start
+
+        sbs_name = f"{project_name}_sbs{sbs_number}{SBS_FILE_NAME_EXTENSION}"
+        points_path, zero_points_path = get_scored_nuclei_output_paths(
+            scored_nuclei_path,
+            sbs_name,
+        )
+        sbs_stem = sbs_name[: -len(SBS_FILE_NAME_EXTENSION)]
+        save_points_csv_for_napari(
+            scored_nuclei_path
+            / f"{sbs_stem}_rejected_cellpose_label_points.csv",
+            rejected_label_points,
+        )
+        save_points_csv_for_napari(
+            scored_nuclei_path / f"{sbs_stem}_rejected_sbs_crop_points.csv",
+            rejected_crop_points,
+        )
+
+        if len(local_points) == 0:
+            points_path.unlink(missing_ok=True)
+            zero_points_path.write_text("", encoding="utf-8")
         else:
-            saved_points = previous_state[1]
-            saved_sbs = previous_state[3]
+            zero_points_path.unlink(missing_ok=True)
+            save_points_csv_for_napari(points_path, local_points)
 
-        nuclei_count = int(len(region_squares))
-        has_squares = nuclei_count > 0
-        if has_squares:
-            square_rows: list[dict[str, float | int | str]] = []
-            for square_index, square in enumerate(region_squares):
-                for vertex_index, vertex in enumerate(square):
-                    square_rows.append(
-                        {
-                            "index": square_index,
-                            "shape-type": "polygon",
-                            "vertex-index": vertex_index,
-                            "axis-0": float(vertex[0]),
-                            "axis-1": float(vertex[1]),
-                        }
-                    )
-            region_squares_df = pd.DataFrame(square_rows)
-            region_squares_path = (
-                pick_nuclei_path
-                / f"{region_string}{SQUARES_FILE_NAME_EXTENSION}"
-            )
-            region_squares_df.to_csv(region_squares_path, index=False)
-
-        updated_points_saved_list.append(
-            (nuclei_count, saved_points, has_squares, saved_sbs)
+        features.loc[feature_index, "scored_foci_number"] = len(local_points)
+        features.loc[feature_index, "stitched_foci_coords"] = json.dumps(
+            kept_stitched_points.tolist()
         )
 
-    save_points_summary_file(
-        updated_points_saved_list,
-        str(pick_nuclei_path),
-    )
-    return updated_points_saved_list
-
-
-def save_auto_cut_sbs_files_from_region_records(
-    region_records_by_index: dict[int, list[dict[str, object]]],
-    pick_nuclei_directory: str | Path,
-    stitched_image_path: str | Path,
-) -> list[tuple[int, bool, bool, bool]]:
-    pick_nuclei_path = Path(pick_nuclei_directory)
-    cut_sbs_dir = pick_nuclei_path / CUT_SBS_DIR_NAME
-    cut_sbs_dir.mkdir(parents=True, exist_ok=True)
-
-    channel_count = _get_ome_zarr_channel_count(stitched_image_path)
-    stitched_channels = [
-        load_ome_zarr_image_zyx(stitched_image_path, channel_index)[0]
-        for channel_index in range(channel_count)
-    ]
-    stitched_stack = np.stack(stitched_channels, axis=1)
-    max_z, _, max_y, max_x = stitched_stack.shape
-
-    metadata_rows: list[dict[str, int | str]] = []
-    points_saved_list = get_points_saved_list(
-        str(pick_nuclei_path),
-        number_of_regions=len(region_records_by_index),
-    )
-    updated_points_saved_list: list[tuple[int, bool, bool, bool]] = []
-
-    for region_index in range(len(region_records_by_index)):
-        region_string = f"region-{region_index + 1}"
-        region_records = region_records_by_index[region_index]
-        previous_state = points_saved_list[region_index]
-        saved_points = False if previous_state is None else previous_state[1]
-        saved_squares = False if previous_state is None else previous_state[2]
-
-        for sbs_index, record in enumerate(region_records, start=1):
-            square_yx = np.asarray(record["square_yx"], dtype=np.float32)
-            z1 = max(0, int(record["z1"]))
-            z2 = min(max_z, int(record["z2"]))
-            y1, x1 = np.floor(square_yx.min(axis=0)).astype(int)
-            y2, x2 = np.floor(square_yx.max(axis=0)).astype(int) + 1
-            y1 = max(0, y1)
-            x1 = max(0, x1)
-            y2 = min(max_y, y2)
-            x2 = min(max_x, x2)
-            if z2 <= z1 or y2 <= y1 or x2 <= x1:
-                continue
-
-            sbs_name = (
-                f"{region_string}_sbs{sbs_index}{SBS_FILE_NAME_EXTENSION}"
-            )
-            sbs_path = cut_sbs_dir / sbs_name
-            cropped = stitched_stack[z1:z2, :, y1:y2, x1:x2]
-            imwrite(
-                sbs_path,
-                cropped,
-                imagej=True,
-                metadata={"axes": "ZCYX"},
-            )
-            metadata_rows.append(
-                {
-                    "sbs_image_name": sbs_name,
-                    "z1": int(z1),
-                    "z2": int(z2),
-                    "y1": int(y1),
-                    "x1": int(x1),
-                    "y2": int(y2),
-                    "x2": int(x2),
-                }
-            )
-
-        updated_points_saved_list.append(
-            (
-                int(len(region_records)),
-                saved_points,
-                saved_squares,
-                True,
-            )
-        )
-
-    metadata_path = cut_sbs_dir / SBS_METADATA_FILE_NAME
-    existing_rows: dict[str, dict[str, int | str]] = {}
-    if metadata_path.exists():
-        with metadata_path.open("r", encoding="utf-8", newline="") as handle:
-            reader = csv.DictReader(handle)
-            for row in reader:
-                sbs_name = str(row.get("sbs_image_name", ""))
-                if sbs_name != "":
-                    existing_rows[sbs_name] = dict(row)
-    for row in metadata_rows:
-        existing_rows[str(row["sbs_image_name"])] = row
-    with metadata_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(
-            handle,
-            fieldnames=[
-                "sbs_image_name",
-                "z1",
-                "z2",
-                "y1",
-                "x1",
-                "y2",
-                "x2",
-            ],
-        )
-        writer.writeheader()
-        for row in existing_rows.values():
-            writer.writerow(row)
-
-    save_points_summary_file(updated_points_saved_list, str(pick_nuclei_path))
-    return updated_points_saved_list
+    features.to_csv(features_path, index=False)
+    return True
 
 
 def save_auto_scored_nuclei_files_from_region_records(
@@ -1163,28 +1115,6 @@ class AutoFociCountWidget(QWidget):
         )
         self._layout.addWidget(self._set_regions_b)
 
-        self._plot_path_container = QWidget(parent=self)
-        self._plot_path_layout = QVBoxLayout(self._plot_path_container)
-        self._plot_path_layout.setContentsMargins(0, 0, 0, 0)
-        self._plot_path_layout.setSpacing(6)
-        self._plot_path_label = QLabel("Saving plot path:", parent=self)
-        self._plot_path_label.setStyleSheet("font-weight: bold")
-        self._plot_path_layout.addWidget(self._plot_path_label)
-
-        self._plot_path_row = QWidget(parent=self)
-        self._plot_path_row_layout = QHBoxLayout(self._plot_path_row)
-        self._plot_path_row_layout.setContentsMargins(0, 0, 0, 0)
-        self._plot_path_row_layout.setSpacing(6)
-        self._plot_path_le = QLineEdit(parent=self)
-        self._plot_path_row_layout.addWidget(self._plot_path_le)
-        self._plot_path_select_button = QPushButton("Select dir", parent=self)
-        self._plot_path_select_button.clicked.connect(
-            self._select_plot_path_button_pressed
-        )
-        self._plot_path_row_layout.addWidget(self._plot_path_select_button)
-        self._plot_path_layout.addWidget(self._plot_path_row)
-        self._layout.addWidget(self._plot_path_container)
-
         helper_separator: QFrame = QFrame(self)
         helper_separator.setFrameShape(QFrame.Shape.HLine)
         helper_separator.setFrameShadow(QFrame.Shadow.Sunken)
@@ -1292,7 +1222,6 @@ class AutoFociCountWidget(QWidget):
             if q_widget is not None:
                 q_widget.setParent(None)
                 q_widget.deleteLater()
-        self.close_process_control_tile_images()
         self._helper_content_widget = None
 
     def set_image_path(
@@ -1319,142 +1248,12 @@ class AutoFociCountWidget(QWidget):
     def get_process_control_tiles(self) -> dict[int, str]:
         return self._current_tile_paths
 
-    def open_process_control_tile_images(
-        self, tile_index: int
-    ) -> list[Image] | None:
-        tile_image_path = self._current_tile_paths.get(tile_index)
-        if tile_image_path is None:
-            return None
-        self.close_process_control_tile_images()
-        opened_tile_layers = open_tile_image(self._viewer, tile_image_path)
-        if opened_tile_layers is None:
-            return None
-        self._current_tile_image_layers = opened_tile_layers
-        return opened_tile_layers
-
-    def close_process_control_tile_images(self) -> None:
-        if len(self._current_tile_image_layers) > 0:
-            close_image_layers(self._viewer, self._current_tile_image_layers)
-            self._current_tile_image_layers = []
-
     def _get_directory_tile_paths(self, directory_path: str) -> dict[int, str]:
         tile_paths = self._get_ready_tile_paths(directory_path)
         return {
             tile_index: str(tile_path)
             for tile_index, tile_path in enumerate(tile_paths)
         }
-
-    def _build_auto_region_square_csvs(
-        self, directory_path: str | Path
-    ) -> bool:
-        print("")
-        print(f"Building auto region square CSVs for {directory_path}")
-        tiles_dir = _get_project_tiles_path(directory_path)
-        stitched_image_path = Path(get_stitched_output_path(tiles_dir))
-        if not stitched_image_path.exists():
-            show_warning(
-                "Cannot build auto region squares because the stitched image "
-                f"does not exist: {stitched_image_path}"
-            )
-            return False
-
-        project_files_dir = _get_project_files_path(directory_path)
-        edited_regions_csv_path = (
-            project_files_dir / REGIONS_DIR_NAME / EDITED_REGIONS_FILE_NAME
-        )
-        print(f"Using stitched image: {stitched_image_path}")
-        print(f"Using edited regions file: {edited_regions_csv_path}")
-        if not edited_regions_csv_path.exists():
-            show_warning(
-                "Cannot build auto region squares because the edited regions "
-                f"file does not exist: {edited_regions_csv_path}"
-            )
-            return False
-
-        tile_paths = self._get_ready_tile_paths(directory_path)
-        print(f"Found {len(tile_paths)} prepared tiles")
-        if len(tile_paths) == 0:
-            show_warning(
-                "Cannot build auto region squares because no prepared tiles "
-                f"were found for {directory_path}"
-            )
-            return False
-
-        segmentation_paths_by_tile: dict[int, str] = {}
-        missing_cleaned_paths: list[str] = []
-        for tile_index, tile_path in enumerate(tile_paths):
-            segmentation_output_path = _get_segmentation_output_path_for_tile(
-                directory_path, tile_path
-            )
-            cleaned_segmentation_path = get_cleaned_segmentation_output_path(
-                segmentation_output_path
-            )
-            print(
-                f"Tile {tile_index + 1}/{len(tile_paths)}: "
-                f"raw={segmentation_output_path.exists()} "
-                f"cleaned={cleaned_segmentation_path.exists()} "
-                f"path={cleaned_segmentation_path}"
-            )
-            if not cleaned_segmentation_path.exists():
-                missing_cleaned_paths.append(str(cleaned_segmentation_path))
-                continue
-            segmentation_paths_by_tile[tile_index] = str(
-                segmentation_output_path
-            )
-
-        if missing_cleaned_paths:
-            show_warning(
-                "Cannot build auto region squares because cleaned "
-                "segmentation files are missing.\n\n"
-                + "\n".join(missing_cleaned_paths)
-            )
-            return False
-
-        print(
-            f"Building stitched-region squares from "
-            f"{len(segmentation_paths_by_tile)} cleaned segmentations"
-        )
-        (
-            region_records_by_index,
-            unassigned_records,
-        ) = build_region_square_records_from_cleaned_segmentations(
-            segmentation_paths_by_tile=segmentation_paths_by_tile,
-            stitched_image_path=stitched_image_path,
-            edited_regions_csv_path=edited_regions_csv_path,
-        )
-        region_squares_by_index = {
-            region_index: (
-                np.asarray(
-                    [record["square_yx"] for record in records],
-                    dtype=np.float32,
-                )
-                if len(records) > 0
-                else np.empty((0, 4, 2), dtype=np.float32)
-            )
-            for region_index, records in region_records_by_index.items()
-        }
-        print(
-            f"Built squares for {len(region_squares_by_index)} regions; "
-            f"unassigned squares: {len(unassigned_records)}"
-        )
-        print(
-            "Saving region square CSVs to "
-            f"{project_files_dir / PICK_NUCLEI_DIR_NAME}"
-        )
-        save_region_squares_csvs(
-            region_squares_by_index=region_squares_by_index,
-            pick_nuclei_directory=project_files_dir / PICK_NUCLEI_DIR_NAME,
-        )
-        save_auto_cut_sbs_files_from_region_records(
-            region_records_by_index=region_records_by_index,
-            pick_nuclei_directory=project_files_dir / PICK_NUCLEI_DIR_NAME,
-            stitched_image_path=stitched_image_path,
-        )
-        print(
-            "Built automatic region square CSVs for "
-            f"{directory_path}. Unassigned squares: {len(unassigned_records)}"
-        )
-        return True
 
     def _tiles_are_ready(self, directory_path: str | Path) -> bool:
         tile_paths = self._get_ready_tile_paths(directory_path)
@@ -1531,53 +1330,6 @@ class AutoFociCountWidget(QWidget):
             return []
         return metadata_df["sbs_image_name"].astype(str).tolist()
 
-    def _region_square_outputs_exist_for_directory(
-        self, directory_path: str | Path
-    ) -> bool:
-        project_files_dir = self._get_project_files_dir_for_directory(
-            directory_path
-        )
-        pick_nuclei_dir = project_files_dir / PICK_NUCLEI_DIR_NAME
-        if not pick_nuclei_dir.exists():
-            return False
-        if not (pick_nuclei_dir / POINTS_SUMMARY_FILE_NAME).exists():
-            return False
-        regions_configuration_path = (
-            project_files_dir
-            / REGIONS_DIR_NAME
-            / REGIONS_CONFIGURATION_FILE_NAME
-        )
-        regions_configuration = load_regions_configuration(
-            regions_configuration_path
-        )
-        if regions_configuration is None:
-            return False
-
-        _, number_of_regions, _ = regions_configuration
-        if number_of_regions is None or number_of_regions <= 0:
-            return False
-        return all(
-            (
-                pick_nuclei_dir
-                / f"region-{region_index + 1}{SQUARES_FILE_NAME_EXTENSION}"
-            ).exists()
-            for region_index in range(number_of_regions)
-        )
-
-    def _cut_sbs_outputs_exist_for_directory(
-        self, directory_path: str | Path
-    ) -> bool:
-        project_files_dir = self._get_project_files_dir_for_directory(
-            directory_path
-        )
-        cut_sbs_dir = (
-            project_files_dir / PICK_NUCLEI_DIR_NAME / CUT_SBS_DIR_NAME
-        )
-        sbs_names = self._load_sbs_names_for_directory(directory_path)
-        if not cut_sbs_dir.exists() or not sbs_names:
-            return False
-        return all((cut_sbs_dir / sbs_name).exists() for sbs_name in sbs_names)
-
     def _tile_fc_outputs_exist_for_directory(
         self, directory_path: str | Path
     ) -> bool:
@@ -1631,18 +1383,6 @@ class AutoFociCountWidget(QWidget):
                 return False
         return True
 
-    def _foci_summary_exists_for_directory(
-        self, directory_path: str | Path
-    ) -> bool:
-        project_files_dir = self._get_project_files_dir_for_directory(
-            directory_path
-        )
-        return (
-            project_files_dir
-            / SCORED_NUCLEI_DIR_NAME
-            / SCORED_NUCLEI_FOCI_SUMMARY_FILE_NAME
-        ).exists()
-
     def _stitched_image_is_ready(self, directory_path: str | Path) -> bool:
         stitched_directory = Path(directory_path) / STITCHED_IMAGE_DIR_NAME
         stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
@@ -1695,15 +1435,6 @@ class AutoFociCountWidget(QWidget):
         if self._batch_fc_running:
             print("Run batch FC is already running")
             return
-        plot_directory = Path(self._plot_path_le.text().strip())
-        if not plot_directory.is_dir():
-            show_warning("Select a valid directory for the foci-count plot.")
-            return
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        plot_path = plot_directory / f"foci_count_plot_{timestamp}.pdf"
-        if plot_path.exists():
-            show_warning(f"Plot file already exists: {plot_path}")
-            return
         try:
             colocalization_channels_filter = (
                 self._get_colocalization_channels_filter()
@@ -1751,22 +1482,13 @@ class AutoFociCountWidget(QWidget):
 
         self._batch_fc_running = True
         directory_paths = [str(path) for path in directory_paths]
-        plot_gonad_entries = [
-            (
-                str(_get_project_path(directory_path)),
-                Path(directory_path).parent.name,
-            )
-            for directory_path in directory_paths
-        ]
         print(f"Run batch FC started for {len(directory_paths)} directories")
         worker = threading.Thread(
             target=self._run_batch_fc_worker,
             args=(
                 directory_paths,
-                plot_gonad_entries,
                 colocalization_channels_filter,
                 minimum_colocalization_intensity_ratio,
-                plot_path,
             ),
             daemon=True,
         )
@@ -1775,10 +1497,8 @@ class AutoFociCountWidget(QWidget):
     def _run_batch_fc_worker(
         self,
         directory_paths: list[str],
-        plot_gonad_entries: list[tuple[str, str]],
         colocalization_channels_filter: list[str],
         minimum_colocalization_intensity_ratio: float,
-        plot_path: Path,
     ) -> None:
         try:
             for directory_index, directory_path in enumerate(
@@ -1797,12 +1517,6 @@ class AutoFociCountWidget(QWidget):
                         f"No prepared tiles found for {project_path}"
                     )
 
-                project_files_dir = _get_project_files_path(directory_path)
-                edited_regions_csv_path = (
-                    project_files_dir
-                    / REGIONS_DIR_NAME
-                    / EDITED_REGIONS_FILE_NAME
-                )
                 stitched_image_path = get_project_stitched_image_path(
                     _get_project_path(directory_path)
                 )
@@ -1821,14 +1535,6 @@ class AutoFociCountWidget(QWidget):
                     project_path=project_path,
                     stitched_image_path=stitched_image_path,
                 )
-                need_region_stage = (
-                    not self._region_square_outputs_exist_for_directory(
-                        directory_path
-                    )
-                    or not self._cut_sbs_outputs_exist_for_directory(
-                        directory_path
-                    )
-                )
                 need_tile_fc_stage = (
                     not self._tile_fc_outputs_exist_for_directory(
                         directory_path
@@ -1839,18 +1545,6 @@ class AutoFociCountWidget(QWidget):
                         directory_path
                     )
                 )
-                need_summary_stage = (
-                    not self._foci_summary_exists_for_directory(directory_path)
-                )
-
-                if need_region_stage:
-                    self._build_auto_region_square_csvs(directory_path)
-                else:
-                    print(
-                        "FC stage skip: region squares and cut SBS already exist for "
-                        f"{directory_path}"
-                    )
-
                 if need_tile_fc_stage:
                     self._run_auto_tile_foci_count_for_directory(
                         directory_path,
@@ -1864,24 +1558,8 @@ class AutoFociCountWidget(QWidget):
                     )
 
                 if need_scored_stage:
-                    (
-                        region_records_by_index,
-                        _unassigned_records,
-                    ) = build_region_square_records_from_cleaned_segmentations(
-                        segmentation_paths_by_tile={
-                            tile_index: str(
-                                _get_segmentation_output_path_for_tile(
-                                    directory_path, tile_path
-                                )
-                            )
-                            for tile_index, tile_path in enumerate(tile_paths)
-                        },
-                        stitched_image_path=stitched_image_path,
-                        edited_regions_csv_path=edited_regions_csv_path,
-                    )
-                    save_auto_scored_nuclei_files_from_region_records(
-                        region_records_by_index=region_records_by_index,
-                        directory_path=directory_path,
+                    save_auto_scored_nuclei_files_from_features(
+                        project_path=project_path,
                         tile_paths=tile_paths,
                         stitched_image_path=stitched_image_path,
                     )
@@ -1891,25 +1569,11 @@ class AutoFociCountWidget(QWidget):
                         f"{directory_path}"
                     )
 
-                if need_summary_stage:
-                    generate_scored_nuclei_foci_summary(
-                        str(_get_project_path(directory_path))
-                    )
-                else:
-                    print(
-                        "FC stage skip: scored nuclei foci summary already exists for "
-                        f"{directory_path}"
-                    )
                 print(
                     "Run batch FC "
                     f"[{directory_index}/{len(directory_paths)}] "
                     f"finished {directory_path}"
                 )
-            generate_foci_count_plot_pdf(
-                plot_gonad_entries,
-                plot_path,
-            )
-            print(f"Foci-count plot saved: {plot_path}")
         except (OSError, ValueError, RuntimeError) as exc:
             print(f"Run batch FC failed: {exc}")
         finally:
@@ -1923,14 +1587,6 @@ class AutoFociCountWidget(QWidget):
 
     def _keep_ts_toggled(self) -> None:
         self._keep_channel_le.setEnabled(self._keep_channel_ts.isChecked())
-
-    def _select_plot_path_button_pressed(self) -> None:
-        selected_directory = get_directory(
-            self,
-            "Select plot saving directory",
-        )
-        if selected_directory is not None:
-            self._plot_path_le.setText(selected_directory)
 
     def _binary_mask_filter_ts_toggled(self) -> None:
         enabled = self._binary_mask_filter_ts.isChecked()
@@ -2133,7 +1789,7 @@ class AutoFociCountWidget(QWidget):
             sbs_number = int(feature["sbs_number"])
             sbs_key = f"sbs{sbs_number}"
             sbs_name = (
-                f"{project_name}_sbs{sbs_number}" f"{SBS_FILE_NAME_EXTENSION}"
+                f"{project_name}_sbs{sbs_number}{SBS_FILE_NAME_EXTENSION}"
             )
             output_path = cut_sbs_directory / sbs_name
 
