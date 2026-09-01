@@ -834,6 +834,7 @@ class CarltonLabCountTool(QWidget):
             viewer=self._napari_viewer,
             parent=self._auto_scroll_area,
             project_list_widget=self._manual_foci_count_widget._project_directories_list,
+            set_contrasts_callback=self._show_set_contrast_widget,
         )
         self._auto_scroll_area.setWidget(self._auto_widget)
         self._workflow_tabs.addTab(self._auto_scroll_area, "Auto")

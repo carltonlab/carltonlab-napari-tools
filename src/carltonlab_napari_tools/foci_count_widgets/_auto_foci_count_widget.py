@@ -4,6 +4,7 @@ import configparser
 import csv
 import importlib
 import threading
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -46,6 +47,7 @@ from carltonlab_napari_tools._shared_variables import (
     SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION,
     SEGMENTATION_DIR_NAME,
     SQUARES_FILE_NAME_EXTENSION,
+    STITCHED_IMAGE_DIR_NAME,
     TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
 )
@@ -82,6 +84,7 @@ from carltonlab_napari_tools.image_stitching import (
     get_stitched_coordinates_path,
     get_stitched_output_path,
     stitch_directories,
+    stitch_ome_zarr_images,
 )
 from carltonlab_napari_tools.segmentation import (
     clean_segmentation_file,
@@ -959,11 +962,13 @@ class AutoFociCountWidget(QWidget):
         viewer: ViewerModel,
         parent: QWidget,
         project_list_widget: CLTProjectListWidget,
+        set_contrasts_callback: Callable[[], None],
     ):
         super().__init__(parent=parent)
         self._viewer: ViewerModel = viewer
         self._parent: QWidget = parent
         self._project_list_widget = project_list_widget
+        self._set_contrasts_callback = set_contrasts_callback
 
         self._helper_widget: QWidget
         self._helper_widget_layout: QVBoxLayout
@@ -1127,19 +1132,27 @@ class AutoFociCountWidget(QWidget):
         self._minimum_colocalization_intensity_ratio_layout.addStretch()
         self._binary_mask_filter_ts_toggled()
 
-        self._start_ns_b: QPushButton = QPushButton(
-            "Run batch NS", parent=self
+        self._set_contrasts_b: QPushButton = QPushButton(
+            "Set contrasts",
+            parent=self,
         )
-        self._start_ns_b.pressed.connect(self._start_ns_button_pressed)
-        self._start_ns_b.setToolTip(
-            "Run nuclear segmentation for all missing projects"
+        self._set_contrasts_b.clicked.connect(
+            self._set_contrasts_button_pressed
         )
-        self._layout.addWidget(self._start_ns_b)
+        self._layout.addWidget(self._set_contrasts_b)
 
-        self._start_fc_b: QPushButton = QPushButton("Run batch FC")
-        self._start_fc_b.clicked.connect(self._start_fc_button_pressed)
-        self._start_fc_b.setToolTip("Run foci count for all missing projects")
-        self._layout.addWidget(self._start_fc_b)
+        self._count_foci_b: QPushButton = QPushButton(
+            "Count foci",
+            parent=self,
+        )
+        self._count_foci_b.clicked.connect(self._start_fc_button_pressed)
+        self._layout.addWidget(self._count_foci_b)
+
+        self._set_regions_b: QPushButton = QPushButton(
+            "Set regions",
+            parent=self,
+        )
+        self._layout.addWidget(self._set_regions_b)
 
         self._plot_path_container = QWidget(parent=self)
         self._plot_path_layout = QVBoxLayout(self._plot_path_container)
@@ -1180,6 +1193,81 @@ class AutoFociCountWidget(QWidget):
         self._helper_widget_layout.setSpacing(0)
         self._helper_widget.setLayout(self._helper_widget_layout)
         self._layout.addWidget(self._helper_widget, 1)
+
+    def _prepare_project_for_contrasts(
+        self,
+        starting_path: Path,
+        channels: list[int],
+    ) -> bool:
+        try:
+            project_path = get_clsp_project_path(starting_path)
+
+            if not create_project_structure(project_path, "clsp"):
+                return False
+
+            tiles_path = project_path / TILES_DIR_NAME
+            if (
+                tiles_path.is_dir()
+                and not any(tiles_path.iterdir())
+                and not move_tiles(starting_path, project_path)
+            ):
+                return False
+
+            if not ensure_tiles_config(project_path):
+                return False
+
+            tile_paths = extract_project_tiles(project_path, channels)
+            if tile_paths is None:
+                return False
+
+            self._project_list_widget.refresh_rows()
+
+            stitched_path = project_path / STITCHED_IMAGE_DIR_NAME
+            if any(stitched_path.glob("*.ome.zarr")):
+                return True
+
+            stitching_succeeded = stitch_ome_zarr_images(
+                image_list=tile_paths,
+                output_dir=stitched_path,
+                use_gpu=self._use_gpu_ts.isChecked(),
+            )
+            self._project_list_widget.refresh_rows()
+            return stitching_succeeded
+        except (OSError, ValueError, RuntimeError) as exc:
+            show_warning(f"Could not prepare project {starting_path}:\n{exc}")
+            return False
+
+    def _set_contrasts_button_pressed(self) -> None:
+        project_paths = self._project_list_widget.get_project_paths()
+        if not project_paths:
+            return
+
+        if self._keep_channel_ts.isChecked():
+            channels = parse_channel_string(self._keep_channel_le.text())
+            if not channels:
+                show_warning("Enter a valid channel selection.")
+                return
+        else:
+            channels = []
+
+        failed_projects: list[str] = []
+        for starting_path in project_paths:
+            project_prepared = self._prepare_project_for_contrasts(
+                starting_path,
+                channels,
+            )
+            self._project_list_widget.refresh_rows()
+            if not project_prepared:
+                failed_projects.append(str(starting_path))
+
+        if failed_projects:
+            show_warning(
+                "The following projects could not be prepared:\n\n"
+                + "\n".join(failed_projects)
+            )
+            return
+
+        self._set_contrasts_callback()
 
     @Slot()
     def _refresh_qlist_on_gui_thread(self) -> None:
@@ -1874,11 +1962,10 @@ class AutoFociCountWidget(QWidget):
     def _get_colocalization_channels_filter(self) -> list[str]:
         if not self._binary_mask_filter_ts.isChecked():
             return []
-        channels_raw = resolve_channel_extraction_mode(
-            keep_channels_enabled=True,
-            keep_channels_text=self._binary_mask_channels_le.text(),
+        channels_raw = parse_channel_string(
+            self._binary_mask_channels_le.text()
         )
-        if channels_raw is None or len(channels_raw) <= 0:
+        if not channels_raw:
             raise ValueError(
                 "Binary mask filtering is enabled but no valid channels were provided."
             )

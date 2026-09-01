@@ -10,6 +10,7 @@ from carltonlab_napari_tools._shared_variables import (
     TILES_DIR_NAME,
 )
 from carltonlab_napari_tools._tile_utils import get_extracted_tile_path
+from carltonlab_napari_tools._utils import parse_channel_string
 from carltonlab_napari_tools.image_resolver._image_resolver import (
     resolve_spatial_data,
 )
@@ -107,6 +108,43 @@ def extract_project_tiles(
         show_error(f"No tiles listed in {tiles_config_path.name}.")
         return None
 
+    channels_config_path = tiles_path / EXTRACTED_CHANNELS_FILE_NAME
+    if channels_config_path.is_file():
+        stored_config = configparser.ConfigParser()
+        try:
+            stored_config.read(channels_config_path)
+            stored_value = stored_config.get("channels", "kept").strip()
+        except (configparser.Error, OSError, ValueError) as exc:
+            show_error(
+                f"Could not read {channels_config_path.name} for "
+                f"{project_path.name}: {exc}"
+            )
+            return None
+
+        if stored_value == "all":
+            stored_channels: list[int] = []
+        else:
+            stored_channels = parse_channel_string(stored_value)
+            if not stored_channels:
+                show_error(
+                    f"Invalid stored channel configuration for "
+                    f"{project_path.name}: {stored_value}"
+                )
+                return None
+
+        if stored_channels != channels:
+            requested_value = (
+                "all"
+                if not channels
+                else ",".join(str(channel) for channel in channels)
+            )
+            show_error(
+                f"Channel extraction skipped for {project_path.name}.\n"
+                f"Requested channels: {requested_value}\n"
+                f"Stored channels: {stored_value}"
+            )
+            return None
+
     extracted_paths: list[Path] = []
     for tile_number, tile_name in enumerate(tile_names, start=1):
         tile_path = tiles_path / tile_name
@@ -131,20 +169,22 @@ def extract_project_tiles(
         print("Done extracting tile\n", flush=True)
         extracted_paths.append(output_path)
 
-    channels_config = configparser.ConfigParser()
-    channels_config["channels"] = {
-        "kept": (
-            "all"
-            if not channels
-            else ",".join(str(channel) for channel in channels)
-        )
-    }
-    channels_config_path = tiles_path / EXTRACTED_CHANNELS_FILE_NAME
-    try:
-        with channels_config_path.open("w", encoding="utf-8") as config_file:
-            channels_config.write(config_file)
-    except OSError as exc:
-        show_error(f"Could not write {channels_config_path.name}: {exc}")
-        return None
+    if not channels_config_path.exists():
+        channels_config = configparser.ConfigParser()
+        channels_config["channels"] = {
+            "kept": (
+                "all"
+                if not channels
+                else ",".join(str(channel) for channel in channels)
+            )
+        }
+        try:
+            with channels_config_path.open(
+                "w", encoding="utf-8"
+            ) as config_file:
+                channels_config.write(config_file)
+        except OSError as exc:
+            show_error(f"Could not write {channels_config_path.name}: {exc}")
+            return None
 
     return extracted_paths
