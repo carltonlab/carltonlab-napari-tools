@@ -224,7 +224,7 @@ class IntegrationProjectRow(QWidget):
         )
 
 
-class IntegrationWidget(QWidget):
+class ManualFociCountWidget(QWidget):
     def __init__(
         self,
         napari_viewer: "ViewerModel",
@@ -926,11 +926,11 @@ class CarltonLabCountTool(QWidget):
         self._manual_scroll_area.setWidgetResizable(True)
         self._manual_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
 
-        self._integration_widget = IntegrationWidget(
+        self._manual_foci_count_widget = ManualFociCountWidget(
             self._napari_viewer,
             self._manual_scroll_area,
         )
-        self._manual_scroll_area.setWidget(self._integration_widget)
+        self._manual_scroll_area.setWidget(self._manual_foci_count_widget)
         self._workflow_tabs.addTab(self._manual_scroll_area, "Manual")
 
         self._auto_scroll_area = QScrollArea(self._workflow_tabs)
