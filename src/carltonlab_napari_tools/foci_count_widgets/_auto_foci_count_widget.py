@@ -74,6 +74,9 @@ from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
     run_auto_count_on_paths,
     save_points_csv_for_napari,
 )
+from carltonlab_napari_tools.general_widgets._project_list_widget import (
+    CLTProjectListWidget,
+)
 from carltonlab_napari_tools.general_widgets._set_contrast_widget import (
     CLTSetContrastWidget as SetContrastWidget,
 )
@@ -1997,14 +2000,15 @@ class AutoFociCountWidget(QWidget):
         return stitched_path.exists() and stitched_coords_path.exists()
 
     def _start_ns_button_pressed(self) -> None:
-        if not self._image_directories:
+        project_paths = self._project_list_widget.get_project_paths()
+        if not project_paths:
             return
 
         invalid_directory_messages: list[str] = []
         ready_project_paths: list[Path] = []
         stitching_tile_directories: list[Path] = []
 
-        for directory_path in self._project_list_widget.get_project_paths():
+        for directory_path in project_paths:
             try:
                 project_directory = get_clsp_project_path(Path(directory_path))
                 if not create_project_structure(project_directory, "clsp"):
@@ -2066,6 +2070,38 @@ class AutoFociCountWidget(QWidget):
 
         self._update_qlist()
 
+    def _get_project_status_ready(
+        self, directory_path: str | Path
+    ) -> tuple[bool, bool, bool]:
+        tile_paths = self._get_ready_tile_paths(directory_path)
+
+        segmentation_ready = (
+            self._tiles_are_ready(directory_path)
+            and self._stitched_image_is_ready(directory_path)
+            and len(tile_paths) > 0
+            and all(
+                (
+                    segmentation_path := _get_segmentation_output_path_for_tile(
+                        directory_path,
+                        tile_path,
+                    )
+                ).exists()
+                and get_cleaned_segmentation_output_path(
+                    segmentation_path
+                ).exists()
+                for tile_path in tile_paths
+            )
+        )
+
+        regions_ready = self._regions_are_complete(directory_path)
+
+        contrasts_ready = len(tile_paths) > 0 and all(
+            verify_image_contrasts_file(str(tile_path))
+            for tile_path in tile_paths
+        )
+
+        return segmentation_ready, regions_ready, contrasts_ready
+
     def _start_fc_button_pressed(self) -> None:
         if self._batch_fc_running:
             print("Run batch FC is already running")
@@ -2091,11 +2127,12 @@ class AutoFociCountWidget(QWidget):
         )
 
         invalid_directories: list[str] = []
-        for (
-            directory_path,
-            item_widget,
-        ) in self._directory_item_widgets.items():
-            ns_ready, re_ready, co_ready = item_widget.get_status_ready()
+        directory_paths = self._project_list_widget.get_project_paths()
+
+        for directory_path in directory_paths:
+            ns_ready, re_ready, co_ready = self._get_project_status_ready(
+                directory_path
+            )
             if not (ns_ready and re_ready and co_ready):
                 invalid_states: list[str] = []
                 if not ns_ready:
@@ -2117,7 +2154,7 @@ class AutoFociCountWidget(QWidget):
             return
 
         self._batch_fc_running = True
-        directory_paths = list(self._directory_item_widgets)
+        directory_paths = [str(path) for path in directory_paths]
         plot_gonad_entries = [
             (
                 str(_get_project_path(directory_path)),
