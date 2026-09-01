@@ -1774,7 +1774,15 @@ class AutoFociCountWidget(QWidget):
                     f"[{directory_index}/{len(directory_paths)}] "
                     f"starting {directory_path}"
                 )
-                tile_paths = self._get_ready_tile_paths(directory_path)
+                project_path = _get_project_path(directory_path)
+                tile_paths = self._get_ready_tile_paths(project_path)
+                if not tile_paths:
+                    raise ValueError(
+                        f"No prepared tiles found for {project_path}"
+                    )
+
+                self._call_segmentation(project_path)
+
                 project_files_dir = _get_project_files_path(directory_path)
                 edited_regions_csv_path = (
                     project_files_dir

@@ -349,7 +349,7 @@ def run_spotiflow_subprocess(
     command = [
         sys.executable,
         "-m",
-        "carltonlab_napari_count_tool.segmentation._segmentation",
+        "carltonlab_napari_tools.segmentation._segmentation",
         json.dumps(payload),
     ]
     print(f"Starting Spotiflow subprocess: {' '.join(command[:3])} ...")
