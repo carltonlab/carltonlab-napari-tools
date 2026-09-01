@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from numpy.typing import NDArray
+
+from carltonlab_napari_tools._shared_variables import (
+    NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
+    NUCLEI_POINTS_LAYER_FILE_NAME,
+    PICK_NUCLEI_DIR_NAME,
+    PROJECT_FILE_DIR_NAME,
+)
 
 
 @dataclass(frozen=True)
@@ -131,3 +141,71 @@ def deduplicate_nucleus_candidates(
         surviving_candidates.append(candidate)
 
     return surviving_candidates
+
+
+def build_nucleus_features_table(
+    candidates: list[NucleusCandidate],
+) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+
+    for sbs_number, candidate in enumerate(candidates, start=1):
+        z, y, x = candidate.stitched_center_zyx
+        rows.append(
+            {
+                "stitched_x_coord": x,
+                "stitched_y_coord": y,
+                "stitched_z_coord": z,
+                "sbs_number": sbs_number,
+                "square_width": candidate.square_width,
+                "square_height": candidate.square_height,
+                "square_z_sections": candidate.square_z_sections,
+                "region": None,
+                "scored_foci_number": None,
+                "stitched_foci_coords": "[]",
+            }
+        )
+
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "stitched_x_coord",
+            "stitched_y_coord",
+            "stitched_z_coord",
+            "sbs_number",
+            "square_width",
+            "square_height",
+            "square_z_sections",
+            "region",
+            "scored_foci_number",
+            "stitched_foci_coords",
+        ],
+    )
+
+
+def save_nucleus_features_and_points(
+    candidates: list[NucleusCandidate],
+    project_path: str | Path,
+) -> tuple[Path, Path]:
+    pick_nuclei_path = (
+        Path(project_path) / PROJECT_FILE_DIR_NAME / PICK_NUCLEI_DIR_NAME
+    )
+    pick_nuclei_path.mkdir(parents=True, exist_ok=True)
+
+    features_path = pick_nuclei_path / NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME
+    points_path = pick_nuclei_path / NUCLEI_POINTS_LAYER_FILE_NAME
+
+    features = build_nucleus_features_table(candidates)
+    features.to_csv(features_path, index=False)
+
+    with points_path.open("w", encoding="utf-8", newline="") as points_file:
+        writer = csv.writer(points_file)
+        writer.writerow(["index", "axis-0", "axis-1", "axis-2"])
+        for point_index, candidate in enumerate(candidates):
+            writer.writerow(
+                [
+                    point_index,
+                    *candidate.stitched_center_zyx,
+                ]
+            )
+
+    return points_path, features_path
