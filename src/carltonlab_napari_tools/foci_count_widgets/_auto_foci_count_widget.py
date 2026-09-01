@@ -1251,6 +1251,7 @@ class AutoFociCountWidget(QWidget):
             channels = []
 
         failed_projects: list[str] = []
+        prepared_projects = 0
         for starting_path in project_paths:
             project_prepared = self._prepare_project_for_contrasts(
                 starting_path,
@@ -1259,15 +1260,17 @@ class AutoFociCountWidget(QWidget):
             self._project_list_widget.refresh_rows()
             if not project_prepared:
                 failed_projects.append(str(starting_path))
+            else:
+                prepared_projects += 1
 
         if failed_projects:
             show_warning(
-                "The following projects could not be prepared:\n\n"
+                "The following projects were skipped or could not be prepared:\n\n"
                 + "\n".join(failed_projects)
             )
-            return
 
-        self._set_contrasts_callback()
+        if prepared_projects > 0:
+            self._set_contrasts_callback()
 
     @Slot()
     def _refresh_qlist_on_gui_thread(self) -> None:
