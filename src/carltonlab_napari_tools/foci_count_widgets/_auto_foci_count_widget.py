@@ -10,80 +10,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
-from carltonlab_napari_count_tool._generate_results_widget_model import (
-    generate_foci_count_plot_pdf,
-    generate_scored_nuclei_foci_summary,
-)
-from carltonlab_napari_count_tool._model import (
-    close_image_layers,
-    get_number_of_saved_regions,
-    open_project_image,
-    open_tile_image,
-    validate_closed_layers,
-    verify_edited_regions_file,
-    verify_image_contrasts_file,
-)
-from carltonlab_napari_count_tool._pick_nuclei_widget_model import (
-    get_points_saved_list,
-    save_points_summary_file,
-)
-from carltonlab_napari_count_tool._regions_widget import RegionWidget
-from carltonlab_napari_count_tool._set_contrast_widget import (
-    SetContrastWidget,
-)
-from carltonlab_napari_count_tool._shared_variables import (
-    AUTO_COUNT_DIR_NAME,
-    CUT_SBS_DIR_NAME,
-    DEFAULT_PROJECT_NAME,
-    EDITED_REGIONS_FILE_NAME,
-    PICK_NUCLEI_DIR_NAME,
-    POINTS_SUMMARY_FILE_NAME,
-    REGIONS_DIR_NAME,
-    SBS_FILE_NAME_EXTENSION,
-    SBS_METADATA_FILE_NAME,
-    SCORED_NUCLEI_DIR_NAME,
-    SCORED_NUCLEI_FOCI_SUMMARY_FILE_NAME,
-    SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION,
-    SEGMENTATION_DIR_NAME,
-    SQUARES_FILE_NAME_EXTENSION,
-    TILES_DIR_NAME,
-)
-from carltonlab_napari_count_tool._shared_widgets import (
-    get_directories,
-    get_directory,
-)
-from carltonlab_napari_count_tool._utils import is_supported_image_entry
-from carltonlab_napari_count_tool.automatic_foci_count._auto_foci_count import (
-    auto_count_binary_mask_outputs_exist,
-    auto_count_outputs_exist,
-    auto_count_preprocessed_spots_outputs_exist,
-    compute_shared_masked_normalization_bounds,
-    get_auto_count_output_paths,
-    run_auto_count_on_paths,
-    save_points_csv_for_napari,
-)
-from carltonlab_napari_count_tool.foci_count_widget._utils import (
-    create_project_dir_structure,
-    get_project_directory_path,
-    get_project_tiles_directory_path,
-    prepare_project_tiles,
-    resolve_channel_extraction_mode,
-    validate_auto_prepare_directory,
-)
-from carltonlab_napari_count_tool.image_stitching import (
-    get_stitched_coordinates_path,
-    get_stitched_output_path,
-    stitch_directories,
-)
-from carltonlab_napari_count_tool.segmentation import (
-    clean_segmentation_file,
-    get_cleaned_segmentation_output_path,
-    load_segmentation_npy,
-    run_segmentation_subprocess,
-)
-from carltonlab_napari_count_tool.segmentation._segmentation import (
-    load_ome_zarr_image_zyx,
-)
 from matplotlib.path import Path as MplPath
 from multiview_stitcher import ngff_utils
 from napari.layers import Image
@@ -107,6 +33,76 @@ from qtpy.QtWidgets import (
 )
 from superqt import QToggleSwitch
 from tifffile import imwrite
+
+from carltonlab_napari_tools._generate_results_widget_model import (
+    generate_foci_count_plot_pdf,
+    generate_scored_nuclei_foci_summary,
+)
+from carltonlab_napari_tools._pick_nuclei_widget_model import (
+    get_points_saved_list,
+    save_points_summary_file,
+)
+from carltonlab_napari_tools._regions_widget import RegionWidget
+from carltonlab_napari_tools._set_contrast_widget import (
+    SetContrastWidget,
+)
+from carltonlab_napari_tools._shared_variables import (
+    AUTO_COUNT_DIR_NAME,
+    CUT_SBS_DIR_NAME,
+    DEFAULT_PROJECT_NAME,
+    EDITED_REGIONS_FILE_NAME,
+    PICK_NUCLEI_DIR_NAME,
+    POINTS_SUMMARY_FILE_NAME,
+    REGIONS_DIR_NAME,
+    SBS_FILE_NAME_EXTENSION,
+    SBS_METADATA_FILE_NAME,
+    SCORED_NUCLEI_DIR_NAME,
+    SCORED_NUCLEI_FOCI_SUMMARY_FILE_NAME,
+    SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION,
+    SEGMENTATION_DIR_NAME,
+    SQUARES_FILE_NAME_EXTENSION,
+    TILES_DIR_NAME,
+)
+from carltonlab_napari_tools._shared_widgets import (
+    get_directories,
+    get_directory,
+)
+from carltonlab_napari_tools._utils import is_supported_image_entry
+from carltonlab_napari_tools._viewer_utils import (
+    close_image_layers,
+    validate_closed_layers,
+)
+from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
+    auto_count_binary_mask_outputs_exist,
+    auto_count_outputs_exist,
+    auto_count_preprocessed_spots_outputs_exist,
+    compute_shared_masked_normalization_bounds,
+    get_auto_count_output_paths,
+    run_auto_count_on_paths,
+    save_points_csv_for_napari,
+)
+from carltonlab_napari_tools.foci_count_widget._utils import (
+    create_project_dir_structure,
+    get_project_directory_path,
+    get_project_tiles_directory_path,
+    prepare_project_tiles,
+    resolve_channel_extraction_mode,
+    validate_auto_prepare_directory,
+)
+from carltonlab_napari_tools.image_stitching import (
+    get_stitched_coordinates_path,
+    get_stitched_output_path,
+    stitch_directories,
+)
+from carltonlab_napari_tools.segmentation import (
+    clean_segmentation_file,
+    get_cleaned_segmentation_output_path,
+    load_segmentation_npy,
+    run_segmentation_subprocess,
+)
+from carltonlab_napari_tools.segmentation._segmentation import (
+    load_ome_zarr_image_zyx,
+)
 
 if TYPE_CHECKING:
     from napari.components import ViewerModel
@@ -276,8 +272,7 @@ def map_tile_local_points_to_stitched_image(
     points = np.asarray(tile_local_points_zyx, dtype=np.float32)
     if points.ndim != 2 or points.shape[1] != 3:
         raise ValueError(
-            "Expected tile-local points with shape (N, 3), "
-            f"got {points.shape}"
+            f"Expected tile-local points with shape (N, 3), got {points.shape}"
         )
     if len(points) == 0:
         return np.empty((0, 3), dtype=np.float32)
@@ -875,7 +870,7 @@ def save_auto_scored_nuclei_files_from_region_records(
             )
             label_rejected_path = (
                 scored_nuclei_dir
-                / f"{sbs_name[:-len(SBS_FILE_NAME_EXTENSION)]}"
+                / f"{sbs_name[: -len(SBS_FILE_NAME_EXTENSION)]}"
                 "_rejected_cellpose_label_points.csv"
             )
             save_points_csv_for_napari(
@@ -900,7 +895,7 @@ def save_auto_scored_nuclei_files_from_region_records(
                 rejected_crop_points = stitched_points[~inside_crop]
                 crop_rejected_path = (
                     scored_nuclei_dir
-                    / f"{sbs_name[:-len(SBS_FILE_NAME_EXTENSION)]}"
+                    / f"{sbs_name[: -len(SBS_FILE_NAME_EXTENSION)]}"
                     "_rejected_sbs_crop_points.csv"
                 )
                 save_points_csv_for_napari(
@@ -914,7 +909,7 @@ def save_auto_scored_nuclei_files_from_region_records(
                 local_points = np.empty((0, 3), dtype=np.float32)
                 crop_rejected_path = (
                     scored_nuclei_dir
-                    / f"{sbs_name[:-len(SBS_FILE_NAME_EXTENSION)]}"
+                    / f"{sbs_name[: -len(SBS_FILE_NAME_EXTENSION)]}"
                     "_rejected_sbs_crop_points.csv"
                 )
                 save_points_csv_for_napari(
