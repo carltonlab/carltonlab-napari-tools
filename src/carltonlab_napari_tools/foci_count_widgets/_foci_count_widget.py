@@ -15,6 +15,7 @@ from qtpy.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSlider,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -1150,11 +1151,27 @@ class CarltonLabCountTool(QWidget):
 
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
+        self._workflow_tabs = QTabWidget(self)
+        self._main_layout.addWidget(self._workflow_tabs, 1)
+
+        self._manual_scroll_area = QScrollArea(self._workflow_tabs)
+        self._manual_scroll_area.setWidgetResizable(True)
+        self._manual_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
         self._integration_widget = IntegrationWidget(
             self._napari_viewer,
-            self,
+            self._manual_scroll_area,
         )
-        self._main_layout.addWidget(self._integration_widget, 1)
+        self._manual_scroll_area.setWidget(self._integration_widget)
+        self._workflow_tabs.addTab(self._manual_scroll_area, "Manual")
+
+        self._auto_scroll_area = QScrollArea(self._workflow_tabs)
+        self._auto_scroll_area.setWidgetResizable(True)
+        self._auto_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        self._auto_widget = QWidget(self._auto_scroll_area)
+        self._auto_scroll_area.setWidget(self._auto_widget)
+        self._workflow_tabs.addTab(self._auto_scroll_area, "Auto")
 
     def _install_keybindings(self) -> None:
         self._napari_viewer.bind_key(
