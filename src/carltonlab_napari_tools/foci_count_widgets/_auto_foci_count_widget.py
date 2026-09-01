@@ -1592,107 +1592,20 @@ class AutoFociCountWidget(QWidget):
 
     def _stitched_image_is_ready(self, directory_path: str | Path) -> bool:
         stitched_directory = Path(directory_path) / STITCHED_IMAGE_DIR_NAME
-        return any(stitched_directory.glob("*.ome.zarr"))
+        stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
+        if not stitched_paths:
+            return False
 
-    def _start_ns_button_pressed(self) -> None:
-        project_paths = self._project_list_widget.get_project_paths()
-        if not project_paths:
-            return
-
-        invalid_directory_messages: list[str] = []
-        ready_project_paths: list[Path] = []
-        stitching_projects: list[tuple[Path, list[Path]]] = []
-
-        for directory_path in project_paths:
-            try:
-                project_directory = get_clsp_project_path(Path(directory_path))
-                if not create_project_structure(project_directory, "clsp"):
-                    invalid_directory_messages.append(
-                        f"Could not create project structure for "
-                        f"{directory_path}"
-                    )
-                    continue
-            except (OSError, ValueError) as exc:
-                invalid_directory_messages.append(str(exc))
-                continue
-
-            starting_path = Path(directory_path)
-            project_path = project_directory
-            tiles_path = project_path / TILES_DIR_NAME
-            if (
-                tiles_path.is_dir()
-                and not any(tiles_path.iterdir())
-                and not move_tiles(starting_path, project_path)
-            ):
-                invalid_directory_messages.append(
-                    f"Could not move tiles into {tiles_path} "
-                    f"for {directory_path}"
+        tiles_directory = _get_project_tiles_path(directory_path)
+        return any(
+            Path(
+                get_stitched_coordinates_path(
+                    tiles_directory,
+                    stitched_path,
                 )
-                continue
-
-            if not ensure_tiles_config(project_path):
-                invalid_directory_messages.append(
-                    f"Could not create or read tiles.config in {tiles_path}"
-                )
-                continue
-
-            if self._keep_channel_ts.isChecked():
-                channels = parse_channel_string(self._keep_channel_le.text())
-                if not channels:
-                    invalid_directory_messages.append(
-                        f"Invalid channel selection for {directory_path}"
-                    )
-                    continue
-            else:
-                channels = []
-
-            created_tile_paths = extract_project_tiles(
-                project_path,
-                channels,
-            )
-            if created_tile_paths is None:
-                invalid_directory_messages.append(
-                    f"Could not prepare tiles for {directory_path}"
-                )
-                continue
-
-            if not self._tiles_are_ready(project_path):
-                invalid_directory_messages.append(
-                    "Not all expected tiles exist for "
-                    f"{directory_path} after tile preparation"
-                )
-                continue
-
-            if self._tiles_are_ready(project_path):
-                ready_project_paths.append(project_path)
-                if self._stitched_image_is_ready(project_path):
-                    print(
-                        f"Stitched image already exists for {directory_path}; skipping stitching"
-                    )
-                    continue
-                stitching_projects.append((project_path, created_tile_paths))
-
-        if invalid_directory_messages:
-            invalid_directory_text = "\n\n".join(invalid_directory_messages)
-            show_warning(
-                f"{len(invalid_directory_messages)} directories failed:\n\n"
-                f"{invalid_directory_text}"
-            )
-            return
-
-        for project_path, tile_paths in stitching_projects:
-            stitched_ok = stitch_ome_zarr_images(
-                image_list=tile_paths,
-                output_dir=project_path / STITCHED_IMAGE_DIR_NAME,
-                **self._stitching_options_widget.get_stitching_options(),
-            )
-            if not stitched_ok:
-                return
-        if self._run_all_ts.isChecked():
-            for project_path in ready_project_paths:
-                self._call_segmentation(project_path)
-
-        self._project_list_widget.refresh_rows()
+            ).exists()
+            for stitched_path in stitched_paths
+        )
 
     def _get_project_status_ready(
         self, directory_path: str | Path
