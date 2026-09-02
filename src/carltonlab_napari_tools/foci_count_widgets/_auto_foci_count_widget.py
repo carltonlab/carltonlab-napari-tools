@@ -934,6 +934,7 @@ class AutoFociCountWidget(QWidget):
         project_list_widget: CLTProjectListWidget,
         set_contrasts_callback: Callable[[], None],
         set_regions_callback: Callable[[], None],
+        generate_plots_callback: Callable[[], None],
         status_update_callback: Callable[[], None],
     ):
         super().__init__(parent=parent)
@@ -942,6 +943,7 @@ class AutoFociCountWidget(QWidget):
         self._project_list_widget = project_list_widget
         self._set_contrasts_callback = set_contrasts_callback
         self._set_regions_callback = set_regions_callback
+        self._generate_plots_callback = generate_plots_callback
         self._status_update_callback = status_update_callback
 
         self._helper_widget: QWidget
@@ -1118,6 +1120,13 @@ class AutoFociCountWidget(QWidget):
         )
         self._set_regions_b.clicked.connect(self._set_regions_callback)
         self._layout.addWidget(self._set_regions_b)
+
+        self._generate_plots_b: QPushButton = QPushButton(
+            "Generate plots",
+            parent=self,
+        )
+        self._generate_plots_b.clicked.connect(self._generate_plots_callback)
+        self._layout.addWidget(self._generate_plots_b)
 
         self._helper_widget = QWidget(parent=self)
         self._helper_widget.setObjectName("helper_widget")

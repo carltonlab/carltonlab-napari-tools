@@ -696,6 +696,9 @@ class CarltonLabCountTool(QWidget):
     def _show_stitched_regions_widget(self) -> None:
         self._manual_foci_count_widget._show_stitched_regions_widget()
 
+    def _show_generate_plots_widget(self) -> None:
+        self._manual_foci_count_widget._show_generate_plots_widget()
+
     def _on_workflow_tab_changed(self, index: int) -> None:
         self._manual_foci_count_widget._remove_current_widget()
         self._update_workflow_tabs_height(index)
@@ -859,6 +862,7 @@ class CarltonLabCountTool(QWidget):
             project_list_widget=self._manual_foci_count_widget._project_directories_list,
             set_contrasts_callback=self._show_set_contrast_widget,
             set_regions_callback=self._show_stitched_regions_widget,
+            generate_plots_callback=self._show_generate_plots_widget,
             status_update_callback=(
                 self._manual_foci_count_widget._update_process_status_labels
             ),
