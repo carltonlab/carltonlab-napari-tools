@@ -8,7 +8,10 @@ import json
 from pathlib import Path
 
 import numpy as np
-from carltonlab_napari_count_tool._shared_variables import (
+from scipy import ndimage
+from tifffile import imread, imwrite
+
+from carltonlab_napari_tools._shared_variables import (
     AUTO_COUNT_BINARY_MASK_FILE_NAME_SUFFIX_TEMPLATE,
     AUTO_COUNT_FILTERED_POINTS_FILE_NAME_EXTENSION,
     AUTO_COUNT_POINTS_FILE_NAME_EXTENSION,
@@ -16,12 +19,10 @@ from carltonlab_napari_count_tool._shared_variables import (
     AUTO_COUNT_PROCESSED_SPOTS_IMAGE_FILE_NAME_SUFFIX,
     TILE_CONTRASTS_FILE_NAME_SUFFIX,
 )
-from carltonlab_napari_count_tool.segmentation._segmentation import (
+from carltonlab_napari_tools.segmentation._segmentation import (
     load_ome_zarr_image_zyx,
     run_spotiflow_subprocess,
 )
-from scipy import ndimage
-from tifffile import imread, imwrite
 
 BRIDGE_RATIO_THRESHOLD = 0.40
 MIN_COMPONENT_COLOCALIZATION_OVERLAP_VOXELS = 5

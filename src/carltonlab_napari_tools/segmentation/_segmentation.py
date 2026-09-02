@@ -427,7 +427,7 @@ def run_segmentation_subprocess(
     command = [
         sys.executable,
         "-m",
-        "carltonlab_napari_count_tool.segmentation._segmentation",
+        "carltonlab_napari_tools.segmentation._segmentation",
         json.dumps(payload),
     ]
     print(f"Starting segmentation subprocess: {' '.join(command[:3])} ...")
