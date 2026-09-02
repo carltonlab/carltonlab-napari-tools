@@ -1,4 +1,5 @@
 import configparser
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -6,6 +7,7 @@ from napari.utils.notifications import show_error
 from qtpy.QtCore import QSize, Qt, QTimer
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
+    QWIDGETSIZE_MAX,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -232,6 +234,8 @@ class ManualFociCountWidget(QWidget):
         self,
         napari_viewer: "ViewerModel",
         parent: QWidget | None = None,
+        *,
+        project_row_factory: Callable[[Path], QWidget],
     ) -> None:
         super().__init__(parent)
 
@@ -245,9 +249,6 @@ class ManualFociCountWidget(QWidget):
         self._title_label.setStyleSheet("font-weight: bold; font-size: 20px")
         self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._layout.addWidget(self._title_label)
-
-        self._title_separator = FrameSeparator(parent=self)
-        self._layout.addWidget(self._title_separator)
 
         self._project_directories_container = QWidget()
         self._project_directories_layout = QVBoxLayout()
@@ -332,7 +333,7 @@ class ManualFociCountWidget(QWidget):
 
         self._project_directories_list = CLTProjectListWidget(
             self,
-            row_factory=self._create_project_row,
+            row_factory=project_row_factory,
         )
         self._project_directories_list.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -382,37 +383,6 @@ class ManualFociCountWidget(QWidget):
             self._process_workflow_layout
         )
 
-        self._process_workflow_title_row = QWidget()
-        self._process_workflow_title_layout = QHBoxLayout()
-        self._process_workflow_title_layout.setContentsMargins(
-            0,
-            0,
-            0,
-            0,
-        )
-        self._process_workflow_title_row.setLayout(
-            self._process_workflow_title_layout
-        )
-
-        self._process_workflow_title = QLabel("Process workflow")
-        self._process_workflow_title.setStyleSheet("font-weight: bold")
-        self._process_workflow_title.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Preferred,
-        )
-        self._process_workflow_title_layout.addWidget(
-            self._process_workflow_title
-        )
-
-        self._process_workflow_visibility_button = ToggleVisibilityButton(
-            self._process_workflow_container,
-            parent=self,
-        )
-        self._process_workflow_title_layout.addWidget(
-            self._process_workflow_visibility_button
-        )
-
-        self._layout.addWidget(self._process_workflow_title_row)
         self._layout.addWidget(self._process_workflow_container)
 
         self._stitch_gonads_button = QPushButton("1.Stitch gonads")
@@ -446,10 +416,6 @@ class ManualFociCountWidget(QWidget):
         self._add_process_button(self._generate_reports_button, "reports")
 
         self._update_process_status_labels()
-
-        self._layout.addSpacing(6)
-
-        self._layout.addWidget(FrameSeparator(parent=self))
 
         self._workflow_scroll_area = QScrollArea()
         self._workflow_scroll_area.setWidgetResizable(True)
@@ -487,6 +453,12 @@ class ManualFociCountWidget(QWidget):
             self._layout.removeWidget(widget)
             widget.setParent(None)
         return shared_widgets
+
+    def detach_workflow_widget(self) -> QScrollArea:
+        self._layout.removeWidget(self._workflow_scroll_area)
+        self._workflow_scroll_area.setParent(None)
+        self._layout.addStretch()
+        return self._workflow_scroll_area
 
     def _add_process_button(
         self,
@@ -718,6 +690,29 @@ class CarltonLabCountTool(QWidget):
         self._initialize_gui()
         self._install_keybindings()
 
+    def _show_set_contrast_widget(self) -> None:
+        self._manual_foci_count_widget._show_set_contrast_widget()
+
+    def _show_stitched_regions_widget(self) -> None:
+        self._manual_foci_count_widget._show_stitched_regions_widget()
+
+    def _on_workflow_tab_changed(self, index: int) -> None:
+        self._manual_foci_count_widget._remove_current_widget()
+        self._update_workflow_tabs_height(index)
+
+    def _update_workflow_tabs_height(self, index: int) -> None:
+        manual_index = self._workflow_tabs.indexOf(self._manual_scroll_area)
+        if index != manual_index:
+            self._workflow_tabs.setMaximumHeight(QWIDGETSIZE_MAX)
+            self._workflow_tabs.updateGeometry()
+            return
+
+        manual_height = self._manual_foci_count_widget.sizeHint().height()
+        tab_bar_height = self._workflow_tabs.tabBar().sizeHint().height()
+
+        self._workflow_tabs.setMaximumHeight(manual_height + tab_bar_height)
+        self._workflow_tabs.updateGeometry()
+
     def _initialize_gui(self) -> None:
         self._main_layout = QVBoxLayout()
         self.setLayout(self._main_layout)
@@ -771,7 +766,35 @@ class CarltonLabCountTool(QWidget):
 
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
+        self._process_title_row = QWidget(self)
+        self._process_title_layout = QHBoxLayout()
+        self._process_title_layout.setContentsMargins(0, 0, 0, 0)
+        self._process_title_row.setLayout(self._process_title_layout)
+        self._process_title_row.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+
+        self._process_title = QLabel("Process")
+        self._process_title.setStyleSheet("font-weight: bold")
+        self._process_title_layout.addWidget(self._process_title)
+
+        self._process_content = QWidget(self)
+        self._process_content_layout = QVBoxLayout()
+        self._process_content_layout.setContentsMargins(0, 0, 0, 0)
+        self._process_content.setLayout(self._process_content_layout)
+
+        self._process_visibility_button = ToggleVisibilityButton(
+            self._process_content,
+            parent=self,
+        )
+        self._process_title_layout.addWidget(self._process_visibility_button)
+
         self._workflow_tabs = QTabWidget(self)
+        self._workflow_tabs.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
 
         self._manual_scroll_area = QScrollArea(self._workflow_tabs)
         self._manual_scroll_area.setWidgetResizable(True)
@@ -780,6 +803,10 @@ class CarltonLabCountTool(QWidget):
         self._manual_foci_count_widget = ManualFociCountWidget(
             self._napari_viewer,
             self._manual_scroll_area,
+            project_row_factory=self._create_project_row,
+        )
+        self._workflow_scroll_area = (
+            self._manual_foci_count_widget.detach_workflow_widget()
         )
         self._manual_scroll_area.setWidget(self._manual_foci_count_widget)
 
@@ -787,6 +814,9 @@ class CarltonLabCountTool(QWidget):
             shared_widget
         ) in self._manual_foci_count_widget.detach_shared_controls():
             self._main_layout.addWidget(shared_widget)
+
+        self._main_layout.addWidget(self._process_title_row)
+        self._main_layout.addWidget(self._process_content)
 
         self._project_directories_list = (
             self._manual_foci_count_widget._project_directories_list
@@ -797,25 +827,18 @@ class CarltonLabCountTool(QWidget):
         self._multigonad_project_saver = (
             self._manual_foci_count_widget._multigonad_project_saver
         )
-        self._project_directories_list._row_factory = self._create_project_row
-
-        self._keep_channels_widget._keep_channels_cb.toggled.disconnect()
         self._keep_channels_widget._keep_channels_cb.toggled.connect(
             self._on_keep_channels_changed
         )
-        self._keep_channels_widget._keep_channels_line_edit.editingFinished.disconnect()
         self._keep_channels_widget._keep_channels_line_edit.editingFinished.connect(
             self._on_keep_channels_changed
         )
-        self._manual_foci_count_widget._add_project_directory_button.clicked.disconnect()
         self._manual_foci_count_widget._add_project_directory_button.clicked.connect(
             self._add_project_directory_button_pressed
         )
-        self._manual_foci_count_widget._add_multigonad_config_button.clicked.disconnect()
         self._manual_foci_count_widget._add_multigonad_config_button.clicked.connect(
             self._add_multigonad_config_button_pressed
         )
-        self._manual_foci_count_widget._remove_project_directory_button.clicked.disconnect()
         self._manual_foci_count_widget._remove_project_directory_button.clicked.connect(
             self._remove_project_directory_button_pressed
         )
@@ -823,7 +846,7 @@ class CarltonLabCountTool(QWidget):
             self._save_multigonad_project
         )
 
-        self._main_layout.addWidget(self._workflow_tabs, 1)
+        self._process_content_layout.addWidget(self._workflow_tabs)
         self._workflow_tabs.addTab(self._manual_scroll_area, "Manual")
 
         self._auto_scroll_area = QScrollArea(self._workflow_tabs)
@@ -842,6 +865,14 @@ class CarltonLabCountTool(QWidget):
         )
         self._auto_scroll_area.setWidget(self._auto_widget)
         self._workflow_tabs.addTab(self._auto_scroll_area, "Auto")
+        self._workflow_tabs.currentChanged.connect(
+            self._on_workflow_tab_changed
+        )
+        self._update_workflow_tabs_height(self._workflow_tabs.currentIndex())
+
+        self._workflow_separator = FrameSeparator(parent=self)
+        self._main_layout.addWidget(self._workflow_separator)
+        self._main_layout.addWidget(self._workflow_scroll_area, 1)
 
     def _create_project_row(self, project_path: Path) -> QWidget:
         requested_channels = self._keep_channels_widget.get_channels()

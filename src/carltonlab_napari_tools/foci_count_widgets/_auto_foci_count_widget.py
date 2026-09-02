@@ -19,7 +19,6 @@ from numpy.typing import NDArray
 from qtpy.QtCore import QMetaObject, Qt, Slot
 from qtpy.QtWidgets import (
     QDoubleSpinBox,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -1119,13 +1118,6 @@ class AutoFociCountWidget(QWidget):
         )
         self._set_regions_b.clicked.connect(self._set_regions_callback)
         self._layout.addWidget(self._set_regions_b)
-
-        helper_separator: QFrame = QFrame(self)
-        helper_separator.setFrameShape(QFrame.Shape.HLine)
-        helper_separator.setFrameShadow(QFrame.Shadow.Sunken)
-        helper_separator.setStyleSheet("background-color: gray;")
-        helper_separator.setFixedHeight(2)
-        self._layout.addWidget(helper_separator)
 
         self._helper_widget = QWidget(parent=self)
         self._helper_widget.setObjectName("helper_widget")
