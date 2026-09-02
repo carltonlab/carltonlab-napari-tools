@@ -934,12 +934,16 @@ class AutoFociCountWidget(QWidget):
         parent: QWidget,
         project_list_widget: CLTProjectListWidget,
         set_contrasts_callback: Callable[[], None],
+        set_regions_callback: Callable[[], None],
+        status_update_callback: Callable[[], None],
     ):
         super().__init__(parent=parent)
         self._viewer: ViewerModel = viewer
         self._parent: QWidget = parent
         self._project_list_widget = project_list_widget
         self._set_contrasts_callback = set_contrasts_callback
+        self._set_regions_callback = set_regions_callback
+        self._status_update_callback = status_update_callback
 
         self._helper_widget: QWidget
         self._helper_widget_layout: QVBoxLayout
@@ -1113,6 +1117,7 @@ class AutoFociCountWidget(QWidget):
             "Set regions",
             parent=self,
         )
+        self._set_regions_b.clicked.connect(self._set_regions_callback)
         self._layout.addWidget(self._set_regions_b)
 
         helper_separator: QFrame = QFrame(self)
@@ -1214,6 +1219,7 @@ class AutoFociCountWidget(QWidget):
     @Slot()
     def _refresh_qlist_on_gui_thread(self) -> None:
         self._project_list_widget.refresh_rows()
+        self._status_update_callback()
 
     def _clear_helper_widget(self) -> None:
         while self._helper_widget_layout.count():
@@ -1573,6 +1579,11 @@ class AutoFociCountWidget(QWidget):
                     "Run batch FC "
                     f"[{directory_index}/{len(directory_paths)}] "
                     f"finished {directory_path}"
+                )
+                QMetaObject.invokeMethod(
+                    self,
+                    "_refresh_qlist_on_gui_thread",
+                    Qt.ConnectionType.QueuedConnection,
                 )
         except (OSError, ValueError, RuntimeError) as exc:
             print(f"Run batch FC failed: {exc}")

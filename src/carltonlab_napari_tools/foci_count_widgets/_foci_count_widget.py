@@ -835,6 +835,10 @@ class CarltonLabCountTool(QWidget):
             parent=self._auto_scroll_area,
             project_list_widget=self._manual_foci_count_widget._project_directories_list,
             set_contrasts_callback=self._show_set_contrast_widget,
+            set_regions_callback=self._show_stitched_regions_widget,
+            status_update_callback=(
+                self._manual_foci_count_widget._update_process_status_labels
+            ),
         )
         self._auto_scroll_area.setWidget(self._auto_widget)
         self._workflow_tabs.addTab(self._auto_scroll_area, "Auto")
