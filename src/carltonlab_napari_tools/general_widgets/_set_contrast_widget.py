@@ -25,12 +25,12 @@ from carltonlab_napari_tools._shared_variables import (
     IMAGE_CONTRASTS_FILE_NAME,
     PROJECT_FILE_DIR_NAME,
     STITCHED_IMAGE_DIR_NAME,
-    SUPPORTED_STITCH_EXTENSIONS,
     TILE_CONTRASTS_FILE_NAME_SUFFIX,
     TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
+from carltonlab_napari_tools._tile_utils import get_extracted_tile_path
 from carltonlab_napari_tools._utils import (
     parse_channel_string,
     resolve_clsp_project_path,
@@ -616,45 +616,12 @@ class CLTSetContrastWidget(QWidget):
         for tile_name in tile_names:
             original_tile_path = tiles_directory / tile_name
 
-            if not kept_channels:
-                if original_tile_path.name.endswith(".ome.zarr"):
-                    tile_path = original_tile_path
-                else:
-                    continue
-            else:
-                tile_path = self._get_extracted_tile_path(
-                    original_tile_path,
-                    kept_channels,
-                )
+            tile_path = get_extracted_tile_path(
+                original_tile_path,
+                kept_channels,
+            )
 
             if tile_path.is_dir() and tile_path.name.endswith(".ome.zarr"):
                 tile_paths.append(tile_path)
 
         return tile_paths
-
-    def _get_extracted_tile_path(
-        self,
-        tile_path: Path,
-        channels: list[int],
-    ) -> Path:
-        tile_name = tile_path.name
-
-        if tile_name.endswith(".ome.zarr"):
-            base_name = tile_name.removesuffix(".ome.zarr")
-        else:
-            base_name = tile_name
-            for extension in sorted(
-                SUPPORTED_STITCH_EXTENSIONS,
-                key=len,
-                reverse=True,
-            ):
-                if base_name.endswith(extension):
-                    base_name = base_name[: -len(extension)]
-                    break
-
-        if "_kept_channels_" in base_name:
-            base_name = base_name.split("_kept_channels_", 1)[0]
-
-        channel_string = "-".join(str(channel) for channel in channels)
-        output_name = f"{base_name}_kept_channels_{channel_string}.ome.zarr"
-        return tile_path.with_name(output_name)

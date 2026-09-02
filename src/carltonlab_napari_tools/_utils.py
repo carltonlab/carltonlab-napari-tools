@@ -11,6 +11,7 @@ from carltonlab_napari_tools._shared_variables import (
     CLSP_PROJECT_SUFFIX,
     PROJECT_TYPES,
     STITCHED_IMAGE_DIR_NAME,
+    SUPPORTED_STITCH_EXTENSIONS,
 )
 
 
@@ -28,6 +29,30 @@ def resolve_clsp_project_path(starting_path: Path) -> Path | None:
         return None
 
     return project_paths[0] if project_paths else None
+
+
+def get_clsp_project_path(starting_path: Path) -> Path:
+    existing_project = resolve_clsp_project_path(starting_path)
+    if existing_project is not None:
+        return existing_project
+
+    image_names: list[str] = []
+    for image_path in starting_path.iterdir():
+        if not (image_path.is_file() or image_path.name.endswith(".ome.zarr")):
+            continue
+
+        image_name = image_path.name
+        for extension in SUPPORTED_STITCH_EXTENSIONS:
+            if image_name.endswith(extension):
+                image_name = image_name[: -len(extension)]
+                break
+        image_names.append(image_name)
+
+    project_base_name = get_common_prefix(image_names)
+    if not project_base_name:
+        project_base_name = starting_path.name
+
+    return starting_path / f"{project_base_name}{CLSP_PROJECT_SUFFIX}"
 
 
 def get_project_stitched_image_path(

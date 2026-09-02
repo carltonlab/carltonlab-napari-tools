@@ -1,8 +1,16 @@
+import configparser
 from pathlib import Path
 
 from multiview_stitcher import ngff_utils
 from napari.utils.notifications import show_error
 
+from carltonlab_napari_tools._shared_variables import (
+    EXTRACTED_CHANNELS_FILE_NAME,
+    TILES_CONFIG_FILE_NAME,
+    TILES_DIR_NAME,
+)
+from carltonlab_napari_tools._tile_utils import get_extracted_tile_path
+from carltonlab_napari_tools._utils import parse_channel_string
 from carltonlab_napari_tools.image_resolver._image_resolver import (
     resolve_spatial_data,
 )
@@ -79,3 +87,104 @@ def extract_channels_to_ome_zarr(
     )
 
     return True
+
+
+def extract_project_tiles(
+    project_path: Path,
+    channels: list[int],
+) -> list[Path] | None:
+    tiles_path = project_path / TILES_DIR_NAME
+    tiles_config_path = tiles_path / TILES_CONFIG_FILE_NAME
+
+    config = configparser.ConfigParser()
+    try:
+        config.read(tiles_config_path)
+        tile_names = [filename for _, filename in config.items("tiles")]
+    except (configparser.Error, OSError, ValueError) as exc:
+        show_error(f"Could not read {tiles_config_path.name}: {exc}")
+        return None
+
+    if not tile_names:
+        show_error(f"No tiles listed in {tiles_config_path.name}.")
+        return None
+
+    channels_config_path = tiles_path / EXTRACTED_CHANNELS_FILE_NAME
+    if channels_config_path.is_file():
+        stored_config = configparser.ConfigParser()
+        try:
+            stored_config.read(channels_config_path)
+            stored_value = stored_config.get("channels", "kept").strip()
+        except (configparser.Error, OSError, ValueError) as exc:
+            show_error(
+                f"Could not read {channels_config_path.name} for "
+                f"{project_path.name}: {exc}"
+            )
+            return None
+
+        if stored_value == "all":
+            stored_channels: list[int] = []
+        else:
+            stored_channels = parse_channel_string(stored_value)
+            if not stored_channels:
+                show_error(
+                    f"Invalid stored channel configuration for "
+                    f"{project_path.name}: {stored_value}"
+                )
+                return None
+
+        if stored_channels != channels:
+            requested_value = (
+                "all"
+                if not channels
+                else ",".join(str(channel) for channel in channels)
+            )
+            show_error(
+                f"Channel extraction skipped for {project_path.name}.\n"
+                f"Requested channels: {requested_value}\n"
+                f"Stored channels: {stored_value}"
+            )
+            return None
+
+    extracted_paths: list[Path] = []
+    for tile_number, tile_name in enumerate(tile_names, start=1):
+        tile_path = tiles_path / tile_name
+        output_path = get_extracted_tile_path(tile_path, channels)
+
+        if output_path.exists():
+            extracted_paths.append(output_path)
+            continue
+
+        print(
+            f"\nExtracting tile: {output_path.name} "
+            f"({tile_number}/{len(tile_names)})",
+            flush=True,
+        )
+        if not extract_channels_to_ome_zarr(
+            tile_path,
+            output_path,
+            channels,
+        ):
+            return None
+
+        print("Done extracting tile\n", flush=True)
+        extracted_paths.append(output_path)
+
+    if not channels_config_path.exists():
+        channels_config = configparser.ConfigParser()
+        channels_config["channels"] = {
+            "kept": (
+                "all"
+                if not channels
+                else ",".join(str(channel) for channel in channels)
+            )
+        }
+        try:
+            with channels_config_path.open(
+                "w", encoding="utf-8"
+            ) as config_file:
+                channels_config.write(config_file)
+        except OSError as exc:
+            show_error(f"Could not write {channels_config_path.name}: {exc}")
+            return None
+
+    return extracted_paths

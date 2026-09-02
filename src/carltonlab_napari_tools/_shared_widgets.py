@@ -261,12 +261,13 @@ def get_directory(
 def get_file(
     parent: QWidget,
     caption: str = "Select file",
+    filters: str = "TIFF images (*.tif *.tiff);;Config files (*.config)",
 ) -> str | None:
     file_path, _ = QFileDialog.getOpenFileName(
         parent,
         caption,
         "",
-        "TIFF images (*.tif *.tiff);;Config files (*.config)",
+        filters,
     )
     return file_path or None
 

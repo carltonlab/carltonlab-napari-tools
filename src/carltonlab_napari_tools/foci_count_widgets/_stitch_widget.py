@@ -1,5 +1,4 @@
 import configparser
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -7,14 +6,10 @@ from typing import TYPE_CHECKING
 from napari.utils.notifications import show_error
 from qtpy.QtCore import Qt
 from qtpy.QtWidgets import (
-    QCheckBox,
-    QFormLayout,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -23,7 +18,6 @@ from carltonlab_napari_tools._shared_variables import (
     CLSP_PROJECT_SUFFIX,
     EXTRACTED_CHANNELS_FILE_NAME,
     STITCHED_IMAGE_DIR_NAME,
-    SUPPORTED_STITCH_EXTENSIONS,
     TILE_CONTRASTS_FILE_NAME_SUFFIX,
     TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
@@ -32,19 +26,27 @@ from carltonlab_napari_tools._shared_widgets import (
     FrameSeparator,
     KeepChannelsWidget,
 )
+from carltonlab_napari_tools._tile_utils import (
+    ensure_tiles_config,
+    get_extracted_tile_path,
+    move_tiles,
+)
 from carltonlab_napari_tools._utils import (
     create_project_structure,
-    get_common_prefix,
+    get_clsp_project_path,
     parse_channel_string,
 )
 from carltonlab_napari_tools.channel_extraction import (
-    extract_channels_to_ome_zarr,
+    extract_project_tiles,
 )
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
 from carltonlab_napari_tools.image_stitching import (
     stitch_ome_zarr_images,
+)
+from carltonlab_napari_tools.image_stitching._stitching_options_widget import (
+    CLTStitchingOptionsWidget,
 )
 
 if TYPE_CHECKING:
@@ -104,75 +106,10 @@ class StitchOmeZarrWidget(QWidget):
 
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
-        self._registration_container = QWidget()
-        self._registration_layout = QFormLayout()
-        self._registration_layout.setContentsMargins(0, 0, 0, 0)
-        self._registration_container.setLayout(self._registration_layout)
-
-        self._registration_channel_spinbox = QSpinBox()
-        self._registration_channel_spinbox.setMinimum(1)
-        self._registration_channel_spinbox.setMaximum(9999)
-        self._registration_channel_spinbox.setValue(1)
-
-        registration_channel_widget = QWidget()
-        registration_channel_layout = QHBoxLayout()
-        registration_channel_layout.setContentsMargins(0, 0, 0, 0)
-        registration_channel_widget.setLayout(registration_channel_layout)
-        registration_channel_layout.addWidget(
-            self._registration_channel_spinbox
+        self._stitching_options_widget = CLTStitchingOptionsWidget(
+            parent=self._main_container
         )
-
-        registration_channel_help = QLabel("?")
-        registration_channel_help.setToolTip("Channel number is 1-based.")
-        registration_channel_layout.addWidget(registration_channel_help)
-
-        self._registration_layout.addRow(
-            "Registration channel",
-            registration_channel_widget,
-        )
-
-        self._registration_scale_spinbox = QSpinBox()
-        self._registration_scale_spinbox.setMinimum(-1)
-        self._registration_scale_spinbox.setMaximum(9999)
-        self._registration_scale_spinbox.setValue(-1)
-        self._registration_scale_spinbox.setSpecialValueText("Automatic")
-        self._registration_layout.addRow(
-            "Registration scale",
-            self._registration_scale_spinbox,
-        )
-
-        self._main_layout.addWidget(self._registration_container)
-        self._main_layout.addWidget(FrameSeparator(parent=self))
-
-        self._fusion_container = QWidget()
-        self._fusion_layout = QFormLayout()
-        self._fusion_layout.setContentsMargins(0, 0, 0, 0)
-        self._fusion_container.setLayout(self._fusion_layout)
-
-        self._use_gpu_checkbox = QCheckBox("Use GPU")
-        self._fusion_layout.addRow(self._use_gpu_checkbox)
-
-        self._num_workers_spinbox = QSpinBox()
-        self._num_workers_spinbox.setMinimum(0)
-        self._num_workers_spinbox.setMaximum(9999)
-        self._num_workers_spinbox.setValue(0)
-        self._num_workers_spinbox.setSpecialValueText("Automatic")
-        self._fusion_layout.addRow(
-            "Number of workers",
-            self._num_workers_spinbox,
-        )
-
-        self._n_batch_spinbox = QSpinBox()
-        self._n_batch_spinbox.setMinimum(0)
-        self._n_batch_spinbox.setMaximum(9999)
-        self._n_batch_spinbox.setValue(0)
-        self._n_batch_spinbox.setSpecialValueText("Automatic")
-        self._fusion_layout.addRow(
-            "Batch count",
-            self._n_batch_spinbox,
-        )
-
-        self._main_layout.addWidget(self._fusion_container)
+        self._main_layout.addWidget(self._stitching_options_widget)
         self._main_layout.addWidget(FrameSeparator(parent=self))
 
         self._stitch_button: QPushButton = QPushButton("Stitch gonads")
@@ -184,74 +121,6 @@ class StitchOmeZarrWidget(QWidget):
         self._set_files_created_label_state(False)
 
         self._main_layout.addStretch()
-
-    def _get_project_name(self, directory_path: Path) -> str:
-        image_names: list[str] = []
-
-        for image_path in directory_path.iterdir():
-            if not (
-                image_path.is_file() or image_path.name.endswith(".ome.zarr")
-            ):
-                continue
-
-            image_name = image_path.name
-            for extension in SUPPORTED_STITCH_EXTENSIONS:
-                if image_name.endswith(extension):
-                    image_name = image_name[: -len(extension)]
-                    break
-
-            image_names.append(image_name)
-
-        project_base_name = get_common_prefix(image_names)
-        if not project_base_name:
-            project_base_name = directory_path.name
-
-        return f"{project_base_name}{CLSP_PROJECT_SUFFIX}"
-
-    @staticmethod
-    def _get_extracted_tile_path(
-        tile_path: Path,
-        channels: list[int],
-    ) -> Path:
-        """Return the OME-Zarr path for a tile and channel selection."""
-        if tile_path.name.endswith(".ome.zarr") and not channels:
-            return tile_path
-
-        tile_name = tile_path.name
-
-        if tile_name.endswith(".ome.zarr"):
-            base_name = tile_name.removesuffix(".ome.zarr")
-        else:
-            base_name = tile_name
-            for extension in sorted(
-                SUPPORTED_STITCH_EXTENSIONS,
-                key=len,
-                reverse=True,
-            ):
-                if base_name.endswith(extension):
-                    base_name = base_name[: -len(extension)]
-                    break
-
-        if "_kept_channels_" in base_name:
-            base_name = base_name.split("_kept_channels_", 1)[0]
-
-        if channels:
-            channel_string = "-".join(str(channel) for channel in channels)
-            base_name += f"_kept_channels_{channel_string}"
-
-        return tile_path.with_name(f"{base_name}.ome.zarr")
-
-    def _get_project_path(self, starting_project: Path) -> Path:
-        existing_projects = [
-            path
-            for path in starting_project.iterdir()
-            if path.is_dir() and path.name.endswith(CLSP_PROJECT_SUFFIX)
-        ]
-
-        if existing_projects:
-            return existing_projects[0]
-
-        return starting_project / self._get_project_name(starting_project)
 
     def _has_stitched_image(self, project_path: Path) -> bool:
         stitched_dir = project_path / STITCHED_IMAGE_DIR_NAME
@@ -404,7 +273,7 @@ class StitchOmeZarrWidget(QWidget):
                     continue
                 tile_path = original_tile_path
             else:
-                tile_path = StitchOmeZarrWidget._get_extracted_tile_path(
+                tile_path = get_extracted_tile_path(
                     original_tile_path,
                     kept_channels,
                 )
@@ -414,206 +283,6 @@ class StitchOmeZarrWidget(QWidget):
 
         return tile_paths
 
-    def _write_tiles_config(
-        self,
-        tiles_path: Path,
-        tile_paths: list[Path],
-    ) -> bool:
-        """Write the tile filenames to the project manifest."""
-        tiles_config = configparser.ConfigParser()
-        tiles_config["tiles"] = {
-            f"file_{index}": tile_path.name
-            for index, tile_path in enumerate(tile_paths)
-        }
-
-        try:
-            with (tiles_path / TILES_CONFIG_FILE_NAME).open(
-                "w",
-                encoding="utf-8",
-            ) as config_file:
-                tiles_config.write(config_file)
-        except OSError as exc:
-            show_error(
-                f"Could not write {TILES_CONFIG_FILE_NAME} in "
-                f"{tiles_path}: {exc}"
-            )
-            return False
-
-        return True
-
-    def _ensure_tiles_config(self, project_path: Path) -> bool:
-        """Create a tile manifest for an existing project if needed."""
-        tiles_path = project_path / TILES_DIR_NAME
-        config_path = tiles_path / TILES_CONFIG_FILE_NAME
-
-        if config_path.exists():
-            return True
-
-        tile_paths = sorted(
-            path
-            for path in tiles_path.iterdir()
-            if path.name.endswith(".ome.zarr")
-            or (
-                path.is_file()
-                and any(
-                    path.name.endswith(extension)
-                    for extension in SUPPORTED_STITCH_EXTENSIONS
-                )
-            )
-        )
-        if not tile_paths:
-            show_error(f"No tiles found in {tiles_path}.")
-            return False
-
-        return self._write_tiles_config(tiles_path, tile_paths)
-
-    def _write_extracted_channels_config(
-        self,
-        project_path: Path,
-        channels: list[int],
-    ) -> bool:
-        """Write the channel selection used for project extraction."""
-        config = configparser.ConfigParser()
-        config["channels"] = {
-            "kept": (
-                "all"
-                if not channels
-                else ",".join(str(channel) for channel in channels)
-            )
-        }
-
-        config_path = (
-            project_path / TILES_DIR_NAME / EXTRACTED_CHANNELS_FILE_NAME
-        )
-        try:
-            with config_path.open("w", encoding="utf-8") as config_file:
-                config.write(config_file)
-        except OSError as exc:
-            show_error(
-                f"Could not write {config_path.name} in "
-                f"{config_path.parent}: {exc}"
-            )
-            return False
-
-        return True
-
-    def _extract_project_tiles(
-        self,
-        project_path: Path,
-        channels: list[int],
-    ) -> list[Path] | None:
-        """Extract project tiles and return their OME-Zarr paths."""
-        tiles_path = project_path / TILES_DIR_NAME
-        config_path = tiles_path / TILES_CONFIG_FILE_NAME
-
-        if not config_path.exists():
-            show_error(f"Missing {config_path.name} in {tiles_path}.")
-            return None
-
-        config = configparser.ConfigParser()
-        try:
-            config.read(config_path)
-            tile_names = [filename for _, filename in config.items("tiles")]
-        except (configparser.Error, OSError, ValueError) as exc:
-            show_error(f"Could not read {config_path.name}: {exc}")
-            return None
-
-        if not tile_names:
-            show_error(f"No tiles listed in {config_path.name}.")
-            return None
-
-        tile_paths = [tiles_path / filename for filename in tile_names]
-        missing_paths = [
-            tile_path for tile_path in tile_paths if not tile_path.exists()
-        ]
-        if missing_paths:
-            show_error(
-                "The tile configuration contains missing files:\n"
-                + "\n".join(str(path) for path in missing_paths)
-            )
-            return None
-
-        extracted_paths: list[Path] = []
-        for tile_number, tile_path in enumerate(tile_paths, start=1):
-            output_path = self._get_extracted_tile_path(
-                tile_path,
-                channels,
-            )
-
-            if output_path in extracted_paths:
-                continue
-
-            if output_path.exists():
-                extracted_paths.append(output_path)
-                continue
-
-            print(
-                f"\nExtracting tile: {output_path.name} "
-                f"({tile_number}/{len(tile_paths)})",
-                flush=True,
-            )
-            if not extract_channels_to_ome_zarr(
-                tile_path,
-                output_path,
-                channels,
-            ):
-                return None
-
-            print("Done extracting tile\n", flush=True)
-            extracted_paths.append(output_path)
-
-        if not self._write_extracted_channels_config(
-            project_path,
-            channels,
-        ):
-            return None
-
-        return extracted_paths
-
-    def _move_tiles(
-        self,
-        project_base_dir: Path,
-        project_path: Path,
-    ) -> bool:
-        tiles_path = project_path / TILES_DIR_NAME
-
-        image_paths = [
-            image_path
-            for image_path in project_base_dir.iterdir()
-            if (
-                image_path.name.endswith(".ome.zarr")
-                or (
-                    image_path.is_file()
-                    and any(
-                        image_path.name.endswith(extension)
-                        for extension in SUPPORTED_STITCH_EXTENSIONS
-                    )
-                )
-            )
-        ]
-
-        if not image_paths:
-            show_error(f"No image tiles found in {project_base_dir}")
-            return False
-
-        destination_paths = [
-            tiles_path / image_path.name for image_path in image_paths
-        ]
-        if any(destination.exists() for destination in destination_paths):
-            show_error(
-                f"One or more tile destinations already exist in {tiles_path}"
-            )
-            return False
-
-        try:
-            for image_path in image_paths:
-                shutil.move(str(image_path), str(tiles_path / image_path.name))
-        except OSError as exc:
-            show_error(f"Could not move tiles from {project_base_dir}: {exc}")
-            return False
-
-        return self._write_tiles_config(tiles_path, image_paths)
-
     def _on_stitch_button_pressed(self) -> None:
         starting_projects = self._project_list_widget.get_project_paths()
         if not starting_projects:
@@ -622,7 +291,7 @@ class StitchOmeZarrWidget(QWidget):
         project_paths: list[Path] = []
 
         for starting_project in starting_projects:
-            project_path = self._get_project_path(starting_project)
+            project_path = get_clsp_project_path(starting_project)
 
             if not create_project_structure(project_path, "clsp"):
                 continue
@@ -631,11 +300,11 @@ class StitchOmeZarrWidget(QWidget):
             if (
                 tiles_path.is_dir()
                 and not any(tiles_path.iterdir())
-                and not self._move_tiles(starting_project, project_path)
+                and not move_tiles(starting_project, project_path)
             ):
                 continue
 
-            if not self._ensure_tiles_config(project_path):
+            if not ensure_tiles_config(project_path):
                 continue
 
             project_paths.append(project_path)
@@ -721,7 +390,7 @@ class StitchOmeZarrWidget(QWidget):
                 f"({project_number}/{len(project_paths)})",
                 flush=True,
             )
-            extracted_paths = self._extract_project_tiles(
+            extracted_paths = extract_project_tiles(
                 project_path,
                 requested_channels,
             )
@@ -748,21 +417,7 @@ class StitchOmeZarrWidget(QWidget):
     def get_stitching_options(
         self,
     ) -> dict[str, int | bool | None]:
-        registration_scale = self._registration_scale_spinbox.value()
-        num_workers = self._num_workers_spinbox.value()
-        n_batch = self._n_batch_spinbox.value()
-
-        return {
-            "registration_channel": (
-                self._registration_channel_spinbox.value() - 1
-            ),
-            "registration_scale": (
-                None if registration_scale < 0 else registration_scale
-            ),
-            "num_workers": None if num_workers == 0 else num_workers,
-            "n_batch": None if n_batch == 0 else n_batch,
-            "use_gpu": self._use_gpu_checkbox.isChecked(),
-        }
+        return self._stitching_options_widget.get_stitching_options()
 
     def _set_files_created_label_state(self, state: bool) -> None:
         if state:

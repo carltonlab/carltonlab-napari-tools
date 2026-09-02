@@ -1,30 +1,25 @@
 import configparser
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from napari.layers import Image
-from napari.utils.notifications import show_error, show_info
+from napari.utils.notifications import show_error
 from qtpy.QtCore import QSize, Qt, QTimer
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
+    QWIDGETSIZE_MAX,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSlider,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from carltonlab_napari_tools._model import (
-    close_image_layers,
-    open_project_image,
-    open_tile_image,
-    validate_closed_layers,
-)
 from carltonlab_napari_tools._multigonad_project import (
     load_multigonad_project,
     save_multigonad_project,
@@ -39,8 +34,10 @@ from carltonlab_napari_tools._shared_widgets import (
     KeepChannelsWidget,
     ToggleVisibilityButton,
     get_directories,
-    get_directory,
     get_file,
+)
+from carltonlab_napari_tools.foci_count_widgets._auto_foci_count_widget import (
+    AutoFociCountWidget,
 )
 from carltonlab_napari_tools.foci_count_widgets._generate_plots_widget import (
     CLTGeneratePlotsWidget,
@@ -75,10 +72,6 @@ if TYPE_CHECKING:
     import napari
     from napari.components import ViewerModel
 
-from carltonlab_napari_tools._protocols import (
-    MainWidgetCallBacks,
-    ProcessWidgetAPI,
-)
 
 BUTTONS_WIDTH = 30
 ICONS_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons"
@@ -236,11 +229,13 @@ class IntegrationProjectRow(QWidget):
         )
 
 
-class IntegrationWidget(QWidget):
+class ManualFociCountWidget(QWidget):
     def __init__(
         self,
         napari_viewer: "ViewerModel",
         parent: QWidget | None = None,
+        *,
+        project_row_factory: Callable[[Path], QWidget],
     ) -> None:
         super().__init__(parent)
 
@@ -254,8 +249,6 @@ class IntegrationWidget(QWidget):
         self._title_label.setStyleSheet("font-weight: bold; font-size: 20px")
         self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._layout.addWidget(self._title_label)
-
-        self._layout.addWidget(FrameSeparator(parent=self))
 
         self._project_directories_container = QWidget()
         self._project_directories_layout = QVBoxLayout()
@@ -300,9 +293,6 @@ class IntegrationWidget(QWidget):
             QSize(BUTTONS_WIDTH - 6, BUTTONS_WIDTH - 6)
         )
         self._add_project_directory_button.setToolTip("Add project directory")
-        self._add_project_directory_button.clicked.connect(
-            self._add_project_directory_button_pressed
-        )
         self._project_directories_header_layout.addWidget(
             self._add_project_directory_button
         )
@@ -321,9 +311,6 @@ class IntegrationWidget(QWidget):
         self._add_multigonad_config_button.setToolTip(
             "Add multigonad config file"
         )
-        self._add_multigonad_config_button.clicked.connect(
-            self._add_multigonad_config_button_pressed
-        )
         self._project_directories_header_layout.addWidget(
             self._add_multigonad_config_button
         )
@@ -340,16 +327,13 @@ class IntegrationWidget(QWidget):
         self._remove_project_directory_button.setToolTip(
             "Remove selected project directories"
         )
-        self._remove_project_directory_button.clicked.connect(
-            self._remove_project_directory_button_pressed
-        )
         self._project_directories_header_layout.addWidget(
             self._remove_project_directory_button
         )
 
         self._project_directories_list = CLTProjectListWidget(
             self,
-            row_factory=self._create_project_row,
+            row_factory=project_row_factory,
         )
         self._project_directories_list.setSizePolicy(
             QSizePolicy.Policy.Expanding,
@@ -368,18 +352,14 @@ class IntegrationWidget(QWidget):
             self._project_directories_visibility_button,
         )
 
-        self._layout.addWidget(FrameSeparator(parent=self))
+        self._project_directories_separator = FrameSeparator(parent=self)
+        self._layout.addWidget(self._project_directories_separator)
 
         self._keep_channels_widget = KeepChannelsWidget(parent=self)
-        self._keep_channels_widget._keep_channels_cb.toggled.connect(
-            self._on_keep_channels_changed
-        )
-        self._keep_channels_widget._keep_channels_line_edit.editingFinished.connect(
-            self._on_keep_channels_changed
-        )
         self._layout.addWidget(self._keep_channels_widget)
 
-        self._layout.addWidget(FrameSeparator(parent=self))
+        self._keep_channels_separator = FrameSeparator(parent=self)
+        self._layout.addWidget(self._keep_channels_separator)
 
         self._multigonad_project_saver = CLToggleSavePathWidget(
             self,
@@ -388,12 +368,10 @@ class IntegrationWidget(QWidget):
             allow_overwrite=False,
             force_suffix=MULTIGONAD_FOCI_COUNT_TOOL_FILE_SUFFIX,
         )
-        self._multigonad_project_saver.connect_save_callback(
-            self._save_multigonad_project
-        )
         self._layout.addWidget(self._multigonad_project_saver)
 
-        self._layout.addWidget(FrameSeparator(parent=self))
+        self._multigonad_separator = FrameSeparator(parent=self)
+        self._layout.addWidget(self._multigonad_separator)
 
         self._layout.addSpacing(6)
 
@@ -405,37 +383,6 @@ class IntegrationWidget(QWidget):
             self._process_workflow_layout
         )
 
-        self._process_workflow_title_row = QWidget()
-        self._process_workflow_title_layout = QHBoxLayout()
-        self._process_workflow_title_layout.setContentsMargins(
-            0,
-            0,
-            0,
-            0,
-        )
-        self._process_workflow_title_row.setLayout(
-            self._process_workflow_title_layout
-        )
-
-        self._process_workflow_title = QLabel("Process workflow")
-        self._process_workflow_title.setStyleSheet("font-weight: bold")
-        self._process_workflow_title.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Preferred,
-        )
-        self._process_workflow_title_layout.addWidget(
-            self._process_workflow_title
-        )
-
-        self._process_workflow_visibility_button = ToggleVisibilityButton(
-            self._process_workflow_container,
-            parent=self,
-        )
-        self._process_workflow_title_layout.addWidget(
-            self._process_workflow_visibility_button
-        )
-
-        self._layout.addWidget(self._process_workflow_title_row)
         self._layout.addWidget(self._process_workflow_container)
 
         self._stitch_gonads_button = QPushButton("1.Stitch gonads")
@@ -470,10 +417,6 @@ class IntegrationWidget(QWidget):
 
         self._update_process_status_labels()
 
-        self._layout.addSpacing(6)
-
-        self._layout.addWidget(FrameSeparator(parent=self))
-
         self._workflow_scroll_area = QScrollArea()
         self._workflow_scroll_area.setWidgetResizable(True)
         self._workflow_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
@@ -496,6 +439,26 @@ class IntegrationWidget(QWidget):
         self._layout.addWidget(self._workflow_scroll_area, 1)
 
         self._current_widget: QWidget | None = None
+
+    def detach_shared_controls(self) -> list[QWidget]:
+        shared_widgets = [
+            self._project_directories_container,
+            self._project_directories_separator,
+            self._keep_channels_widget,
+            self._keep_channels_separator,
+            self._multigonad_project_saver,
+            self._multigonad_separator,
+        ]
+        for widget in shared_widgets:
+            self._layout.removeWidget(widget)
+            widget.setParent(None)
+        return shared_widgets
+
+    def detach_workflow_widget(self) -> QScrollArea:
+        self._layout.removeWidget(self._workflow_scroll_area)
+        self._workflow_scroll_area.setParent(None)
+        self._layout.addStretch()
+        return self._workflow_scroll_area
 
     def _add_process_button(
         self,
@@ -708,17 +671,208 @@ class IntegrationWidget(QWidget):
         if isinstance(self._current_widget, CLTScoreNucleiWidget):
             self._current_widget.refresh_project_data()
 
-    def _save_multigonad_project(self, saving_path: str) -> bool:
-        project_paths = self._project_directories_list.get_project_paths()
 
-        if not project_paths:
-            return False
+class CarltonLabCountTool(QWidget):
+    # your QWidget.__init__ can optionally request the napari viewer instance
+    # use a type annotation of 'napari.viewer.Viewer' for any parameter
+    def __init__(self, viewer: "napari.viewer.Viewer"):  # type: ignore
+        super().__init__()
+        self._napari_viewer = viewer
+        self._already_shown = False
+        self._parent_widget = None
 
-        return save_multigonad_project(
-            saving_path=saving_path,
-            project_directories=project_paths,
-            project_type="clsp",
+        self._scroll_timer: QTimer | None = None
+        self._scroll_direction: int = 0
+        self._scroll_interval_ms = 80
+        self._scroll_interval_min_ms = 5
+        self._scroll_interval_max_ms = 200
+
+        self._initialize_gui()
+        self._install_keybindings()
+
+    def _show_set_contrast_widget(self) -> None:
+        self._manual_foci_count_widget._show_set_contrast_widget()
+
+    def _show_stitched_regions_widget(self) -> None:
+        self._manual_foci_count_widget._show_stitched_regions_widget()
+
+    def _on_workflow_tab_changed(self, index: int) -> None:
+        self._manual_foci_count_widget._remove_current_widget()
+        self._update_workflow_tabs_height(index)
+
+    def _update_workflow_tabs_height(self, index: int) -> None:
+        manual_index = self._workflow_tabs.indexOf(self._manual_scroll_area)
+        if index != manual_index:
+            self._workflow_tabs.setMaximumHeight(QWIDGETSIZE_MAX)
+            self._workflow_tabs.updateGeometry()
+            return
+
+        manual_height = self._manual_foci_count_widget.sizeHint().height()
+        tab_bar_height = self._workflow_tabs.tabBar().sizeHint().height()
+
+        self._workflow_tabs.setMaximumHeight(manual_height + tab_bar_height)
+        self._workflow_tabs.updateGeometry()
+
+    def _initialize_gui(self) -> None:
+        self._main_layout = QVBoxLayout()
+        self.setLayout(self._main_layout)
+        self._main_layout.setContentsMargins(25, 2, 2, 25)
+
+        self._main_layout.addSpacing(12)
+        speed_separator: QFrame = QFrame(self)
+        speed_separator.setFrameShape(QFrame.Shape.HLine)
+        speed_separator.setFrameShadow(QFrame.Shadow.Sunken)
+        speed_separator.setStyleSheet("background-color: gray;")
+        speed_separator.setFixedHeight(2)
+        self._main_layout.addWidget(speed_separator)
+        self._main_layout.addSpacing(12)
+
+        self._global_scroll_speed_container: QWidget = QWidget()
+        self._global_scroll_speed_container_layout: QHBoxLayout = QHBoxLayout()
+        self._global_scroll_speed_container_layout.setContentsMargins(
+            0, 6, 0, 0
         )
+        self._global_scroll_speed_container.setLayout(
+            self._global_scroll_speed_container_layout
+        )
+        self._global_scroll_speed_container.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+        self._main_layout.addWidget(self._global_scroll_speed_container)
+
+        self._global_scroll_speed_label: QLabel = QLabel("Scroll speed")
+        self._global_scroll_speed_container_layout.addWidget(
+            self._global_scroll_speed_label
+        )
+
+        self._global_scroll_speed_slider: QSlider = QSlider(
+            Qt.Orientation.Horizontal
+        )
+        self._global_scroll_speed_slider.setRange(
+            self._scroll_interval_min_ms, self._scroll_interval_max_ms
+        )
+        self._global_scroll_speed_slider.setValue(
+            self._interval_to_slider_value(self._scroll_interval_ms)
+        )
+        self._global_scroll_speed_slider.setSingleStep(10)
+        self._global_scroll_speed_slider.setPageStep(10)
+        self._global_scroll_speed_slider.valueChanged.connect(
+            self._scroll_speed_slider_changed
+        )
+        self._global_scroll_speed_container_layout.addWidget(
+            self._global_scroll_speed_slider
+        )
+
+        self._main_layout.addWidget(FrameSeparator(parent=self))
+
+        self._process_title_row = QWidget(self)
+        self._process_title_layout = QHBoxLayout()
+        self._process_title_layout.setContentsMargins(0, 0, 0, 0)
+        self._process_title_row.setLayout(self._process_title_layout)
+        self._process_title_row.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+
+        self._process_title = QLabel("Process")
+        self._process_title.setStyleSheet("font-weight: bold")
+        self._process_title_layout.addWidget(self._process_title)
+
+        self._process_content = QWidget(self)
+        self._process_content_layout = QVBoxLayout()
+        self._process_content_layout.setContentsMargins(0, 0, 0, 0)
+        self._process_content.setLayout(self._process_content_layout)
+
+        self._process_visibility_button = ToggleVisibilityButton(
+            self._process_content,
+            parent=self,
+        )
+        self._process_title_layout.addWidget(self._process_visibility_button)
+
+        self._workflow_tabs = QTabWidget(self)
+        self._workflow_tabs.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
+
+        self._manual_scroll_area = QScrollArea(self._workflow_tabs)
+        self._manual_scroll_area.setWidgetResizable(True)
+        self._manual_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        self._manual_foci_count_widget = ManualFociCountWidget(
+            self._napari_viewer,
+            self._manual_scroll_area,
+            project_row_factory=self._create_project_row,
+        )
+        self._workflow_scroll_area = (
+            self._manual_foci_count_widget.detach_workflow_widget()
+        )
+        self._manual_scroll_area.setWidget(self._manual_foci_count_widget)
+
+        for (
+            shared_widget
+        ) in self._manual_foci_count_widget.detach_shared_controls():
+            self._main_layout.addWidget(shared_widget)
+
+        self._main_layout.addWidget(self._process_title_row)
+        self._main_layout.addWidget(self._process_content)
+
+        self._project_directories_list = (
+            self._manual_foci_count_widget._project_directories_list
+        )
+        self._keep_channels_widget = (
+            self._manual_foci_count_widget._keep_channels_widget
+        )
+        self._multigonad_project_saver = (
+            self._manual_foci_count_widget._multigonad_project_saver
+        )
+        self._keep_channels_widget._keep_channels_cb.toggled.connect(
+            self._on_keep_channels_changed
+        )
+        self._keep_channels_widget._keep_channels_line_edit.editingFinished.connect(
+            self._on_keep_channels_changed
+        )
+        self._manual_foci_count_widget._add_project_directory_button.clicked.connect(
+            self._add_project_directory_button_pressed
+        )
+        self._manual_foci_count_widget._add_multigonad_config_button.clicked.connect(
+            self._add_multigonad_config_button_pressed
+        )
+        self._manual_foci_count_widget._remove_project_directory_button.clicked.connect(
+            self._remove_project_directory_button_pressed
+        )
+        self._multigonad_project_saver.connect_save_callback(
+            self._save_multigonad_project
+        )
+
+        self._process_content_layout.addWidget(self._workflow_tabs)
+        self._workflow_tabs.addTab(self._manual_scroll_area, "Manual")
+
+        self._auto_scroll_area = QScrollArea(self._workflow_tabs)
+        self._auto_scroll_area.setWidgetResizable(True)
+        self._auto_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+
+        self._auto_widget = AutoFociCountWidget(
+            viewer=self._napari_viewer,
+            parent=self._auto_scroll_area,
+            project_list_widget=self._manual_foci_count_widget._project_directories_list,
+            set_contrasts_callback=self._show_set_contrast_widget,
+            set_regions_callback=self._show_stitched_regions_widget,
+            status_update_callback=(
+                self._manual_foci_count_widget._update_process_status_labels
+            ),
+        )
+        self._auto_scroll_area.setWidget(self._auto_widget)
+        self._workflow_tabs.addTab(self._auto_scroll_area, "Auto")
+        self._workflow_tabs.currentChanged.connect(
+            self._on_workflow_tab_changed
+        )
+        self._update_workflow_tabs_height(self._workflow_tabs.currentIndex())
+
+        self._workflow_separator = FrameSeparator(parent=self)
+        self._main_layout.addWidget(self._workflow_separator)
+        self._main_layout.addWidget(self._workflow_scroll_area, 1)
 
     def _create_project_row(self, project_path: Path) -> QWidget:
         requested_channels = self._keep_channels_widget.get_channels()
@@ -745,7 +899,18 @@ class IntegrationWidget(QWidget):
 
     def _on_keep_channels_changed(self, *_args: object) -> None:
         self._project_directories_list.refresh_rows()
-        self._update_process_status_labels()
+        self._manual_foci_count_widget._update_process_status_labels()
+
+    def _save_multigonad_project(self, saving_path: str) -> bool:
+        project_paths = self._project_directories_list.get_project_paths()
+        if not project_paths:
+            return False
+
+        return save_multigonad_project(
+            saving_path=saving_path,
+            project_directories=project_paths,
+            project_type="clsp",
+        )
 
     def _verify_project_directory(self, project_path: Path) -> bool:
         has_existing_project = any(
@@ -805,15 +970,14 @@ class IntegrationWidget(QWidget):
                 and self._verify_project_directory(project_path)
             )
         ]
-
         self._project_directories_list.add_project_paths(valid_paths)
-        self._update_process_status_labels()
-        self._refresh_score_nuclei_widget()
+        self._manual_foci_count_widget._update_process_status_labels()
 
     def _add_multigonad_config_button_pressed(self) -> None:
         config_path = get_file(
             self,
             caption="Select a multigonad project configuration",
+            filters="Config files (*.config)",
         )
         if config_path is None:
             return
@@ -827,7 +991,6 @@ class IntegrationWidget(QWidget):
             if config.get("project", "type") != "clsp":
                 show_error("The selected file is not a CLSP project.")
                 return
-
             project_paths = [
                 Path(project_path)
                 for _, project_path in config.items("project_directories")
@@ -851,310 +1014,11 @@ class IntegrationWidget(QWidget):
                 return
 
         self._project_directories_list.set_project_paths(project_paths)
-        self._update_process_status_labels()
-        self._refresh_score_nuclei_widget()
+        self._manual_foci_count_widget._update_process_status_labels()
 
     def _remove_project_directory_button_pressed(self) -> None:
         self._project_directories_list.remove_selected_project_paths()
-        self._update_process_status_labels()
-        self._refresh_score_nuclei_widget()
-
-
-class GonadControlWidget(QWidget):
-    def __init__(
-        self, napari_viewer: "ViewerModel", main_widget: QWidget
-    ) -> None:
-        super().__init__(main_widget)
-
-        self._napari_viewer = napari_viewer
-        self._main_widget = main_widget
-
-        self._image_path: str | None = None
-        self._image_layers: list[Image] | None = None
-        self._tile_image_layers: list[Image] = []
-        self._image_tiles: dict[int, str] = {}
-        self._project_files_dir: str | None = None
-
-        self._layout = QVBoxLayout()
-        self.setLayout(self._layout)
-        self._layout.setContentsMargins(0, 0, 0, 5)
-
-        self._image_container: QWidget = QWidget()
-        self._image_container_layout: QHBoxLayout = QHBoxLayout()
-        self._image_container.setLayout(self._image_container_layout)
-        self._layout.addWidget(self._image_container)
-
-        self._open_image_title: QLabel = QLabel("Image")
-        self._open_image_title.setStyleSheet("font-weight: bold")
-        self._image_container_layout.addWidget(self._open_image_title)
-
-        self._open_image_line_edit: QLineEdit = QLineEdit("")
-        self._image_container_layout.addWidget(self._open_image_line_edit)
-
-        self._open_image_button: QPushButton = QPushButton("Open image")
-        self._open_image_button.clicked.connect(
-            self._open_image_button_pressed
-        )
-        self._layout.addWidget(self._open_image_button)
-
-        self._open_zarr_button: QPushButton = QPushButton(
-            "Open OME.zarr image"
-        )
-        self._open_zarr_button.clicked.connect(self._open_zarr_button_pressed)
-        self._layout.addWidget(self._open_zarr_button)
-
-        self._open_image_status_label: QLabel = QLabel("")
-        self._layout.addWidget(self._open_image_status_label)
-        self._set_open_image_status(False)
-
-    def _open_image_button_pressed(self) -> None:
-        validated_closed_layers: bool = validate_closed_layers(
-            self._napari_viewer
-        )
-        if not validated_closed_layers:
-            return
-        image_path: str | None = get_file(
-            self, "Select the project image file"
-        )
-        self._open_image_from_path(
-            image_path, validated_closed_layers=validated_closed_layers
-        )
-
-    def _open_zarr_button_pressed(self) -> None:
-        validated_closed_layers: bool = validate_closed_layers(
-            self._napari_viewer
-        )
-        if not validated_closed_layers:
-            return
-        image_path: str | None = get_directory(
-            self, "Select the OME.zarr directory"
-        )
-        if image_path is not None and not image_path.endswith(".zarr"):
-            show_info("Please select a directory ending in .zarr")
-            return
-        self._open_image_from_path(
-            image_path, validated_closed_layers=validated_closed_layers
-        )
-
-    def _open_image_from_path(
-        self, image_path: str | None, validated_closed_layers: bool = False
-    ) -> None:
-        if not validated_closed_layers:
-            validated_closed_layers = validate_closed_layers(
-                self._napari_viewer
-            )
-        if not validated_closed_layers:
-            return
-        self._image_path = None
-        self._image_layers = None
-        self._image_tiles = {}
-        self._project_files_dir = None
-        main_widget_callbacks: MainWidgetCallBacks = cast(
-            MainWidgetCallBacks, self._main_widget
-        )
-        if image_path is None:
-            self.open_new_image_process_widget(
-                main_widget_callbacks, self._image_layers, self._image_path
-            )
-            self.validate_process_results_widgets(
-                main_widget_callbacks, self._image_path
-            )
-            self._open_image_line_edit.setText("")
-            self._set_open_image_status(False)
-            return
-        image_path_str: str = image_path
-        open_answer: tuple[str, list[Image], dict[int, str], str] | None = (
-            open_project_image(self._napari_viewer, image_path_str)
-        )
-        if open_answer is None:
-            self.open_new_image_process_widget(
-                main_widget_callbacks, None, None
-            )
-            self.validate_process_results_widgets(
-                main_widget_callbacks, self._image_path
-            )
-            self._open_image_line_edit.setText("")
-            self._set_open_image_status(False)
-            return
-        self._image_path = open_answer[0]
-        self._image_layers = open_answer[1]
-        self._image_tiles = open_answer[2]
-        self._project_files_dir = open_answer[3]
-        self.update_line_edit()
-        self.open_new_image_process_widget(
-            main_widget_callbacks, tuple(self._image_layers), self._image_path
-        )
-        self.validate_process_results_widgets(
-            main_widget_callbacks, self._image_path
-        )
-        return
-
-    def open_new_image_process_widget(
-        self,
-        main_widget_callbacks: MainWidgetCallBacks,
-        images: tuple[Image, ...] | None,
-        image_path: str | None,
-    ) -> None:
-        process_widget: ProcessWidgetAPI | None = (
-            main_widget_callbacks.get_process_widget()
-        )
-        if process_widget is None:
-            return
-        process_widget.new_image_open(images, image_path)
-
-    def get_images_and_paths(self) -> tuple[str, str, list[Image]] | None:
-        if (
-            self._image_path is None
-            or self._image_layers is None
-            or self._project_files_dir is None
-        ):
-            return None
-        return (self._image_path, self._project_files_dir, self._image_layers)
-
-    def get_image_tiles(self) -> dict[int, str]:
-        return self._image_tiles
-
-    def open_tile_images(self, tile_index: int) -> list[Image] | None:
-        tile_image_path = self._image_tiles.get(tile_index)
-        if tile_image_path is None:
-            return None
-        opened_tile_layers = self._open_tile_image(tile_image_path)
-        if opened_tile_layers is None:
-            return None
-        for layer_index, image_layer in enumerate(opened_tile_layers):
-            image_layer.name = f"Tile[{tile_index}] - c{layer_index + 1}"
-        return opened_tile_layers
-
-    def close_tile_images(self) -> None:
-        if len(self._tile_image_layers) > 0:
-            close_image_layers(self._napari_viewer, self._tile_image_layers)
-            self._tile_image_layers = []
-
-    def _open_tile_image(self, tile_image_path: str) -> list[Image] | None:
-        if len(self._tile_image_layers) > 0:
-            close_image_layers(self._napari_viewer, self._tile_image_layers)
-            self._tile_image_layers = []
-        opened_tile_layers = open_tile_image(
-            self._napari_viewer, tile_image_path
-        )
-        if opened_tile_layers is None:
-            return None
-        self._tile_image_layers = opened_tile_layers
-        return self._tile_image_layers
-
-    def _set_open_image_status(self, status: bool) -> None:
-        if status:
-            self._open_image_status_label.setText("Image opened")
-            self._open_image_status_label.setStyleSheet("color: green")
-        else:
-            self._open_image_status_label.setText("Image not opened")
-            self._open_image_status_label.setStyleSheet("color: red")
-
-    def _close_current_counting_widget(self) -> None:
-        self._main_widget.close_current_widget()  # type: ignore
-
-    def update_line_edit(self) -> None:
-        if self._image_path is None:
-            self._open_image_line_edit.setText("")
-            self._set_open_image_status(False)
-            return
-        self._open_image_line_edit.setText(self._image_path)
-        self._set_open_image_status(True)
-
-    def set_image_closed(self) -> None:
-        self._image_path = None
-        self._image_layers = None
-        self.close_tile_images()
-        self._project_files_dir = None
-        self._open_image_line_edit.setText("")
-        self._set_open_image_status(False)
-
-    def validate_process_results_widgets(
-        self,
-        main_widget_callbacks: MainWidgetCallBacks,
-        image_path: str | None,
-    ):
-        if image_path is None:
-            return
-        main_widget_callbacks.validate_process_results(image_path)
-
-
-class CarltonLabCountTool(QWidget):
-    # your QWidget.__init__ can optionally request the napari viewer instance
-    # use a type annotation of 'napari.viewer.Viewer' for any parameter
-    def __init__(self, viewer: "napari.viewer.Viewer"):  # type: ignore
-        super().__init__()
-        self._napari_viewer = viewer
-        self._already_shown = False
-        self._parent_widget = None
-
-        self._scroll_timer: QTimer | None = None
-        self._scroll_direction: int = 0
-        self._scroll_interval_ms = 80
-        self._scroll_interval_min_ms = 5
-        self._scroll_interval_max_ms = 200
-
-        self._initialize_gui()
-        self._install_keybindings()
-
-    def _initialize_gui(self) -> None:
-        self._main_layout = QVBoxLayout()
-        self.setLayout(self._main_layout)
-        self._main_layout.setContentsMargins(25, 2, 2, 25)
-
-        self._main_layout.addSpacing(12)
-        speed_separator: QFrame = QFrame(self)
-        speed_separator.setFrameShape(QFrame.Shape.HLine)
-        speed_separator.setFrameShadow(QFrame.Shadow.Sunken)
-        speed_separator.setStyleSheet("background-color: gray;")
-        speed_separator.setFixedHeight(2)
-        self._main_layout.addWidget(speed_separator)
-        self._main_layout.addSpacing(12)
-
-        self._global_scroll_speed_container: QWidget = QWidget()
-        self._global_scroll_speed_container_layout: QHBoxLayout = QHBoxLayout()
-        self._global_scroll_speed_container_layout.setContentsMargins(
-            0, 6, 0, 0
-        )
-        self._global_scroll_speed_container.setLayout(
-            self._global_scroll_speed_container_layout
-        )
-        self._global_scroll_speed_container.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Maximum,
-        )
-        self._main_layout.addWidget(self._global_scroll_speed_container)
-
-        self._global_scroll_speed_label: QLabel = QLabel("Scroll speed")
-        self._global_scroll_speed_container_layout.addWidget(
-            self._global_scroll_speed_label
-        )
-
-        self._global_scroll_speed_slider: QSlider = QSlider(
-            Qt.Orientation.Horizontal
-        )
-        self._global_scroll_speed_slider.setRange(
-            self._scroll_interval_min_ms, self._scroll_interval_max_ms
-        )
-        self._global_scroll_speed_slider.setValue(
-            self._interval_to_slider_value(self._scroll_interval_ms)
-        )
-        self._global_scroll_speed_slider.setSingleStep(10)
-        self._global_scroll_speed_slider.setPageStep(10)
-        self._global_scroll_speed_slider.valueChanged.connect(
-            self._scroll_speed_slider_changed
-        )
-        self._global_scroll_speed_container_layout.addWidget(
-            self._global_scroll_speed_slider
-        )
-
-        self._main_layout.addWidget(FrameSeparator(parent=self))
-
-        self._integration_widget = IntegrationWidget(
-            self._napari_viewer,
-            self,
-        )
-        self._main_layout.addWidget(self._integration_widget, 1)
+        self._manual_foci_count_widget._update_process_status_labels()
 
     def _install_keybindings(self) -> None:
         self._napari_viewer.bind_key(
