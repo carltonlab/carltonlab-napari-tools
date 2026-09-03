@@ -50,6 +50,7 @@ from carltonlab_napari_tools._shared_variables import (
 from carltonlab_napari_tools._tile_utils import (
     ensure_tiles_config,
     get_extracted_tile_path,
+    get_tile_positions_path,
     load_tile_contrasts,
     move_tiles,
 )
@@ -208,19 +209,12 @@ def build_tile_local_square_records_from_labels(
 
 def get_tile_stitched_pixel_offsets(
     stitched_image_path: str | Path,
+    tiles_directory: str | Path,
     tile_index: int,
 ) -> tuple[float, float]:
-    stitched_path = Path(stitched_image_path)
-    stitched_name = stitched_path.name
-    if stitched_name.endswith(".ome.zarr"):
-        stitched_stem = stitched_name[: -len(".ome.zarr")]
-    else:
-        stitched_stem = stitched_path.stem
-
-    tile_positions_path = (
-        stitched_path.parent
-        / TILES_DIR_NAME
-        / f"{stitched_stem}_tile_positions.csv"
+    tile_positions_path = get_tile_positions_path(
+        Path(stitched_image_path),
+        Path(tiles_directory),
     )
     if not tile_positions_path.exists():
         raise FileNotFoundError(
@@ -260,6 +254,7 @@ def load_napari_points_csv(
 def map_tile_local_points_to_stitched_image(
     tile_local_points_zyx: NDArray[np.float32],
     stitched_image_path: str | Path,
+    tiles_directory: str | Path,
     tile_index: int,
 ) -> NDArray[np.float32]:
     points = np.asarray(tile_local_points_zyx, dtype=np.float32)
@@ -271,7 +266,9 @@ def map_tile_local_points_to_stitched_image(
         return np.empty((0, 3), dtype=np.float32)
 
     y_offset, x_offset = get_tile_stitched_pixel_offsets(
-        stitched_image_path, tile_index
+        stitched_image_path,
+        tiles_directory,
+        tile_index,
     )
     stitched_points = points.copy()
     stitched_points[:, 1] += y_offset
@@ -349,6 +346,7 @@ def get_scored_nuclei_output_paths(
 def map_tile_local_squares_to_stitched_image(
     tile_local_squares_yx: NDArray[np.float32],
     stitched_image_path: str | Path,
+    tiles_directory: str | Path,
     tile_index: int,
 ) -> NDArray[np.float32]:
     squares = np.asarray(tile_local_squares_yx, dtype=np.float32)
@@ -361,7 +359,9 @@ def map_tile_local_squares_to_stitched_image(
         return np.empty((0, 4, 2), dtype=np.float32)
 
     y_offset, x_offset = get_tile_stitched_pixel_offsets(
-        stitched_image_path, tile_index
+        stitched_image_path,
+        tiles_directory,
+        tile_index,
     )
     offset_yx = np.asarray([y_offset, x_offset], dtype=np.float32)
     return squares + offset_yx
@@ -370,12 +370,15 @@ def map_tile_local_squares_to_stitched_image(
 def map_tile_local_square_records_to_stitched_image(
     square_records: list[dict[str, object]],
     stitched_image_path: str | Path,
+    tiles_directory: str | Path,
     tile_index: int,
 ) -> list[dict[str, object]]:
     if len(square_records) == 0:
         return []
     y_offset, x_offset = get_tile_stitched_pixel_offsets(
-        stitched_image_path, tile_index
+        stitched_image_path,
+        tiles_directory,
+        tile_index,
     )
     offset_yx = np.asarray([y_offset, x_offset], dtype=np.float32)
     stitched_records: list[dict[str, object]] = []
@@ -533,12 +536,14 @@ def _concatenate_square_batches(
 def build_region_squares_from_cleaned_segmentations(
     segmentation_paths_by_tile: dict[int, str | Path],
     stitched_image_path: str | Path,
+    tiles_directory: str | Path,
     edited_regions_csv_path: str | Path,
 ) -> tuple[dict[int, NDArray[np.float32]], NDArray[np.float32]]:
     region_records_by_index, unassigned_records = (
         build_region_square_records_from_cleaned_segmentations(
             segmentation_paths_by_tile=segmentation_paths_by_tile,
             stitched_image_path=stitched_image_path,
+            tiles_directory=tiles_directory,
             edited_regions_csv_path=edited_regions_csv_path,
         )
     )
@@ -567,6 +572,7 @@ def build_region_squares_from_cleaned_segmentations(
 def build_region_square_records_from_cleaned_segmentations(
     segmentation_paths_by_tile: dict[int, str | Path],
     stitched_image_path: str | Path,
+    tiles_directory: str | Path,
     edited_regions_csv_path: str | Path,
 ) -> tuple[dict[int, list[dict[str, object]]], list[dict[str, object]]]:
     region_polygons_yx = load_expanded_region_polygons(edited_regions_csv_path)
@@ -586,6 +592,7 @@ def build_region_square_records_from_cleaned_segmentations(
             map_tile_local_square_records_to_stitched_image(
                 tile_local_square_records,
                 stitched_image_path=stitched_image_path,
+                tiles_directory=tiles_directory,
                 tile_index=tile_index,
             )
         )
@@ -680,6 +687,7 @@ def save_auto_scored_nuclei_files_from_features(
         stitched_label_points = map_tile_local_points_to_stitched_image(
             label_points,
             stitched_image_path=stitched_image_path,
+            tiles_directory=project_path / TILES_DIR_NAME,
             tile_index=tile_index,
         )
         feature_data = feature.to_dict()
@@ -837,6 +845,7 @@ def save_auto_scored_nuclei_files_from_region_records(
             stitched_points = map_tile_local_points_to_stitched_image(
                 label_points_local,
                 stitched_image_path=stitched_image_path,
+                tiles_directory=_get_project_tiles_path(directory_path),
                 tile_index=tile_index,
             )
 
@@ -1753,7 +1762,9 @@ class AutoFociCountWidget(QWidget):
                 segmentation_path
             )
             tile_offsets_yx[tile_index] = get_tile_stitched_pixel_offsets(
-                stitched_image_path, tile_index
+                stitched_image_path,
+                project_path / TILES_DIR_NAME,
+                tile_index,
             )
 
         candidates = build_nucleus_candidates(
