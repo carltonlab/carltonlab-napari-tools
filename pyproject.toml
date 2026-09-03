@@ -52,6 +52,7 @@ dependencies = [
 all = ["napari[all]"]
 segmentation = [
     "cellpose",
+    "spotiflow",
     "torch",
 ]
 gpu-cuda12 = [
@@ -60,11 +61,13 @@ gpu-cuda12 = [
 full-cpu = [
     "napari[all]",
     "cellpose",
+    "spotiflow",
     "torch",
 ]
 full-cuda12 = [
     "napari[all]",
     "cellpose",
+    "spotiflow",
     "torch",
     "cupy-cuda12x",
 ]

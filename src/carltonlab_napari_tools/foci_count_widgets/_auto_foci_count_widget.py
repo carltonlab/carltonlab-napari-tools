@@ -1124,6 +1124,14 @@ class AutoFociCountWidget(QWidget):
         self._count_foci_b.clicked.connect(self._start_fc_button_pressed)
         self._layout.addWidget(self._count_foci_b)
 
+        self._automatic_fc_dependency_status_lb = QLabel(parent=self)
+        self._automatic_fc_dependency_status_lb.setStyleSheet(
+            "color: #A80000; font-weight: bold;"
+        )
+        self._automatic_fc_dependency_status_lb.setWordWrap(True)
+        self._layout.addWidget(self._automatic_fc_dependency_status_lb)
+        self._update_automatic_fc_dependency_status()
+
         self._set_regions_b: QPushButton = QPushButton(
             "Set regions",
             parent=self,
@@ -1447,6 +1455,33 @@ class AutoFociCountWidget(QWidget):
         )
 
         return segmentation_ready, regions_ready, contrasts_ready
+
+    def _update_automatic_fc_dependency_status(self) -> None:
+        required_modules = ("torch", "cellpose", "spotiflow")
+        missing_modules = [
+            module_name
+            for module_name in required_modules
+            if importlib.util.find_spec(module_name) is None
+        ]
+
+        dependencies_available = not missing_modules
+        self._count_foci_b.setEnabled(dependencies_available)
+        self._automatic_fc_dependency_status_lb.setVisible(
+            not dependencies_available
+        )
+
+        if dependencies_available:
+            self._automatic_fc_dependency_status_lb.clear()
+            self._count_foci_b.setToolTip("")
+            return
+
+        missing_text = ", ".join(missing_modules)
+        status_text = (
+            "Automatic foci counting unavailable. "
+            f"Missing dependencies: {missing_text}"
+        )
+        self._automatic_fc_dependency_status_lb.setText(status_text)
+        self._count_foci_b.setToolTip(status_text)
 
     def _start_fc_button_pressed(self) -> None:
         if self._batch_fc_running:
