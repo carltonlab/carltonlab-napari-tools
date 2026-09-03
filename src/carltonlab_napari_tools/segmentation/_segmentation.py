@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import ctypes
 import json
 import os
@@ -332,12 +333,63 @@ class SpotiflowDetector:
         return np.asarray(spots)
 
 
+def _save_spotiflow_points(
+    output_csv_path: str | Path,
+    spots_coords: np.ndarray,
+) -> None:
+    output_path = Path(output_csv_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    points = np.asarray(spots_coords)
+    if points.size == 0:
+        points = np.empty((0, 3), dtype=float)
+    elif points.ndim == 1:
+        points = points.reshape(1, -1)
+
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["index", "axis-0", "axis-1", "axis-2"])
+        for point_index, point in enumerate(points):
+            writer.writerow([point_index, *point.tolist()])
+
+
 def run_spotiflow_spot_detection(
     image_zyx: np.ndarray,
     model_name: str = "smfish_3d",
     use_gpu: bool = True,
 ) -> np.ndarray:
     return SpotiflowDetector(model_name, use_gpu).predict(image_zyx)
+
+
+def run_spotiflow_batch(
+    image_paths: list[str | Path],
+    output_csv_paths: list[str | Path],
+    model_name: str,
+    use_gpu: bool,
+) -> bool:
+    if len(image_paths) != len(output_csv_paths):
+        raise ValueError("Spotiflow image and output path counts must match.")
+    if not image_paths:
+        return True
+
+    from tifffile import imread
+
+    detector = SpotiflowDetector(
+        model_name=model_name,
+        use_gpu=use_gpu,
+    )
+    for image_index, (image_path, output_path) in enumerate(
+        zip(image_paths, output_csv_paths, strict=True),
+        start=1,
+    ):
+        print(
+            "Running Spotiflow "
+            f"{image_index}/{len(image_paths)}: {image_path}"
+        )
+        image_zyx = np.asarray(imread(image_path))
+        spots_coords = detector.predict(image_zyx)
+        _save_spotiflow_points(output_path, spots_coords)
+
+    return True
 
 
 def run_spotiflow_subprocess(
@@ -382,6 +434,49 @@ def run_spotiflow_subprocess(
     if returncode != 0:
         raise RuntimeError(
             f"Spotiflow subprocess failed with exit code {returncode}"
+        )
+    return True
+
+
+def run_spotiflow_batch_subprocess(
+    image_paths: list[str | Path],
+    output_csv_paths: list[str | Path],
+    model_name: str = "smfish_3d",
+    use_gpu: bool = True,
+) -> bool:
+    payload = {
+        "spotiflow_image_paths": [str(path) for path in image_paths],
+        "spotiflow_output_csv_paths": [str(path) for path in output_csv_paths],
+        "model_name": model_name,
+        "use_gpu": bool(use_gpu),
+    }
+    env = os.environ.copy()
+    env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    command = [
+        sys.executable,
+        "-m",
+        "carltonlab_napari_tools.segmentation._segmentation",
+        json.dumps(payload),
+    ]
+    print(f"Starting Spotiflow batch subprocess for {len(image_paths)} images")
+    popen_kwargs = {
+        "env": env,
+        "text": True,
+    }
+    if sys.platform.startswith("linux"):
+        popen_kwargs["preexec_fn"] = _set_child_parent_death_signal
+
+    process = subprocess.Popen(command, **popen_kwargs)
+    try:
+        returncode = process.wait()
+    except BaseException:
+        process.terminate()
+        process.wait()
+        raise
+
+    if returncode != 0:
+        raise RuntimeError(
+            f"Spotiflow batch subprocess failed with exit code {returncode}"
         )
     return True
 
@@ -592,6 +687,15 @@ def _main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("Expected one JSON payload argument")
     payload = json.loads(sys.argv[1])
+    if "spotiflow_image_paths" in payload:
+        run_spotiflow_batch(
+            image_paths=payload["spotiflow_image_paths"],
+            output_csv_paths=payload["spotiflow_output_csv_paths"],
+            model_name=payload["model_name"],
+            use_gpu=bool(payload.get("use_gpu", True)),
+        )
+        return 0
+
     if "image_paths" in payload:
         run_segmentation_batch(
             image_paths=payload["image_paths"],
@@ -608,8 +712,6 @@ def _main() -> int:
         )
         return 0
 
-    import csv
-
     from tifffile import imread
 
     image_path = Path(payload["image_path"])
@@ -624,15 +726,7 @@ def _main() -> int:
         model_name=model_name,
         use_gpu=use_gpu,
     )
-    if spots_coords.ndim == 1 and spots_coords.size == 0:
-        spots_coords = np.empty((0, 3), dtype=float)
-
-    output_csv_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_csv_path.open("w", encoding="utf-8", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(["index", "axis-0", "axis-1", "axis-2"])
-        for point_index, point in enumerate(np.asarray(spots_coords)):
-            writer.writerow([point_index, *point.tolist()])
+    _save_spotiflow_points(output_csv_path, spots_coords)
     return 0
 
 

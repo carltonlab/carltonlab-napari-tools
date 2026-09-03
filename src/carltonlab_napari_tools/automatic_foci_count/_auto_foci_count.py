@@ -20,7 +20,6 @@ from carltonlab_napari_tools._shared_variables import (
     TILE_CONTRASTS_FILE_NAME_SUFFIX,
 )
 from carltonlab_napari_tools.segmentation._segmentation import (
-    SpotiflowDetector,
     load_ome_zarr_image_zyx,
     run_spotiflow_subprocess,
 )
@@ -1034,7 +1033,6 @@ def run_auto_count_on_paths(
     minimum_colocalization_intensity_ratio: float = (
         DEFAULT_MINIMUM_COLOCALIZATION_INTENSITY_RATIO
     ),
-    spotiflow_detector: SpotiflowDetector | None = None,
 ):
     _ = (spots_zyx_radii_pxl,)
     _ = make_binary_mask
@@ -1084,18 +1082,12 @@ def run_auto_count_on_paths(
         output_dir=output_dir_path,
     )
     if not unfiltered_points_layer_path.exists():
-        if spotiflow_detector is None:
-            run_spotiflow_subprocess(
-                image_path=processed_image_path,
-                output_csv_path=unfiltered_points_layer_path,
-                model_name=model_name,
-                use_gpu=use_gpu,
-            )
-        else:
-            save_points_csv_for_napari(
-                unfiltered_points_layer_path,
-                spotiflow_detector.predict(processed_spots_image),
-            )
+        run_spotiflow_subprocess(
+            image_path=processed_image_path,
+            output_csv_path=unfiltered_points_layer_path,
+            model_name=model_name,
+            use_gpu=use_gpu,
+        )
     spots_coords = np.loadtxt(
         unfiltered_points_layer_path,
         delimiter=",",

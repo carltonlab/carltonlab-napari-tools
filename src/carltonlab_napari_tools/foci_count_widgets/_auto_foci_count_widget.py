@@ -69,6 +69,7 @@ from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
     compute_shared_masked_normalization_bounds,
     get_auto_count_output_paths,
     run_auto_count_on_paths,
+    run_auto_count_preprocessed_spots_on_paths,
     save_points_csv_for_napari,
 )
 from carltonlab_napari_tools.automatic_foci_count._nuclei_features import (
@@ -97,11 +98,11 @@ from carltonlab_napari_tools.image_stitching._stitching_options_widget import (
     CLTStitchingOptionsWidget,
 )
 from carltonlab_napari_tools.segmentation import (
-    SpotiflowDetector,
     clean_segmentation_file,
     get_cleaned_segmentation_output_path,
     load_segmentation_npy,
     run_segmentation_batch_subprocess,
+    run_spotiflow_batch_subprocess,
 )
 
 if TYPE_CHECKING:
@@ -1554,7 +1555,6 @@ class AutoFociCountWidget(QWidget):
     ) -> None:
         current_project = "unknown"
         current_stage = "starting"
-        spotiflow_detector: SpotiflowDetector | None = None
         try:
             for directory_index, directory_path in enumerate(
                 directory_paths, start=1
@@ -1607,18 +1607,10 @@ class AutoFociCountWidget(QWidget):
                 )
                 if need_tile_fc_stage:
                     current_stage = "automatic tile foci counting"
-                    if spotiflow_detector is None:
-                        spotiflow_detector = SpotiflowDetector(
-                            model_name=self._spotiflow_model_name,
-                            use_gpu=(
-                                self._stitching_options_widget.is_gpu_enabled()
-                            ),
-                        )
                     self._run_auto_tile_foci_count_for_directory(
                         directory_path,
                         colocalization_channels_filter,
                         minimum_colocalization_intensity_ratio,
-                        spotiflow_detector,
                     )
                 else:
                     print(
@@ -1947,7 +1939,6 @@ class AutoFociCountWidget(QWidget):
         normalization_input_max: float,
         colocalization_channels_filter: list[str],
         minimum_colocalization_intensity_ratio: float,
-        spotiflow_detector: SpotiflowDetector | None = None,
     ) -> None:
         auto_count_output_dir = (
             Path(segmentation_path).parent.parent / AUTO_COUNT_DIR_NAME
@@ -1985,7 +1976,6 @@ class AutoFociCountWidget(QWidget):
             normalization_input_min=normalization_input_min,
             normalization_input_max=normalization_input_max,
             normalization_output_max=1000,
-            spotiflow_detector=spotiflow_detector,
         )
         print(
             f"Automatic foci count reference image shape: {ref_image_zyx.shape}"
@@ -2013,7 +2003,6 @@ class AutoFociCountWidget(QWidget):
         directory_path: str | Path,
         colocalization_channels_filter: list[str],
         minimum_colocalization_intensity_ratio: float,
-        spotiflow_detector: SpotiflowDetector | None = None,
     ) -> None:
         tile_paths = self._get_ready_tile_paths(directory_path)
         if not tile_paths:
@@ -2060,6 +2049,44 @@ class AutoFociCountWidget(QWidget):
             "Automatic foci count shared normalization bounds: "
             f"min={normalization_input_min}, max={normalization_input_max}"
         )
+
+        processed_image_paths: list[Path] = []
+        unfiltered_points_paths: list[Path] = []
+        for tile_path, segmentation_output_path in zip(
+            pending_tile_paths, segmentation_paths, strict=True
+        ):
+            auto_count_output_dir = (
+                segmentation_output_path.parent.parent / AUTO_COUNT_DIR_NAME
+            )
+            (*_, processed_image_path, _preprocessing_stats_path) = (
+                run_auto_count_preprocessed_spots_on_paths(
+                    image_path=tile_path,
+                    segmentation_path=segmentation_output_path,
+                    output_dir=auto_count_output_dir,
+                    normalize_spots_channel=True,
+                    normalization_input_min=normalization_input_min,
+                    normalization_input_max=normalization_input_max,
+                    normalization_output_max=1000,
+                )
+            )
+            (_semantic_mask_path, unfiltered_points_path, _filtered_path) = (
+                get_auto_count_output_paths(
+                    image_path=tile_path,
+                    output_dir=auto_count_output_dir,
+                )
+            )
+            if not unfiltered_points_path.exists():
+                processed_image_paths.append(processed_image_path)
+                unfiltered_points_paths.append(unfiltered_points_path)
+
+        if processed_image_paths:
+            run_spotiflow_batch_subprocess(
+                image_paths=processed_image_paths,
+                output_csv_paths=unfiltered_points_paths,
+                model_name=self._spotiflow_model_name,
+                use_gpu=self._stitching_options_widget.is_gpu_enabled(),
+            )
+
         for tile_path, segmentation_output_path in zip(
             pending_tile_paths, segmentation_paths, strict=True
         ):
@@ -2072,5 +2099,4 @@ class AutoFociCountWidget(QWidget):
                 minimum_colocalization_intensity_ratio=(
                     minimum_colocalization_intensity_ratio
                 ),
-                spotiflow_detector=spotiflow_detector,
             )

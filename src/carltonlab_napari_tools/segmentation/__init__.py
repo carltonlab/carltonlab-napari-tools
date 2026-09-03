@@ -7,6 +7,7 @@ from ._segmentation import (
     run_segmentation,
     run_segmentation_batch_subprocess,
     run_segmentation_subprocess,
+    run_spotiflow_batch_subprocess,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "run_segmentation",
     "run_segmentation_batch_subprocess",
     "run_segmentation_subprocess",
+    "run_spotiflow_batch_subprocess",
 ]
