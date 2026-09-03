@@ -167,6 +167,72 @@ class CellposeSegmenter:
         return np.asarray(masks, dtype=np.uint32)
 
 
+Z_EDGE_AREA_RATIO_THRESHOLD = 0.20
+
+
+def _get_label_central_area(
+    labels_zyx: np.ndarray,
+    label_id: int,
+) -> float:
+    occupied_z_sections = np.flatnonzero(
+        np.any(labels_zyx == label_id, axis=(1, 2))
+    )
+    if len(occupied_z_sections) == 0:
+        return 0.0
+
+    middle_index = len(occupied_z_sections) // 2
+    if len(occupied_z_sections) % 2:
+        central_z = occupied_z_sections[middle_index]
+        return float(np.count_nonzero(labels_zyx[central_z] == label_id))
+
+    lower_central_z = occupied_z_sections[middle_index - 1]
+    upper_central_z = occupied_z_sections[middle_index]
+    lower_area = np.count_nonzero(labels_zyx[lower_central_z] == label_id)
+    upper_area = np.count_nonzero(labels_zyx[upper_central_z] == label_id)
+    return float(lower_area + upper_area) / 2.0
+
+
+def _get_truncated_z_edge_labels(
+    labels_zyx: np.ndarray,
+) -> set[int]:
+    if labels_zyx.shape[0] < 2:
+        return {
+            int(label_id) for label_id in np.unique(labels_zyx) if label_id > 0
+        }
+
+    lower_edge_labels = {
+        int(label_id) for label_id in np.unique(labels_zyx[:2]) if label_id > 0
+    }
+    upper_edge_labels = {
+        int(label_id)
+        for label_id in np.unique(labels_zyx[-2:])
+        if label_id > 0
+    }
+
+    labels_to_remove: set[int] = set()
+    for label_id in lower_edge_labels | upper_edge_labels:
+        central_area = _get_label_central_area(labels_zyx, label_id)
+        if central_area <= 0:
+            labels_to_remove.add(label_id)
+            continue
+
+        edge_areas: list[int] = []
+        if label_id in lower_edge_labels:
+            edge_areas.append(int(np.count_nonzero(labels_zyx[1] == label_id)))
+        if label_id in upper_edge_labels:
+            edge_areas.append(
+                int(np.count_nonzero(labels_zyx[-2] == label_id))
+            )
+
+        if any(
+            edge_area >= central_area * Z_EDGE_AREA_RATIO_THRESHOLD
+            for edge_area in edge_areas
+        ):
+            labels_to_remove.add(label_id)
+
+    return labels_to_remove
+
+
 def remove_edge_objects(labels_zyx: np.ndarray) -> np.ndarray:
     labels = np.asarray(labels_zyx)
     if labels.ndim != 3:
@@ -174,14 +240,11 @@ def remove_edge_objects(labels_zyx: np.ndarray) -> np.ndarray:
             f"Expected a 3D label image, got shape {labels.shape}"
         )
 
-    z_max = labels.shape[0] - 1
     y_max = labels.shape[1] - 1
     x_max = labels.shape[2] - 1
-    edge_labels = np.unique(
+    xy_edge_labels = np.unique(
         np.concatenate(
             [
-                labels[0:2, :, :].ravel(),
-                labels[z_max - 1 : z_max + 1, :, :].ravel(),
                 labels[:, 0:2, :].ravel(),
                 labels[:, y_max - 1 : y_max + 1, :].ravel(),
                 labels[:, :, 0:2].ravel(),
@@ -189,12 +252,16 @@ def remove_edge_objects(labels_zyx: np.ndarray) -> np.ndarray:
             ]
         )
     )
-    edge_labels = edge_labels[edge_labels > 0]
-    if len(edge_labels) == 0:
+    labels_to_remove = {
+        int(label_id) for label_id in xy_edge_labels if label_id > 0
+    }
+    labels_to_remove.update(_get_truncated_z_edge_labels(labels))
+
+    if not labels_to_remove:
         return labels.astype(np.uint32, copy=True)
 
     filtered = labels.copy()
-    filtered[np.isin(filtered, edge_labels)] = 0
+    filtered[np.isin(filtered, list(labels_to_remove))] = 0
     return np.asarray(filtered, dtype=np.uint32)
 
 
