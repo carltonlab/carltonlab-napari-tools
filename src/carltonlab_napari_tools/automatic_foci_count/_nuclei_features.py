@@ -29,7 +29,7 @@ class NucleusCandidate:
 
 def build_nucleus_candidates(
     labels_by_tile: dict[int, NDArray[np.uint32]],
-    tile_offsets_yx: dict[int, tuple[float, float]],
+    tile_offsets_zyx: dict[int, tuple[float, float, float]],
 ) -> list[NucleusCandidate]:
     candidates: list[NucleusCandidate] = []
 
@@ -40,7 +40,7 @@ def build_nucleus_candidates(
                 f"got shape {labels.shape}"
             )
 
-        y_offset, x_offset = tile_offsets_yx[tile_index]
+        z_offset, y_offset, x_offset = tile_offsets_zyx[tile_index]
         label_ids = np.unique(labels)
 
         for label_id in label_ids:
@@ -64,7 +64,7 @@ def build_nucleus_candidates(
                     tile_index=tile_index,
                     label_id=int(label_id),
                     stitched_center_zyx=(
-                        float(center_z),
+                        float(center_z + z_offset),
                         float(center_y + y_offset),
                         float(center_x + x_offset),
                     ),
@@ -82,16 +82,18 @@ def _point_is_inside_other_tile_object(
     candidate: NucleusCandidate,
     other_tile_index: int,
     labels_by_tile: dict[int, NDArray[np.uint32]],
-    tile_offsets_yx: dict[int, tuple[float, float]],
+    tile_offsets_zyx: dict[int, tuple[float, float, float]],
 ) -> bool:
     if candidate.tile_index == other_tile_index:
         return False
 
     labels = labels_by_tile[other_tile_index]
-    y_offset, x_offset = tile_offsets_yx[other_tile_index]
+    z_offset, y_offset, x_offset = tile_offsets_zyx[other_tile_index]
     z, y, x = candidate.stitched_center_zyx
 
-    local_index = np.rint([z, y - y_offset, x - x_offset]).astype(int)
+    local_index = np.rint([z - z_offset, y - y_offset, x - x_offset]).astype(
+        int
+    )
 
     if np.any(local_index < 0):
         return False
@@ -104,7 +106,7 @@ def _point_is_inside_other_tile_object(
 def deduplicate_nucleus_candidates(
     candidates: list[NucleusCandidate],
     labels_by_tile: dict[int, NDArray[np.uint32]],
-    tile_offsets_yx: dict[int, tuple[float, float]],
+    tile_offsets_zyx: dict[int, tuple[float, float, float]],
 ) -> list[NucleusCandidate]:
     surviving_candidates: list[NucleusCandidate] = []
 
@@ -117,7 +119,7 @@ def deduplicate_nucleus_candidates(
                 candidate,
                 other_candidate.tile_index,
                 labels_by_tile,
-                tile_offsets_yx,
+                tile_offsets_zyx,
             )
         ]
 

@@ -212,8 +212,8 @@ def build_tile_local_square_records_from_labels(
 def get_tile_stitched_pixel_offsets(
     stitched_image_path: str | Path,
     tiles_directory: str | Path,
-    tile_index: int,
-) -> tuple[float, float]:
+    tile_path: str | Path,
+) -> tuple[float, float, float]:
     tile_positions_path = get_tile_positions_path(
         Path(stitched_image_path),
         Path(tiles_directory),
@@ -225,17 +225,26 @@ def get_tile_stitched_pixel_offsets(
 
     with tile_positions_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
-        rows = [dict(row) for row in reader]
-
-    if tile_index < 0 or tile_index >= len(rows):
-        raise IndexError(
-            f"Tile index {tile_index} is out of bounds for {tile_positions_path}"
+        row = next(
+            (
+                dict(candidate)
+                for candidate in reader
+                if Path(candidate.get("tile_name", "")).name
+                == Path(tile_path).name
+            ),
+            None,
         )
 
-    row = rows[tile_index]
+    if row is None:
+        raise ValueError(
+            f"Tile {Path(tile_path).name!r} is missing from "
+            f"{tile_positions_path}"
+        )
+
+    z_offset = float((row.get("z_min_px_index") or "0").strip())
     y_offset = float((row.get("y_min_px_index") or "0").strip())
     x_offset = float((row.get("x_min_px_index") or "0").strip())
-    return y_offset, x_offset
+    return z_offset, y_offset, x_offset
 
 
 def load_napari_points_csv(
@@ -257,7 +266,7 @@ def map_tile_local_points_to_stitched_image(
     tile_local_points_zyx: NDArray[np.float32],
     stitched_image_path: str | Path,
     tiles_directory: str | Path,
-    tile_index: int,
+    tile_path: str | Path,
 ) -> NDArray[np.float32]:
     points = np.asarray(tile_local_points_zyx, dtype=np.float32)
     if points.ndim != 2 or points.shape[1] != 3:
@@ -267,15 +276,12 @@ def map_tile_local_points_to_stitched_image(
     if len(points) == 0:
         return np.empty((0, 3), dtype=np.float32)
 
-    y_offset, x_offset = get_tile_stitched_pixel_offsets(
+    offsets_zyx = get_tile_stitched_pixel_offsets(
         stitched_image_path,
         tiles_directory,
-        tile_index,
+        tile_path,
     )
-    stitched_points = points.copy()
-    stitched_points[:, 1] += y_offset
-    stitched_points[:, 2] += x_offset
-    return stitched_points
+    return points + np.asarray(offsets_zyx, dtype=np.float32)
 
 
 def filter_points_inside_label(
@@ -349,7 +355,7 @@ def map_tile_local_squares_to_stitched_image(
     tile_local_squares_yx: NDArray[np.float32],
     stitched_image_path: str | Path,
     tiles_directory: str | Path,
-    tile_index: int,
+    tile_path: str | Path,
 ) -> NDArray[np.float32]:
     squares = np.asarray(tile_local_squares_yx, dtype=np.float32)
     if squares.ndim != 3 or squares.shape[1:] != (4, 2):
@@ -360,10 +366,10 @@ def map_tile_local_squares_to_stitched_image(
     if len(squares) == 0:
         return np.empty((0, 4, 2), dtype=np.float32)
 
-    y_offset, x_offset = get_tile_stitched_pixel_offsets(
+    _z_offset, y_offset, x_offset = get_tile_stitched_pixel_offsets(
         stitched_image_path,
         tiles_directory,
-        tile_index,
+        tile_path,
     )
     offset_yx = np.asarray([y_offset, x_offset], dtype=np.float32)
     return squares + offset_yx
@@ -374,13 +380,14 @@ def map_tile_local_square_records_to_stitched_image(
     stitched_image_path: str | Path,
     tiles_directory: str | Path,
     tile_index: int,
+    tile_path: str | Path,
 ) -> list[dict[str, object]]:
     if len(square_records) == 0:
         return []
-    y_offset, x_offset = get_tile_stitched_pixel_offsets(
+    z_offset, y_offset, x_offset = get_tile_stitched_pixel_offsets(
         stitched_image_path,
         tiles_directory,
-        tile_index,
+        tile_path,
     )
     offset_yx = np.asarray([y_offset, x_offset], dtype=np.float32)
     stitched_records: list[dict[str, object]] = []
@@ -391,8 +398,8 @@ def map_tile_local_square_records_to_stitched_image(
                 "label_id": int(record["label_id"]),
                 "tile_index": tile_index,
                 "square_yx": square_yx + offset_yx,
-                "z1": int(record["z1"]),
-                "z2": int(record["z2"]),
+                "z1": int(record["z1"]) + int(z_offset),
+                "z2": int(record["z2"]) + int(z_offset),
             }
         )
     return stitched_records
@@ -573,6 +580,7 @@ def build_region_squares_from_cleaned_segmentations(
 
 def build_region_square_records_from_cleaned_segmentations(
     segmentation_paths_by_tile: dict[int, str | Path],
+    tile_paths_by_tile: dict[int, str | Path],
     stitched_image_path: str | Path,
     tiles_directory: str | Path,
     edited_regions_csv_path: str | Path,
@@ -596,6 +604,7 @@ def build_region_square_records_from_cleaned_segmentations(
                 stitched_image_path=stitched_image_path,
                 tiles_directory=tiles_directory,
                 tile_index=tile_index,
+                tile_path=tile_paths_by_tile[tile_index],
             )
         )
         grouped_records, unassigned_records = (
@@ -690,7 +699,7 @@ def save_auto_scored_nuclei_files_from_features(
             label_points,
             stitched_image_path=stitched_image_path,
             tiles_directory=project_path / TILES_DIR_NAME,
-            tile_index=tile_index,
+            tile_path=tile_path,
         )
         feature_data = feature.to_dict()
         crop_bounds = get_sbs_crop_bounds(feature_data, stitched_data)
@@ -848,7 +857,7 @@ def save_auto_scored_nuclei_files_from_region_records(
                 label_points_local,
                 stitched_image_path=stitched_image_path,
                 tiles_directory=_get_project_tiles_path(directory_path),
-                tile_index=tile_index,
+                tile_path=tile_paths[tile_index],
             )
 
             if len(stitched_points) > 0:
@@ -1795,7 +1804,7 @@ class AutoFociCountWidget(QWidget):
             return
 
         labels_by_tile: dict[int, NDArray[np.uint32]] = {}
-        tile_offsets_yx: dict[int, tuple[float, float]] = {}
+        tile_offsets_zyx: dict[int, tuple[float, float, float]] = {}
         for tile_index, tile_path in enumerate(tile_paths):
             segmentation_path = _get_segmentation_output_path_for_tile(
                 project_path, tile_path
@@ -1803,20 +1812,20 @@ class AutoFociCountWidget(QWidget):
             labels_by_tile[tile_index] = load_cleaned_segmentation_labels(
                 segmentation_path
             )
-            tile_offsets_yx[tile_index] = get_tile_stitched_pixel_offsets(
+            tile_offsets_zyx[tile_index] = get_tile_stitched_pixel_offsets(
                 stitched_image_path,
                 project_path / TILES_DIR_NAME,
-                tile_index,
+                tile_path,
             )
 
         candidates = build_nucleus_candidates(
             labels_by_tile=labels_by_tile,
-            tile_offsets_yx=tile_offsets_yx,
+            tile_offsets_zyx=tile_offsets_zyx,
         )
         candidates = deduplicate_nucleus_candidates(
             candidates=candidates,
             labels_by_tile=labels_by_tile,
-            tile_offsets_yx=tile_offsets_yx,
+            tile_offsets_zyx=tile_offsets_zyx,
         )
         save_nucleus_features_and_points(
             candidates=candidates,
