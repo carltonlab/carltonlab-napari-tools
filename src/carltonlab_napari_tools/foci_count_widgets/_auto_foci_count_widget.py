@@ -97,10 +97,11 @@ from carltonlab_napari_tools.image_stitching._stitching_options_widget import (
     CLTStitchingOptionsWidget,
 )
 from carltonlab_napari_tools.segmentation import (
+    SpotiflowDetector,
     clean_segmentation_file,
     get_cleaned_segmentation_output_path,
     load_segmentation_npy,
-    run_segmentation_subprocess,
+    run_segmentation_batch_subprocess,
 )
 
 if TYPE_CHECKING:
@@ -1518,6 +1519,7 @@ class AutoFociCountWidget(QWidget):
     ) -> None:
         current_project = "unknown"
         current_stage = "starting"
+        spotiflow_detector: SpotiflowDetector | None = None
         try:
             for directory_index, directory_path in enumerate(
                 directory_paths, start=1
@@ -1570,10 +1572,18 @@ class AutoFociCountWidget(QWidget):
                 )
                 if need_tile_fc_stage:
                     current_stage = "automatic tile foci counting"
+                    if spotiflow_detector is None:
+                        spotiflow_detector = SpotiflowDetector(
+                            model_name=self._spotiflow_model_name,
+                            use_gpu=(
+                                self._stitching_options_widget.is_gpu_enabled()
+                            ),
+                        )
                     self._run_auto_tile_foci_count_for_directory(
                         directory_path,
                         colocalization_channels_filter,
                         minimum_colocalization_intensity_ratio,
+                        spotiflow_detector,
                     )
                 else:
                     print(
@@ -1694,13 +1704,11 @@ class AutoFociCountWidget(QWidget):
             _get_project_files_path(directory_path) / SEGMENTATION_DIR_NAME
         )
         total_tiles = len(tile_paths)
+        pending_tile_paths: list[Path] = []
         print(
             f"Starting segmentation for {total_tiles} tiles in {directory_path}"
         )
-        for tile_index, tile_path in enumerate(tile_paths, start=1):
-            print(
-                f"Starting segmentation for tile {tile_index}/{total_tiles}: {tile_path}"
-            )
+        for tile_path in tile_paths:
             segmentation_output_path = segmentation_output_dir / (
                 f"{tile_path.name[: -len('.ome.zarr')]}_meiotic_3d_crops_masks.npy"
             )
@@ -1710,11 +1718,18 @@ class AutoFociCountWidget(QWidget):
                     f"{tile_path}; skipping segmentation"
                 )
             else:
-                run_segmentation_subprocess(
-                    image_path=tile_path,
-                    model_name="meiotic_3d_crops",
-                    output_dir=segmentation_output_dir,
-                )
+                pending_tile_paths.append(tile_path)
+
+        run_segmentation_batch_subprocess(
+            image_paths=pending_tile_paths,
+            model_name="meiotic_3d_crops",
+            output_dir=segmentation_output_dir,
+        )
+
+        for tile_index, tile_path in enumerate(tile_paths, start=1):
+            segmentation_output_path = segmentation_output_dir / (
+                f"{tile_path.name[: -len('.ome.zarr')]}_meiotic_3d_crops_masks.npy"
+            )
             cleaned_segmentation_output_path = (
                 get_cleaned_segmentation_output_path(segmentation_output_path)
             )
@@ -1897,6 +1912,7 @@ class AutoFociCountWidget(QWidget):
         normalization_input_max: float,
         colocalization_channels_filter: list[str],
         minimum_colocalization_intensity_ratio: float,
+        spotiflow_detector: SpotiflowDetector | None = None,
     ) -> None:
         auto_count_output_dir = (
             Path(segmentation_path).parent.parent / AUTO_COUNT_DIR_NAME
@@ -1934,6 +1950,7 @@ class AutoFociCountWidget(QWidget):
             normalization_input_min=normalization_input_min,
             normalization_input_max=normalization_input_max,
             normalization_output_max=1000,
+            spotiflow_detector=spotiflow_detector,
         )
         print(
             f"Automatic foci count reference image shape: {ref_image_zyx.shape}"
@@ -1961,6 +1978,7 @@ class AutoFociCountWidget(QWidget):
         directory_path: str | Path,
         colocalization_channels_filter: list[str],
         minimum_colocalization_intensity_ratio: float,
+        spotiflow_detector: SpotiflowDetector | None = None,
     ) -> None:
         tile_paths = self._get_ready_tile_paths(directory_path)
         if not tile_paths:
@@ -2019,4 +2037,5 @@ class AutoFociCountWidget(QWidget):
                 minimum_colocalization_intensity_ratio=(
                     minimum_colocalization_intensity_ratio
                 ),
+                spotiflow_detector=spotiflow_detector,
             )

@@ -133,35 +133,37 @@ def _prepare_3d_image_channel_zyx(
     return image_zyx, spacing
 
 
-def _run_cellpose_3d(
-    image_zyx: np.ndarray,
-    model_path: Path,
-    anisotropy: float | None,
-) -> np.ndarray:
-    import torch
-    from cellpose import models
+class CellposeSegmenter:
+    def __init__(self, model_path: Path):
+        import torch
+        from cellpose import models
 
-    use_gpu = torch.cuda.is_available()
-    print(f"Loading Cellpose model: {model_path}")
-    print(f"Cellpose GPU available: {use_gpu}")
-    print(f"Cellpose anisotropy: {anisotropy}")
+        use_gpu = torch.cuda.is_available()
+        print(f"Loading Cellpose model: {model_path}")
+        print(f"Cellpose GPU available: {use_gpu}")
+        self._model = models.CellposeModel(
+            gpu=use_gpu,
+            pretrained_model=str(model_path),
+        )
 
-    model = models.CellposeModel(
-        gpu=use_gpu,
-        pretrained_model=str(model_path),
-    )
-    masks, flows, styles = model.eval(
-        image_zyx,
-        channels=[0, 0],
-        channel_axis=None,
-        z_axis=0,
-        normalize={"normalize": True, "norm3D": True},
-        do_3D=True,
-        anisotropy=anisotropy,
-    )
-    del flows
-    del styles
-    return np.asarray(masks, dtype=np.uint32)
+    def segment(
+        self,
+        image_zyx: np.ndarray,
+        anisotropy: float | None,
+    ) -> np.ndarray:
+        print(f"Cellpose anisotropy: {anisotropy}")
+        masks, flows, styles = self._model.eval(
+            image_zyx,
+            channels=[0, 0],
+            channel_axis=None,
+            z_axis=0,
+            normalize={"normalize": True, "norm3D": True},
+            do_3D=True,
+            anisotropy=anisotropy,
+        )
+        del flows
+        del styles
+        return np.asarray(masks, dtype=np.uint32)
 
 
 def remove_edge_objects(labels_zyx: np.ndarray) -> np.ndarray:
@@ -301,35 +303,41 @@ def _resolve_spotiflow_model_dir(model_name: str) -> Path:
     return model_path
 
 
+class SpotiflowDetector:
+    def __init__(self, model_name: str = "smfish_3d", use_gpu: bool = True):
+        from spotiflow.model import Spotiflow
+
+        self._device = "auto" if use_gpu else "cpu"
+        model_dir = MODELS_DIR / model_name
+        if model_dir.exists():
+            print(f"Loading Spotiflow model from folder: {model_dir}")
+            self._model = Spotiflow.from_folder(
+                str(model_dir),
+                map_location=self._device,
+            )
+        else:
+            print(f"Loading Spotiflow pretrained model: {model_name}")
+            self._model = Spotiflow.from_pretrained(
+                model_name,
+                map_location=self._device,
+            )
+
+    def predict(self, image_zyx: np.ndarray) -> np.ndarray:
+        spots, _details = self._model.predict(
+            np.asarray(image_zyx),
+            normalizer=None,
+            verbose=False,
+            device=self._device,
+        )
+        return np.asarray(spots)
+
+
 def run_spotiflow_spot_detection(
     image_zyx: np.ndarray,
     model_name: str = "smfish_3d",
     use_gpu: bool = True,
 ) -> np.ndarray:
-    from spotiflow.model import Spotiflow
-
-    device = "auto" if use_gpu else "cpu"
-    print(f"Spotiflow device request: {device}")
-    model_dir = MODELS_DIR / model_name
-    if model_dir.exists():
-        print(f"Loading Spotiflow model from folder: {model_dir}")
-        model = Spotiflow.from_folder(
-            str(model_dir),
-            map_location=device,
-        )
-    else:
-        print(f"Loading Spotiflow pretrained model: {model_name}")
-        model = Spotiflow.from_pretrained(
-            model_name,
-            map_location=device,
-        )
-    spots, _details = model.predict(
-        np.asarray(image_zyx),
-        normalizer=None,
-        verbose=False,
-        device=device,
-    )
-    return np.asarray(spots)
+    return SpotiflowDetector(model_name, use_gpu).predict(image_zyx)
 
 
 def run_spotiflow_subprocess(
@@ -456,10 +464,58 @@ def run_segmentation_subprocess(
     return True
 
 
+def run_segmentation_batch_subprocess(
+    image_paths: list[str | Path],
+    model_name: str,
+    output_dir: str | Path,
+) -> bool:
+    if not image_paths:
+        return True
+
+    payload = {
+        "image_paths": [str(path) for path in image_paths],
+        "model_name": model_name,
+        "output_dir": str(output_dir),
+    }
+    env = os.environ.copy()
+    env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    command = [
+        sys.executable,
+        "-m",
+        "carltonlab_napari_tools.segmentation._segmentation",
+        json.dumps(payload),
+    ]
+    print(f"Starting Cellpose batch subprocess for {len(image_paths)} tiles")
+    popen_kwargs = {
+        "env": env,
+        "text": True,
+    }
+    if sys.platform.startswith("linux"):
+        popen_kwargs["preexec_fn"] = _set_child_parent_death_signal
+
+    process = subprocess.Popen(
+        command,
+        **popen_kwargs,
+    )
+    try:
+        returncode = process.wait()
+    except BaseException:
+        process.terminate()
+        process.wait()
+        raise
+
+    if returncode != 0:
+        raise RuntimeError(
+            f"Cellpose batch subprocess failed with exit code {returncode}"
+        )
+    return True
+
+
 def run_segmentation(
     image_path: str | Path,
     model_name: str,
     output_dir: str | Path,
+    segmenter: CellposeSegmenter | None = None,
 ) -> bool:
     image_path_obj = Path(image_path)
     if not image_path_obj.exists():
@@ -495,9 +551,11 @@ def run_segmentation(
     print(f"Segmentation output path: {output_path}")
     print(f"Segmentation spacing: {spacing}")
 
-    masks_zyx = _run_cellpose_3d(
+    if segmenter is None:
+        segmenter = CellposeSegmenter(model_path)
+
+    masks_zyx = segmenter.segment(
         image_zyx=image_zyx,
-        model_path=model_path,
         anisotropy=anisotropy,
     )
     print(f"Segmentation mask shape (ZYX): {masks_zyx.shape}")
@@ -506,10 +564,42 @@ def run_segmentation(
     return True
 
 
+def run_segmentation_batch(
+    image_paths: list[str | Path],
+    model_name: str,
+    output_dir: str | Path,
+) -> bool:
+    if not image_paths:
+        return True
+
+    model_path = _resolve_model_path(model_name)
+    segmenter = CellposeSegmenter(model_path)
+    for image_index, image_path in enumerate(image_paths, start=1):
+        print(
+            "Running Cellpose segmentation "
+            f"{image_index}/{len(image_paths)}: {image_path}"
+        )
+        run_segmentation(
+            image_path=image_path,
+            model_name=model_name,
+            output_dir=output_dir,
+            segmenter=segmenter,
+        )
+    return True
+
+
 def _main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("Expected one JSON payload argument")
     payload = json.loads(sys.argv[1])
+    if "image_paths" in payload:
+        run_segmentation_batch(
+            image_paths=payload["image_paths"],
+            model_name=payload["model_name"],
+            output_dir=payload["output_dir"],
+        )
+        return 0
+
     if "output_dir" in payload:
         run_segmentation(
             image_path=payload["image_path"],
