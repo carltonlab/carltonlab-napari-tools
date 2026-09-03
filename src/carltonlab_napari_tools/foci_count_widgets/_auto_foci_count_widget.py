@@ -1507,10 +1507,13 @@ class AutoFociCountWidget(QWidget):
         colocalization_channels_filter: list[str],
         minimum_colocalization_intensity_ratio: float,
     ) -> None:
+        current_project = "unknown"
+        current_stage = "starting"
         try:
             for directory_index, directory_path in enumerate(
                 directory_paths, start=1
             ):
+                current_project = directory_path
                 print("")
                 print(
                     "Run batch FC "
@@ -1532,12 +1535,16 @@ class AutoFociCountWidget(QWidget):
                         f"No stitched image found for {directory_path}"
                     )
 
+                current_stage = "segmentation"
                 self._call_segmentation(project_path)
+
+                current_stage = "creating automatic nuclei features"
                 self._create_auto_nuclei_features(
                     project_path=project_path,
                     tile_paths=tile_paths,
                     stitched_image_path=stitched_image_path,
                 )
+                current_stage = "creating SBS crops"
                 self._create_auto_sbs_crops_from_features(
                     project_path=project_path,
                     stitched_image_path=stitched_image_path,
@@ -1553,6 +1560,7 @@ class AutoFociCountWidget(QWidget):
                     )
                 )
                 if need_tile_fc_stage:
+                    current_stage = "automatic tile foci counting"
                     self._run_auto_tile_foci_count_for_directory(
                         directory_path,
                         colocalization_channels_filter,
@@ -1565,6 +1573,7 @@ class AutoFociCountWidget(QWidget):
                     )
 
                 if need_scored_stage:
+                    current_stage = "saving scored nuclei"
                     save_auto_scored_nuclei_files_from_features(
                         project_path=project_path,
                         tile_paths=tile_paths,
@@ -1587,7 +1596,12 @@ class AutoFociCountWidget(QWidget):
                     Qt.ConnectionType.QueuedConnection,
                 )
         except (OSError, ValueError, RuntimeError) as exc:
-            print(f"Run batch FC failed: {exc}")
+            print(
+                "Run batch FC failed "
+                f"for project {current_project!r} "
+                f"during {current_stage}: "
+                f"{type(exc).__name__}: {exc}"
+            )
         finally:
             self._batch_fc_running = False
             print("Run batch FC finished")
