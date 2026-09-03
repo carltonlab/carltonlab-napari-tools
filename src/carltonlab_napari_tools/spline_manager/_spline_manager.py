@@ -17,6 +17,7 @@ from carltonlab_napari_tools._shared_variables import (
 
 SPLINE_DEFAULT_EDGE_WIDTH = 8
 SPLINE_EDGE_COLOR = "#eb3434"
+SPLINE_END_EXCLUSION_START = 0.95
 
 
 def configure_spline_layer(spline_layer: Shapes) -> None:
@@ -561,7 +562,7 @@ def assign_points_to_spline_regions(
     points_yx: np.ndarray,
     spline_shape: Shape,
     number_of_regions: int,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Project points onto the interpolated spline and assign regions."""
     if points_yx.ndim != 2 or points_yx.shape[1] != 2:
         raise ValueError("points_yx must have shape (N, 2)")
@@ -569,24 +570,43 @@ def assign_points_to_spline_regions(
         raise ValueError("number_of_regions must be positive")
 
     _, _, interpolated_spline = get_spline_object(spline_shape)
-    projected_points = []
-    region_numbers = []
+    final_tangent = interpolated_spline[-1] - interpolated_spline[-2]
+    final_tangent /= np.linalg.norm(final_tangent)
+
+    projected_points: list[np.ndarray] = []
+    region_numbers: list[float] = []
+    out_of_spline: list[bool] = []
     for point in points_yx:
         projected_point, normalized_position = project_point_to_polyline(
             point,
             interpolated_spline,
         )
         projected_points.append(projected_point)
+
+        point_from_projection = point - projected_point
+        is_past_spline_end = (
+            normalized_position >= SPLINE_END_EXCLUSION_START
+            and np.dot(point_from_projection, final_tangent) > 0.0
+        )
+        if is_past_spline_end:
+            region_numbers.append(np.nan)
+            out_of_spline.append(True)
+            continue
+
         region_numbers.append(
-            min(
-                number_of_regions,
-                int(normalized_position * number_of_regions) + 1,
+            float(
+                min(
+                    number_of_regions,
+                    int(normalized_position * number_of_regions) + 1,
+                )
             )
         )
+        out_of_spline.append(False)
 
     return (
         np.asarray(projected_points, dtype=np.float32),
-        np.asarray(region_numbers, dtype=np.int64),
+        np.asarray(region_numbers, dtype=np.float32),
+        np.asarray(out_of_spline, dtype=bool),
     )
 
 
