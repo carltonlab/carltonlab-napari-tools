@@ -78,14 +78,14 @@ def build_nucleus_candidates(
     return candidates
 
 
-def _point_is_inside_other_tile_object(
+def _get_other_tile_label_at_candidate_point(
     candidate: NucleusCandidate,
     other_tile_index: int,
     labels_by_tile: dict[int, NDArray[np.uint32]],
     tile_offsets_zyx: dict[int, tuple[float, float, float]],
-) -> bool:
+) -> int | None:
     if candidate.tile_index == other_tile_index:
-        return False
+        return None
 
     labels = labels_by_tile[other_tile_index]
     z_offset, y_offset, x_offset = tile_offsets_zyx[other_tile_index]
@@ -96,11 +96,12 @@ def _point_is_inside_other_tile_object(
     )
 
     if np.any(local_index < 0):
-        return False
+        return None
     if np.any(local_index >= np.asarray(labels.shape)):
-        return False
+        return None
 
-    return bool(labels[tuple(local_index)] > 0)
+    label_id = int(labels[tuple(local_index)])
+    return label_id if label_id > 0 else None
 
 
 def deduplicate_nucleus_candidates(
@@ -109,19 +110,28 @@ def deduplicate_nucleus_candidates(
     tile_offsets_zyx: dict[int, tuple[float, float, float]],
 ) -> list[NucleusCandidate]:
     surviving_candidates: list[NucleusCandidate] = []
+    candidates_by_tile_and_label = {
+        (candidate.tile_index, candidate.label_id): candidate
+        for candidate in candidates
+    }
 
     for candidate in candidates:
-        conflicting_candidates = [
-            other_candidate
-            for other_candidate in candidates
-            if other_candidate != candidate
-            and _point_is_inside_other_tile_object(
+        conflicting_candidates: list[NucleusCandidate] = []
+        for other_tile_index in labels_by_tile:
+            other_label_id = _get_other_tile_label_at_candidate_point(
                 candidate,
-                other_candidate.tile_index,
+                other_tile_index,
                 labels_by_tile,
                 tile_offsets_zyx,
             )
-        ]
+            if other_label_id is None:
+                continue
+
+            other_candidate = candidates_by_tile_and_label.get(
+                (other_tile_index, other_label_id)
+            )
+            if other_candidate is not None:
+                conflicting_candidates.append(other_candidate)
 
         if any(
             other.voxel_count > candidate.voxel_count
