@@ -161,6 +161,7 @@ class CellposeSegmenter:
             normalize={"normalize": True, "norm3D": True},
             do_3D=True,
             anisotropy=anisotropy,
+            flow3D_smooth=[1.5, 0.0, 0.0],
         )
         del flows
         del styles
