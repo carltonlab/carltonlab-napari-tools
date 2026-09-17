@@ -1165,6 +1165,8 @@ class AutoFociCountWidget(QWidget):
         project_paths = self._project_list_widget.get_project_paths()
         if not project_paths:
             return
+        if not self._validate_gpu_setting():
+            return
 
         channels = self._keep_channels_widget.get_channels()
 
@@ -1442,6 +1444,8 @@ class AutoFociCountWidget(QWidget):
         if self._batch_fc_running:
             print("Run batch FC is already running")
             return
+        if not self._validate_gpu_setting():
+            return
         try:
             colocalization_channels_filter = (
                 self._get_colocalization_channels_filter()
@@ -1654,6 +1658,36 @@ class AutoFociCountWidget(QWidget):
             else "custom"
         )
         self._settings_status_lb.setText(f"Settings: {status}")
+
+    def _validate_gpu_setting(self) -> bool:
+        if not self._settings.use_gpu:
+            return True
+
+        if importlib.util.find_spec("cupy") is None:
+            show_warning(
+                "GPU processing is enabled, but CuPy is not installed."
+            )
+            return False
+
+        try:
+            import cupy
+        except (ImportError, OSError) as exc:
+            show_warning(f"GPU processing is not available: {exc}")
+            return False
+
+        try:
+            device_count = cupy.cuda.runtime.getDeviceCount()
+        except cupy.cuda.runtime.CUDARuntimeError as exc:
+            show_warning(f"GPU processing is not available: {exc}")
+            return False
+
+        if device_count < 1:
+            show_warning(
+                "GPU processing is enabled, but no CUDA GPU was found."
+            )
+            return False
+
+        return True
 
     def _call_segmentation(self, directory_path: str | Path) -> None:
         tile_paths = self._get_ready_tile_paths(directory_path)
