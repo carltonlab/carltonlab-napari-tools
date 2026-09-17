@@ -293,7 +293,13 @@ class StitchOmeZarrWidget(QWidget):
         for starting_project in starting_projects:
             project_path = get_clsp_project_path(starting_project)
 
-            if not create_project_structure(project_path, "clsp"):
+            try:
+                create_project_structure(project_path, "clsp")
+            except (OSError, ValueError) as exc:
+                show_error(
+                    f"Could not create project for {starting_project.name}:\n"
+                    f"{exc}"
+                )
                 continue
 
             tiles_path = project_path / TILES_DIR_NAME
@@ -405,13 +411,17 @@ class StitchOmeZarrWidget(QWidget):
                 f"\nStitching: {project_path.name}",
                 flush=True,
             )
-            stitching_succeeded = stitch_ome_zarr_images(
-                image_list=extracted_paths,
-                output_dir=project_path / STITCHED_IMAGE_DIR_NAME,
-                **stitching_options,
-            )
-            if stitching_succeeded:
-                print("Done stitching...\n", flush=True)
+            try:
+                stitch_ome_zarr_images(
+                    image_list=extracted_paths,
+                    output_dir=project_path / STITCHED_IMAGE_DIR_NAME,
+                    **stitching_options,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                show_error(f"Could not stitch {project_path.name}:\n{exc}")
+                continue
+
+            print("Done stitching...\n", flush=True)
 
         print("\nDone processing all projects.\n", flush=True)
         self._project_list_widget.refresh_rows()

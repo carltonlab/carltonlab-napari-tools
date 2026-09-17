@@ -1148,8 +1148,7 @@ class AutoFociCountWidget(QWidget):
         try:
             project_path = get_clsp_project_path(starting_path)
 
-            if not create_project_structure(project_path, "clsp"):
-                return False
+            create_project_structure(project_path, "clsp")
 
             tiles_path = project_path / TILES_DIR_NAME
             if (
@@ -1170,13 +1169,13 @@ class AutoFociCountWidget(QWidget):
             if any(stitched_path.glob("*.ome.zarr")):
                 return True
 
-            stitching_succeeded = stitch_ome_zarr_images(
+            stitch_ome_zarr_images(
                 image_list=tile_paths,
                 output_dir=stitched_path,
                 **self._get_stitching_options(),
             )
             self._project_list_widget.refresh_rows()
-            return stitching_succeeded
+            return True
         except (OSError, ValueError, RuntimeError) as exc:
             show_warning(f"Could not prepare project {starting_path}:\n{exc}")
             return False

@@ -448,15 +448,17 @@ def stitch_ome_zarr_images(
     num_workers: int | None = None,
     n_batch: int | None = None,
     use_gpu: bool = False,
-) -> bool:
+) -> None:
     if not image_list:
-        show_error("No images to stitch, list is empty.")
-    if any(not str(p).endswith(".ome.zarr") for p in image_list):
-        message: str = " \nThe stitching files are not in .ome.zarr format:"
-        for image in image_list:
-            message = message + "\n" + str(image)
-        show_error(message)
-        return False
+        raise ValueError("No images to stitch; image list is empty.")
+
+    invalid_paths = [
+        str(path) for path in image_list if not str(path).endswith(".ome.zarr")
+    ]
+    if invalid_paths:
+        raise ValueError(
+            "Stitching requires .ome.zarr images:\n" + "\n".join(invalid_paths)
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -520,8 +522,6 @@ def stitch_ome_zarr_images(
         output_zarr=stitched_path,
         transform_key="translation_registered",
     )
-
-    return True
 
 
 def stitch_directories(

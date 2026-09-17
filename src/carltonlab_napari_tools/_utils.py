@@ -113,7 +113,7 @@ SUPPORTED_IMAGE_EXTENSIONS: tuple[str, ...] = (
 
 def load_project_structure_from_json(project_type: str) -> list[Path]:
     if project_type not in PROJECT_TYPES:
-        return []
+        raise ValueError(f"Unsupported project type: {project_type}")
 
     resource_path = (
         Path(__file__).resolve().parent
@@ -125,8 +125,9 @@ def load_project_structure_from_json(project_type: str) -> list[Path]:
         with resource_path.open("r", encoding="utf-8") as structure_file:
             structure = json.load(structure_file)
     except (OSError, json.JSONDecodeError) as exc:
-        show_error(f"Could not load project structure: {exc}")
-        return []
+        raise ValueError(
+            f"Could not load project structure for {project_type}: {exc}"
+        ) from exc
 
     directory_paths: list[Path] = []
 
@@ -143,21 +144,19 @@ def load_project_structure_from_json(project_type: str) -> list[Path]:
 
     directory_tree = structure.get("dir_tree")
     if not isinstance(directory_tree, dict):
-        show_error("Project structure does not contain a valid dir_tree")
-        return []
+        raise ValueError("Project structure does not contain a valid dir_tree")
 
     collect_directories(directory_tree)
     return directory_paths
 
 
-def create_project_structure(project_path: Path, project_type: str) -> bool:
+def create_project_structure(project_path: Path, project_type: str) -> None:
     if project_path.exists() and not project_path.is_dir():
-        show_error(f"Project path is not a directory: {project_path}")
-        return False
+        raise NotADirectoryError(
+            f"Project path is not a directory: {project_path}"
+        )
 
     directory_paths = load_project_structure_from_json(project_type)
-    if not directory_paths:
-        return False
 
     try:
         project_path.mkdir(parents=True, exist_ok=True)
@@ -167,10 +166,7 @@ def create_project_structure(project_path: Path, project_type: str) -> bool:
                 exist_ok=True,
             )
     except OSError as exc:
-        show_error(f"Could not create project structure: {exc}")
-        return False
-
-    return True
+        raise OSError(f"Could not create project structure: {exc}") from exc
 
 
 def create_stitched_project_structure(project_path: Path) -> bool:
