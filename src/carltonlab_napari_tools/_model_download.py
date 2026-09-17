@@ -1,13 +1,45 @@
 from __future__ import annotations
 
+from configparser import ConfigParser
 from hashlib import sha256
 from pathlib import Path
 from urllib.request import urlopen
 
+_MODEL_CONFIG_PATH = (
+    Path(__file__).resolve().parent / "segmentation" / "models.config"
+)
 _BIOIMAGEIO_WEIGHT_URL = (
     "https://hypha.aicell.io/bioimage-io/artifacts/"
     "{model_id}/files/{weight_source}"
 )
+
+
+def load_bioimageio_model_config(model_name: str) -> dict[str, str]:
+    """Load one BioImage.IO model entry from the package configuration."""
+    config = ConfigParser()
+    if not _MODEL_CONFIG_PATH.is_file():
+        raise FileNotFoundError(
+            f"BioImage.IO model configuration not found: {_MODEL_CONFIG_PATH}"
+        )
+
+    config.read(_MODEL_CONFIG_PATH)
+    if not config.has_section(model_name):
+        raise KeyError(
+            f"BioImage.IO model {model_name!r} is not configured in "
+            f"{_MODEL_CONFIG_PATH}"
+        )
+
+    required_keys = ("model_id", "weight_source", "sha256")
+    values = {
+        key: config.get(model_name, key).strip() for key in required_keys
+    }
+    missing_keys = [key for key, value in values.items() if not value]
+    if missing_keys:
+        raise ValueError(
+            f"BioImage.IO model {model_name!r} is missing: "
+            f"{', '.join(missing_keys)}"
+        )
+    return values
 
 
 def download_bioimageio_weight(
