@@ -64,6 +64,9 @@ from carltonlab_napari_tools.general_widgets._project_list_widget import (
 from carltonlab_napari_tools.general_widgets._set_contrast_widget import (
     CLTSetContrastWidget,
 )
+from carltonlab_napari_tools.segmentation._model_directories_widget import (
+    CLTSegmentationModelDirectoriesWidget,
+)
 from carltonlab_napari_tools.stitched_regions_widgets._stitched_regions_widget import (
     CLTStitchedRegionsWidget,
 )
@@ -643,6 +646,12 @@ class ManualFociCountWidget(QWidget):
         )
         self._set_current_widget(generate_plots_widget)
 
+    def _show_model_directories_widget(self) -> None:
+        model_directories_widget = CLTSegmentationModelDirectoriesWidget(
+            parent=self,
+        )
+        self._set_current_widget(model_directories_widget)
+
     def _save_score_nuclei_from_key(self, _event=None) -> None:
         if not isinstance(self._current_widget, CLTScoreNucleiWidget):
             return
@@ -863,6 +872,7 @@ class CarltonLabCountTool(QWidget):
             set_contrasts_callback=self._show_set_contrast_widget,
             set_regions_callback=self._show_stitched_regions_widget,
             generate_plots_callback=self._show_generate_plots_widget,
+            model_directories_callback=self._show_model_directories_widget,
             status_update_callback=(
                 self._manual_foci_count_widget._update_process_status_labels
             ),

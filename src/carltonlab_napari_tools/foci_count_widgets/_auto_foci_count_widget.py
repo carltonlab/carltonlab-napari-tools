@@ -955,6 +955,7 @@ class AutoFociCountWidget(QWidget):
         set_contrasts_callback: Callable[[], None],
         set_regions_callback: Callable[[], None],
         generate_plots_callback: Callable[[], None],
+        model_directories_callback: Callable[[], None],
         status_update_callback: Callable[[], None],
     ):
         super().__init__(parent=parent)
@@ -964,6 +965,7 @@ class AutoFociCountWidget(QWidget):
         self._set_contrasts_callback = set_contrasts_callback
         self._set_regions_callback = set_regions_callback
         self._generate_plots_callback = generate_plots_callback
+        self._model_directories_callback = model_directories_callback
         self._status_update_callback = status_update_callback
 
         self._helper_widget: QWidget
@@ -1118,8 +1120,22 @@ class AutoFociCountWidget(QWidget):
         self._minimum_colocalization_intensity_ratio_layout.addStretch()
         self._binary_mask_filter_ts_toggled()
 
+        self._edit_model_directories_b = QPushButton(
+            "Edit model directory paths",
+            parent=self,
+        )
+        self._edit_model_directories_b.clicked.connect(
+            self._model_directories_callback
+        )
+        self._layout.addWidget(self._edit_model_directories_b)
+
+        self._steps_l = QLabel("Steps:", parent=self)
+        self._steps_l.setStyleSheet("font-weight: bold")
+        self._layout.addSpacing(6)
+        self._layout.addWidget(self._steps_l)
+
         self._set_contrasts_b: QPushButton = QPushButton(
-            "Set contrasts",
+            "1. Set contrasts",
             parent=self,
         )
         self._set_contrasts_b.clicked.connect(
@@ -1128,7 +1144,7 @@ class AutoFociCountWidget(QWidget):
         self._layout.addWidget(self._set_contrasts_b)
 
         self._count_foci_b: QPushButton = QPushButton(
-            "Count foci",
+            "2. Count foci",
             parent=self,
         )
         self._count_foci_b.clicked.connect(self._start_fc_button_pressed)
@@ -1143,14 +1159,14 @@ class AutoFociCountWidget(QWidget):
         self._update_automatic_fc_dependency_status()
 
         self._set_regions_b: QPushButton = QPushButton(
-            "Set regions",
+            "3. Set regions",
             parent=self,
         )
         self._set_regions_b.clicked.connect(self._set_regions_callback)
         self._layout.addWidget(self._set_regions_b)
 
         self._generate_plots_b: QPushButton = QPushButton(
-            "Generate plots",
+            "4. Generate plots",
             parent=self,
         )
         self._generate_plots_b.clicked.connect(self._generate_plots_callback)
