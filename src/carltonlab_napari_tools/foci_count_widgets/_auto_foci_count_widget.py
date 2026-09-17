@@ -4,7 +4,6 @@ import configparser
 import csv
 import importlib
 import json
-import threading
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -18,7 +17,6 @@ from napari.layers import Image
 from napari.qt.threading import thread_worker
 from napari.utils.notifications import show_warning
 from numpy.typing import NDArray
-from qtpy.QtCore import QMetaObject, Qt, Slot
 from qtpy.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -123,6 +121,17 @@ if TYPE_CHECKING:
 @dataclass(frozen=True)
 class ContrastPreparationUpdate:
     """One background-preparation update for one project."""
+
+    project_path: Path
+    project_index: int
+    project_total: int
+    stage: str
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class FociCountUpdate:
+    """One background foci-counting update for one project."""
 
     project_path: Path
     project_index: int
@@ -1102,6 +1111,8 @@ class AutoFociCountWidget(QWidget):
         self._automatic_workflow_active = False
         self._contrast_preparation_worker = None
         self._contrast_failures: list[str] = []
+        self._foci_count_worker = None
+        self._foci_count_failures: list[str] = []
         self._spotiflow_model_name = "synth_3d"
 
         self._layout: QVBoxLayout = QVBoxLayout()
@@ -1181,6 +1192,10 @@ class AutoFociCountWidget(QWidget):
         )
         self._count_foci_b.clicked.connect(self._start_fc_button_pressed)
         self._layout.addWidget(self._count_foci_b)
+
+        self._foci_count_status_lb = QLabel(parent=self)
+        self._foci_count_status_lb.setWordWrap(True)
+        self._layout.addWidget(self._foci_count_status_lb)
 
         self._automatic_fc_dependency_status_lb = QLabel(parent=self)
         self._automatic_fc_dependency_status_lb.setStyleSheet(
@@ -1338,11 +1353,6 @@ class AutoFociCountWidget(QWidget):
             self._count_foci_b.setEnabled(False)
         else:
             self._update_automatic_fc_dependency_status()
-
-    @Slot()
-    def _refresh_qlist_on_gui_thread(self) -> None:
-        self._project_list_widget.refresh_rows()
-        self._status_update_callback()
 
     def _clear_helper_widget(self) -> None:
         while self._helper_widget_layout.count():
@@ -1644,22 +1654,28 @@ class AutoFociCountWidget(QWidget):
             return
 
         directory_paths = [str(path) for path in directory_paths]
+        self._foci_count_failures = []
         self._set_automatic_workflow_active(True)
-        print(f"Run batch FC started for {len(directory_paths)} directories")
-        worker = threading.Thread(
-            target=self._run_batch_fc_worker,
-            args=(
-                directory_paths,
-                colocalization_channels_filter,
-                minimum_colocalization_intensity_ratio,
-                settings,
-                cellpose_model_path,
-                spotiflow_model_name,
-            ),
-            daemon=True,
+        self._foci_count_status_lb.setText(
+            f"Processing 0/{len(directory_paths)} projects"
         )
-        worker.start()
+        print(f"Run batch FC started for {len(directory_paths)} directories")
+        self._foci_count_worker = self._run_batch_fc_worker(
+            directory_paths=directory_paths,
+            colocalization_channels_filter=colocalization_channels_filter,
+            minimum_colocalization_intensity_ratio=(
+                minimum_colocalization_intensity_ratio
+            ),
+            settings=settings,
+            cellpose_model_path=cellpose_model_path,
+            spotiflow_model_name=spotiflow_model_name,
+        )
+        self._foci_count_worker.yielded.connect(self._on_foci_count_update)
+        self._foci_count_worker.returned.connect(self._on_foci_count_finished)
+        self._foci_count_worker.errored.connect(self._on_foci_count_error)
+        self._foci_count_worker.start()
 
+    @thread_worker
     def _run_batch_fc_worker(
         self,
         directory_paths: list[str],
@@ -1668,21 +1684,26 @@ class AutoFociCountWidget(QWidget):
         settings: AutoFociCountSettings,
         cellpose_model_path: Path,
         spotiflow_model_name: str,
-    ) -> None:
-        current_project = "unknown"
-        current_stage = "starting"
-        try:
-            for directory_index, directory_path in enumerate(
-                directory_paths, start=1
-            ):
-                current_project = directory_path
+    ) -> Generator[FociCountUpdate, None, list[Path]]:
+        completed_projects: list[Path] = []
+
+        for directory_index, directory_path in enumerate(
+            directory_paths, start=1
+        ):
+            project_path = _get_project_path(directory_path)
+            try:
                 print("")
                 print(
                     "Run batch FC "
                     f"[{directory_index}/{len(directory_paths)}] "
                     f"starting {directory_path}"
                 )
-                project_path = _get_project_path(directory_path)
+                yield FociCountUpdate(
+                    project_path,
+                    directory_index,
+                    len(directory_paths),
+                    "Checking project files",
+                )
                 tile_paths = self._get_ready_tile_paths(project_path)
                 if not tile_paths:
                     raise ValueError(
@@ -1697,16 +1718,31 @@ class AutoFociCountWidget(QWidget):
                         f"No stitched image found for {directory_path}"
                     )
 
-                current_stage = "segmentation"
+                yield FociCountUpdate(
+                    project_path,
+                    directory_index,
+                    len(directory_paths),
+                    "Segmenting nuclei",
+                )
                 self._call_segmentation(project_path, cellpose_model_path)
 
-                current_stage = "creating automatic nuclei features"
+                yield FociCountUpdate(
+                    project_path,
+                    directory_index,
+                    len(directory_paths),
+                    "Creating nuclei features",
+                )
                 self._create_auto_nuclei_features(
                     project_path=project_path,
                     tile_paths=tile_paths,
                     stitched_image_path=stitched_image_path,
                 )
-                current_stage = "creating SBS crops"
+                yield FociCountUpdate(
+                    project_path,
+                    directory_index,
+                    len(directory_paths),
+                    "Creating SBS crops",
+                )
                 self._create_auto_sbs_crops_from_features(
                     project_path=project_path,
                     stitched_image_path=stitched_image_path,
@@ -1723,7 +1759,12 @@ class AutoFociCountWidget(QWidget):
                     )
                 )
                 if need_tile_fc_stage:
-                    current_stage = "automatic tile foci counting"
+                    yield FociCountUpdate(
+                        project_path,
+                        directory_index,
+                        len(directory_paths),
+                        "Counting foci",
+                    )
                     self._run_auto_tile_foci_count_for_directory(
                         directory_path,
                         colocalization_channels_filter,
@@ -1738,7 +1779,12 @@ class AutoFociCountWidget(QWidget):
                     )
 
                 if need_scored_stage:
-                    current_stage = "saving scored nuclei"
+                    yield FociCountUpdate(
+                        project_path,
+                        directory_index,
+                        len(directory_paths),
+                        "Saving scored nuclei",
+                    )
                     save_auto_scored_nuclei_files_from_features(
                         project_path=project_path,
                         tile_paths=tile_paths,
@@ -1755,30 +1801,72 @@ class AutoFociCountWidget(QWidget):
                     f"[{directory_index}/{len(directory_paths)}] "
                     f"finished {directory_path}"
                 )
-                QMetaObject.invokeMethod(
-                    self,
-                    "_refresh_qlist_on_gui_thread",
-                    Qt.ConnectionType.QueuedConnection,
+            except (OSError, RuntimeError, ValueError) as exc:
+                print(
+                    "Run batch FC failed "
+                    f"for project {project_path!r}: "
+                    f"{type(exc).__name__}: {exc}"
                 )
-        except (OSError, ValueError, RuntimeError) as exc:
-            print(
-                "Run batch FC failed "
-                f"for project {current_project!r} "
-                f"during {current_stage}: "
-                f"{type(exc).__name__}: {exc}"
-            )
-        finally:
-            print("Run batch FC finished")
-            QMetaObject.invokeMethod(
-                self,
-                "_finish_batch_fc_on_gui_thread",
-                Qt.ConnectionType.QueuedConnection,
+                yield FociCountUpdate(
+                    project_path,
+                    directory_index,
+                    len(directory_paths),
+                    "Failed",
+                    error=str(exc),
+                )
+                continue
+
+            completed_projects.append(project_path)
+            yield FociCountUpdate(
+                project_path,
+                directory_index,
+                len(directory_paths),
+                "Ready",
             )
 
-    @Slot()
-    def _finish_batch_fc_on_gui_thread(self) -> None:
+        print("Run batch FC finished")
+        return completed_projects
+
+    def _on_foci_count_update(self, update: FociCountUpdate) -> None:
+        self._foci_count_status_lb.setText(
+            f"Project {update.project_index}/{update.project_total}: "
+            f"{update.project_path.name}\n{update.stage}"
+        )
+        if update.error is not None:
+            self._foci_count_failures.append(
+                f"{update.project_path.name}: {update.error}"
+            )
+        if update.stage == "Ready":
+            self._project_list_widget.refresh_rows()
+            self._status_update_callback()
+
+    def _on_foci_count_finished(
+        self,
+        completed_projects: list[Path],
+    ) -> None:
+        self._foci_count_worker = None
         self._set_automatic_workflow_active(False)
-        self._refresh_qlist_on_gui_thread()
+        self._project_list_widget.refresh_rows()
+        self._status_update_callback()
+
+        if self._foci_count_failures:
+            show_warning(
+                "The following projects could not be counted:\n\n"
+                + "\n".join(self._foci_count_failures)
+            )
+
+        total_projects = len(completed_projects) + len(
+            self._foci_count_failures
+        )
+        self._foci_count_status_lb.setText(
+            f"Processed {len(completed_projects)}/{total_projects} projects"
+        )
+
+    def _on_foci_count_error(self, error: BaseException) -> None:
+        self._foci_count_worker = None
+        self._set_automatic_workflow_active(False)
+        self._foci_count_status_lb.setText("Counting failed")
+        show_warning(f"Unexpected automatic foci-counting error:\n{error}")
 
     def _get_colocalization_channels_filter(self) -> list[str]:
         if not self._settings.filter_channels_enabled:
