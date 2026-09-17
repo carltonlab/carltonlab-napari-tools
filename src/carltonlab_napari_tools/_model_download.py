@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from configparser import ConfigParser
 from hashlib import sha256
 from pathlib import Path
@@ -48,6 +49,7 @@ def download_bioimageio_weight(
     weight_source: str,
     expected_sha256: str,
     output_directory: str | Path,
+    progress_callback: Callable[[int], None] | None = None,
 ) -> Path:
     """Download and verify one BioImage.IO model weight."""
     output_directory_path = Path(output_directory)
@@ -69,15 +71,21 @@ def download_bioimageio_weight(
     with urlopen(url) as response, partial_path.open("wb") as output:
         digest = sha256()
         downloaded_bytes = 0
+        last_reported_bucket = 0
+        progress_interval = 100 * 1024 * 1024
 
         while chunk := response.read(1024 * 1024):
             output.write(chunk)
             digest.update(chunk)
             downloaded_bytes += len(chunk)
 
-            if downloaded_bytes % (100 * 1024 * 1024) < len(chunk):
-                downloaded_mb = downloaded_bytes / (1024 * 1024)
-                print(f"Downloaded {downloaded_mb:.0f} MB", flush=True)
+            completed_bucket = downloaded_bytes // progress_interval
+            if completed_bucket > last_reported_bucket:
+                downloaded_mb = completed_bucket * 100
+                print(f"Downloaded {downloaded_mb} MB", flush=True)
+                if progress_callback is not None:
+                    progress_callback(downloaded_mb)
+                last_reported_bucket = completed_bucket
 
     actual_sha256 = digest.hexdigest()
     if actual_sha256 != expected_sha256:

@@ -1,10 +1,13 @@
 from collections.abc import Callable
 from pathlib import Path
 
+from napari.qt.threading import thread_worker
+from qtpy.QtCore import Signal
 from qtpy.QtGui import QColor
 from qtpy.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QListWidget,
     QMessageBox,
     QPushButton,
@@ -24,8 +27,28 @@ _VALID_COLOR = QColor("#29BA00")
 _INVALID_COLOR = QColor("#A80000")
 
 
+@thread_worker
+def _download_model_worker(
+    *,
+    model_id: str,
+    weight_source: str,
+    expected_sha256: str,
+    output_directory: Path,
+    progress_callback: Callable[[int], None],
+) -> Path:
+    return download_bioimageio_weight(
+        model_id=model_id,
+        weight_source=weight_source,
+        expected_sha256=expected_sha256,
+        output_directory=output_directory,
+        progress_callback=progress_callback,
+    )
+
+
 class CLTSegmentationModelDirectoriesWidget(QWidget):
     """Edit the directories used to store segmentation models."""
+
+    _download_progress = Signal(int)
 
     def __init__(
         self,
@@ -36,10 +59,18 @@ class CLTSegmentationModelDirectoriesWidget(QWidget):
 
         self._manager = ModelDirectoriesManager()
         self._status_update_callback = status_update_callback
+        self._download_progress.connect(self._on_download_progress)
 
         self._layout = QVBoxLayout()
         self._layout.setContentsMargins(0, 0, 0, 0)
         self.setLayout(self._layout)
+
+        self._directories_title = QLabel(
+            "Possible model directories:",
+            parent=self,
+        )
+        self._directories_title.setStyleSheet("font-weight: bold")
+        self._layout.addWidget(self._directories_title)
 
         self._directories_list = QListWidget()
         self._layout.addWidget(self._directories_list)
@@ -116,28 +147,46 @@ class CLTSegmentationModelDirectoriesWidget(QWidget):
 
         try:
             model_config = load_bioimageio_model_config(_CELLPOSE_MODEL_NAME)
-            download_bioimageio_weight(
-                model_id=model_config["model_id"],
-                weight_source=model_config["weight_source"],
-                expected_sha256=model_config["sha256"],
-                output_directory=destination,
-            )
         except (
             FileNotFoundError,
             KeyError,
             ValueError,
             OSError,
-            RuntimeError,
         ) as error:
-            QMessageBox.critical(
-                self,
-                "Model download failed",
-                str(error),
-            )
+            self._show_download_error(error)
             return
 
+        self._download_button.setEnabled(False)
+        self._download_button.setText("Progress: 0 MB")
+        self._download_worker = _download_model_worker(
+            model_id=model_config["model_id"],
+            weight_source=model_config["weight_source"],
+            expected_sha256=model_config["sha256"],
+            output_directory=destination,
+            progress_callback=self._download_progress.emit,
+        )
+        self._download_worker.returned.connect(self._on_download_finished)
+        self._download_worker.errored.connect(self._show_download_error)
+        self._download_worker.start()
+
+    def _on_download_progress(self, downloaded_mb: int) -> None:
+        self._download_button.setText(f"Progress: {downloaded_mb} MB")
+
+    def _on_download_finished(self, output_path: Path) -> None:
+        downloaded_mb = output_path.stat().st_size / (1024 * 1024)
+        self._download_button.setText(f"Downloaded: {downloaded_mb:.0f} MB")
+        self._download_button.setEnabled(True)
         self._update_directory_colors()
         self._notify_status_update()
+
+    def _show_download_error(self, error: BaseException) -> None:
+        self._download_button.setText("Download model")
+        self._download_button.setEnabled(True)
+        QMessageBox.critical(
+            self,
+            "Model download failed",
+            str(error),
+        )
 
     def _update_directory_colors(self) -> None:
         for index in range(self._directories_list.count()):
