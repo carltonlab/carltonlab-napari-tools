@@ -1163,8 +1163,6 @@ class AutoFociCountWidget(QWidget):
                 return False
 
             tile_paths = extract_project_tiles(project_path, channels)
-            if tile_paths is None:
-                return False
 
             self._project_list_widget.refresh_rows()
 

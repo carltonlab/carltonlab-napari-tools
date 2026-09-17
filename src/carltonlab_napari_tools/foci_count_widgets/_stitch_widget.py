@@ -390,11 +390,15 @@ class StitchOmeZarrWidget(QWidget):
                 f"({project_number}/{len(project_paths)})",
                 flush=True,
             )
-            extracted_paths = extract_project_tiles(
-                project_path,
-                requested_channels,
-            )
-            if extracted_paths is None:
+            try:
+                extracted_paths = extract_project_tiles(
+                    project_path,
+                    requested_channels,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                show_error(
+                    f"Could not extract tiles for {project_path.name}:\n{exc}"
+                )
                 continue
 
             print(

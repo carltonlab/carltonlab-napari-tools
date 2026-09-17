@@ -2,7 +2,6 @@ import configparser
 from pathlib import Path
 
 from multiview_stitcher import ngff_utils
-from napari.utils.notifications import show_error
 
 from carltonlab_napari_tools._shared_variables import (
     EXTRACTED_CHANNELS_FILE_NAME,
@@ -20,31 +19,28 @@ def extract_channels_to_ome_zarr(
     input_path: Path,
     output_path: Path,
     channels: list[int],
-) -> bool:
+) -> None:
     if not input_path.exists():
-        show_error(f"File {input_path} does not exist.")
-        return False
+        raise FileNotFoundError(f"Input tile does not exist: {input_path}")
     if output_path.exists():
-        show_error(f"Output {output_path} already exists.")
-        return False
+        raise FileExistsError(f"Output tile already exists: {output_path}")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     data = resolve_spatial_data(input_path)
     if data is None:
-        show_error(f"Could not open image {input_path}")
-        return False
+        raise RuntimeError(f"Could not open image: {input_path}")
 
     expected_dims = ("t", "c", "z", "y", "x")
     if tuple(data.dims) != expected_dims:
-        show_error(
+        raise ValueError(
             f"Expected image dimensions {expected_dims}, but got {tuple(data.dims)}"
         )
-        return False
 
     if data.sizes["t"] != 1:
-        show_error(f"Expected one time point, but got {data.sizes['t']}.")
-        return False
+        raise ValueError(
+            f"Expected one time point, but got {data.sizes['t']}."
+        )
 
     channel_count = data.sizes["c"]
 
@@ -55,11 +51,10 @@ def extract_channels_to_ome_zarr(
             if channel < 1 or channel > channel_count
         ]
         if invalid_channels:
-            show_error(
+            raise ValueError(
                 f"Invalid channel(s): {', '.join(map(str, invalid_channels))}. "
                 f"Expected 1-{channel_count}."
             )
-            return False
 
         selected_0base_channels = [channel - 1 for channel in channels]
         data = data.isel(c=selected_0base_channels)
@@ -86,13 +81,11 @@ def extract_channels_to_ome_zarr(
         overwrite=False,
     )
 
-    return True
-
 
 def extract_project_tiles(
     project_path: Path,
     channels: list[int],
-) -> list[Path] | None:
+) -> list[Path]:
     tiles_path = project_path / TILES_DIR_NAME
     tiles_config_path = tiles_path / TILES_CONFIG_FILE_NAME
 
@@ -101,12 +94,12 @@ def extract_project_tiles(
         config.read(tiles_config_path)
         tile_names = [filename for _, filename in config.items("tiles")]
     except (configparser.Error, OSError, ValueError) as exc:
-        show_error(f"Could not read {tiles_config_path.name}: {exc}")
-        return None
+        raise ValueError(
+            f"Could not read {tiles_config_path.name}: {exc}"
+        ) from exc
 
     if not tile_names:
-        show_error(f"No tiles listed in {tiles_config_path.name}.")
-        return None
+        raise ValueError(f"No tiles listed in {tiles_config_path.name}.")
 
     channels_config_path = tiles_path / EXTRACTED_CHANNELS_FILE_NAME
     if channels_config_path.is_file():
@@ -115,22 +108,20 @@ def extract_project_tiles(
             stored_config.read(channels_config_path)
             stored_value = stored_config.get("channels", "kept").strip()
         except (configparser.Error, OSError, ValueError) as exc:
-            show_error(
+            raise ValueError(
                 f"Could not read {channels_config_path.name} for "
                 f"{project_path.name}: {exc}"
-            )
-            return None
+            ) from exc
 
         if stored_value == "all":
             stored_channels: list[int] = []
         else:
             stored_channels = parse_channel_string(stored_value)
             if not stored_channels:
-                show_error(
+                raise ValueError(
                     f"Invalid stored channel configuration for "
                     f"{project_path.name}: {stored_value}"
                 )
-                return None
 
         if stored_channels != channels:
             requested_value = (
@@ -138,12 +129,11 @@ def extract_project_tiles(
                 if not channels
                 else ",".join(str(channel) for channel in channels)
             )
-            show_error(
+            raise ValueError(
                 f"Channel extraction skipped for {project_path.name}.\n"
                 f"Requested channels: {requested_value}\n"
                 f"Stored channels: {stored_value}"
             )
-            return None
 
     extracted_paths: list[Path] = []
     for tile_number, tile_name in enumerate(tile_names, start=1):
@@ -159,12 +149,11 @@ def extract_project_tiles(
             f"({tile_number}/{len(tile_names)})",
             flush=True,
         )
-        if not extract_channels_to_ome_zarr(
+        extract_channels_to_ome_zarr(
             tile_path,
             output_path,
             channels,
-        ):
-            return None
+        )
 
         print("Done extracting tile\n", flush=True)
         extracted_paths.append(output_path)
@@ -184,7 +173,8 @@ def extract_project_tiles(
             ) as config_file:
                 channels_config.write(config_file)
         except OSError as exc:
-            show_error(f"Could not write {channels_config_path.name}: {exc}")
-            return None
+            raise OSError(
+                f"Could not write {channels_config_path.name}: {exc}"
+            ) from exc
 
     return extracted_paths
