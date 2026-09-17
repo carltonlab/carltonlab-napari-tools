@@ -708,6 +708,9 @@ class CarltonLabCountTool(QWidget):
     def _show_generate_plots_widget(self) -> None:
         self._manual_foci_count_widget._show_generate_plots_widget()
 
+    def _show_model_directories_widget(self) -> None:
+        self._manual_foci_count_widget._show_model_directories_widget()
+
     def _on_workflow_tab_changed(self, index: int) -> None:
         self._manual_foci_count_widget._remove_current_widget()
         self._update_workflow_tabs_height(index)
