@@ -14,7 +14,6 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from superqt import QToggleSwitch
 
 from carltonlab_napari_tools.automatic_foci_count._auto_settings import (
     AutoFociCountSettings,
@@ -48,12 +47,6 @@ class CLTAutoFociCountSettingsWidget(QWidget):
         self._form = QFormLayout()
         self._form.setContentsMargins(0, 0, 0, 0)
         self._layout.addLayout(self._form)
-
-        self._run_entire_workflow = QToggleSwitch(parent=self)
-        self._run_entire_workflow.setChecked(
-            self._settings.run_entire_workflow
-        )
-        self._form.addRow("Run entire workflow", self._run_entire_workflow)
 
         self._registration_channel = QSpinBox(parent=self)
         self._registration_channel.setRange(1, 9999)
@@ -151,9 +144,6 @@ class CLTAutoFociCountSettingsWidget(QWidget):
 
     def _restore_default_settings(self) -> None:
         self._settings = AutoFociCountSettings()
-        self._run_entire_workflow.setChecked(
-            self._settings.run_entire_workflow
-        )
         self._registration_channel.setValue(
             self._settings.registration_channel
         )
@@ -182,7 +172,6 @@ class CLTAutoFociCountSettingsWidget(QWidget):
     def get_settings(self) -> AutoFociCountSettings:
         registration_scale = self._registration_scale.value()
         return AutoFociCountSettings(
-            run_entire_workflow=self._run_entire_workflow.isChecked(),
             registration_channel=self._registration_channel.value(),
             registration_scale=(
                 None if registration_scale < 0 else registration_scale

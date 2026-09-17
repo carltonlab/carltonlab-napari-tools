@@ -15,7 +15,6 @@ _AUTOMATIC_VALUE = "automatic"
 class AutoFociCountSettings:
     """Settings for the automatic foci-counting workflow."""
 
-    run_entire_workflow: bool = True
     registration_channel: int = 1
     registration_scale: int | None = None
     use_gpu: bool = True
@@ -47,11 +46,6 @@ class AutoFociCountSettingsManager:
             return settings
 
         return AutoFociCountSettings(
-            run_entire_workflow=config.getboolean(
-                _CONFIG_SECTION,
-                "run_entire_workflow",
-                fallback=True,
-            ),
             registration_channel=config.getint(
                 _CONFIG_SECTION,
                 "registration_channel",
@@ -96,7 +90,6 @@ class AutoFociCountSettingsManager:
     def save(self, settings: AutoFociCountSettings) -> None:
         config = ConfigParser()
         config[_CONFIG_SECTION] = {
-            "run_entire_workflow": str(settings.run_entire_workflow),
             "registration_channel": str(settings.registration_channel),
             "registration_scale": (
                 _AUTOMATIC_VALUE
