@@ -6,7 +6,7 @@ import importlib
 import json
 import threading
 from collections.abc import Callable, Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -1099,7 +1099,7 @@ class AutoFociCountWidget(QWidget):
         self._current_stitched_images: list[Image] = []
         self._current_tile_paths: dict[int, str] = {}
         self._current_tile_image_layers: list[Image] = []
-        self._batch_fc_running = False
+        self._automatic_workflow_active = False
         self._contrast_preparation_worker = None
         self._contrast_failures: list[str] = []
         self._spotiflow_model_name = "synth_3d"
@@ -1253,7 +1253,7 @@ class AutoFociCountWidget(QWidget):
         )
 
     def _set_contrasts_button_pressed(self) -> None:
-        if self._contrast_preparation_worker is not None:
+        if self._automatic_workflow_active:
             return
 
         project_paths = self._project_list_widget.get_project_paths()
@@ -1264,7 +1264,7 @@ class AutoFociCountWidget(QWidget):
 
         channels = self._keep_channels_widget.get_channels()
         self._contrast_failures = []
-        self._set_contrasts_b.setEnabled(False)
+        self._set_automatic_workflow_active(True)
         self._contrast_status_lb.setText(
             f"Preparing 0/{len(project_paths)} projects"
         )
@@ -1305,7 +1305,7 @@ class AutoFociCountWidget(QWidget):
         prepared_projects: list[Path],
     ) -> None:
         self._contrast_preparation_worker = None
-        self._set_contrasts_b.setEnabled(True)
+        self._set_automatic_workflow_active(False)
         self._project_list_widget.refresh_rows()
 
         if self._contrast_failures:
@@ -1326,9 +1326,18 @@ class AutoFociCountWidget(QWidget):
         error: BaseException,
     ) -> None:
         self._contrast_preparation_worker = None
-        self._set_contrasts_b.setEnabled(True)
+        self._set_automatic_workflow_active(False)
         self._contrast_status_lb.setText("Preparation failed")
         show_warning(f"Unexpected contrast-preparation error:\n{error}")
+
+    def _set_automatic_workflow_active(self, active: bool) -> None:
+        """Prevent automatic preparation and counting from overlapping."""
+        self._automatic_workflow_active = active
+        self._set_contrasts_b.setEnabled(not active)
+        if active:
+            self._count_foci_b.setEnabled(False)
+        else:
+            self._update_automatic_fc_dependency_status()
 
     @Slot()
     def _refresh_qlist_on_gui_thread(self) -> None:
@@ -1451,7 +1460,9 @@ class AutoFociCountWidget(QWidget):
         return metadata_df["sbs_image_name"].astype(str).tolist()
 
     def _tile_fc_outputs_exist_for_directory(
-        self, directory_path: str | Path
+        self,
+        directory_path: str | Path,
+        colocalization_channels_filter: list[str],
     ) -> bool:
         tile_paths = self._get_ready_tile_paths(directory_path)
         if not tile_paths:
@@ -1460,12 +1471,6 @@ class AutoFociCountWidget(QWidget):
             self._get_project_files_dir_for_directory(directory_path)
             / AUTO_COUNT_DIR_NAME
         )
-        try:
-            colocalization_channels_filter = (
-                self._get_colocalization_channels_filter()
-            )
-        except ValueError:
-            return False
         requested_channel_indices = [
             int(channel) - 1 for channel in colocalization_channels_filter
         ]
@@ -1560,7 +1565,9 @@ class AutoFociCountWidget(QWidget):
         ]
 
         dependencies_available = not missing_modules
-        self._count_foci_b.setEnabled(dependencies_available)
+        self._count_foci_b.setEnabled(
+            dependencies_available and not self._automatic_workflow_active
+        )
         self._automatic_fc_dependency_status_lb.setVisible(
             not dependencies_available
         )
@@ -1579,8 +1586,8 @@ class AutoFociCountWidget(QWidget):
         self._count_foci_b.setToolTip(status_text)
 
     def _start_fc_button_pressed(self) -> None:
-        if self._batch_fc_running:
-            print("Run batch FC is already running")
+        if self._automatic_workflow_active:
+            print("An automatic workflow is already running")
             return
         if not self._validate_gpu_setting():
             return
@@ -1594,6 +1601,13 @@ class AutoFociCountWidget(QWidget):
         minimum_colocalization_intensity_ratio = (
             self._settings.minimum_colocalization_intensity_ratio
         )
+        settings = replace(self._settings)
+        spotiflow_model_name = self._spotiflow_model_name
+        try:
+            cellpose_model_path = self._get_cellpose_model_path()
+        except FileNotFoundError as exc:
+            show_warning(str(exc))
+            return
 
         invalid_directories: list[str] = []
         directory_paths = self._project_list_widget.get_project_paths()
@@ -1629,8 +1643,8 @@ class AutoFociCountWidget(QWidget):
             )
             return
 
-        self._batch_fc_running = True
         directory_paths = [str(path) for path in directory_paths]
+        self._set_automatic_workflow_active(True)
         print(f"Run batch FC started for {len(directory_paths)} directories")
         worker = threading.Thread(
             target=self._run_batch_fc_worker,
@@ -1638,6 +1652,9 @@ class AutoFociCountWidget(QWidget):
                 directory_paths,
                 colocalization_channels_filter,
                 minimum_colocalization_intensity_ratio,
+                settings,
+                cellpose_model_path,
+                spotiflow_model_name,
             ),
             daemon=True,
         )
@@ -1648,6 +1665,9 @@ class AutoFociCountWidget(QWidget):
         directory_paths: list[str],
         colocalization_channels_filter: list[str],
         minimum_colocalization_intensity_ratio: float,
+        settings: AutoFociCountSettings,
+        cellpose_model_path: Path,
+        spotiflow_model_name: str,
     ) -> None:
         current_project = "unknown"
         current_stage = "starting"
@@ -1678,7 +1698,7 @@ class AutoFociCountWidget(QWidget):
                     )
 
                 current_stage = "segmentation"
-                self._call_segmentation(project_path)
+                self._call_segmentation(project_path, cellpose_model_path)
 
                 current_stage = "creating automatic nuclei features"
                 self._create_auto_nuclei_features(
@@ -1693,7 +1713,8 @@ class AutoFociCountWidget(QWidget):
                 )
                 need_tile_fc_stage = (
                     not self._tile_fc_outputs_exist_for_directory(
-                        directory_path
+                        directory_path,
+                        colocalization_channels_filter,
                     )
                 )
                 need_scored_stage = (
@@ -1707,6 +1728,8 @@ class AutoFociCountWidget(QWidget):
                         directory_path,
                         colocalization_channels_filter,
                         minimum_colocalization_intensity_ratio,
+                        use_gpu=settings.use_gpu,
+                        spotiflow_model_name=spotiflow_model_name,
                     )
                 else:
                     print(
@@ -1745,13 +1768,17 @@ class AutoFociCountWidget(QWidget):
                 f"{type(exc).__name__}: {exc}"
             )
         finally:
-            self._batch_fc_running = False
             print("Run batch FC finished")
             QMetaObject.invokeMethod(
                 self,
-                "_refresh_qlist_on_gui_thread",
+                "_finish_batch_fc_on_gui_thread",
                 Qt.ConnectionType.QueuedConnection,
             )
+
+    @Slot()
+    def _finish_batch_fc_on_gui_thread(self) -> None:
+        self._set_automatic_workflow_active(False)
+        self._refresh_qlist_on_gui_thread()
 
     def _get_colocalization_channels_filter(self) -> list[str]:
         if not self._settings.filter_channels_enabled:
@@ -1827,7 +1854,11 @@ class AutoFociCountWidget(QWidget):
 
         return True
 
-    def _call_segmentation(self, directory_path: str | Path) -> None:
+    def _call_segmentation(
+        self,
+        directory_path: str | Path,
+        model_path: Path,
+    ) -> None:
         tile_paths = self._get_ready_tile_paths(directory_path)
         if not tile_paths:
             print(
@@ -1838,7 +1869,6 @@ class AutoFociCountWidget(QWidget):
         segmentation_output_dir = (
             _get_project_files_path(directory_path) / SEGMENTATION_DIR_NAME
         )
-        model_path = self._get_cellpose_model_path()
         total_tiles = len(tile_paths)
         pending_tile_paths: list[Path] = []
         print(
@@ -2051,6 +2081,9 @@ class AutoFociCountWidget(QWidget):
         normalization_input_max: float,
         colocalization_channels_filter: list[str],
         minimum_colocalization_intensity_ratio: float,
+        *,
+        use_gpu: bool,
+        spotiflow_model_name: str,
     ) -> None:
         auto_count_output_dir = (
             Path(segmentation_path).parent.parent / AUTO_COUNT_DIR_NAME
@@ -2063,7 +2096,7 @@ class AutoFociCountWidget(QWidget):
             return
 
         print(f"Starting automatic foci counting for {image_path}")
-        print(f"Using Spotiflow model name: {self._spotiflow_model_name}")
+        print(f"Using Spotiflow model name: {spotiflow_model_name}")
         (
             ref_image_zyx,
             segmentation_arr,
@@ -2078,8 +2111,8 @@ class AutoFociCountWidget(QWidget):
             image_path=image_path,
             segmentation_path=segmentation_path,
             output_dir=auto_count_output_dir,
-            use_gpu=self._settings.use_gpu,
-            model_name=self._spotiflow_model_name,
+            use_gpu=use_gpu,
+            model_name=spotiflow_model_name,
             colocalization_channels_filter=colocalization_channels_filter,
             minimum_colocalization_intensity_ratio=(
                 minimum_colocalization_intensity_ratio
@@ -2115,6 +2148,9 @@ class AutoFociCountWidget(QWidget):
         directory_path: str | Path,
         colocalization_channels_filter: list[str],
         minimum_colocalization_intensity_ratio: float,
+        *,
+        use_gpu: bool,
+        spotiflow_model_name: str,
     ) -> None:
         tile_paths = self._get_ready_tile_paths(directory_path)
         if not tile_paths:
@@ -2195,8 +2231,8 @@ class AutoFociCountWidget(QWidget):
             run_spotiflow_batch_subprocess(
                 image_paths=processed_image_paths,
                 output_csv_paths=unfiltered_points_paths,
-                model_name=self._spotiflow_model_name,
-                use_gpu=self._settings.use_gpu,
+                model_name=spotiflow_model_name,
+                use_gpu=use_gpu,
             )
 
         for tile_path, segmentation_output_path in zip(
@@ -2211,4 +2247,6 @@ class AutoFociCountWidget(QWidget):
                 minimum_colocalization_intensity_ratio=(
                     minimum_colocalization_intensity_ratio
                 ),
+                use_gpu=use_gpu,
+                spotiflow_model_name=spotiflow_model_name,
             )
