@@ -42,6 +42,7 @@ dependencies = [
     "pandas",
     "scipy",
     "dask",
+    "platformdirs",
     "superqt",
     "zarr",
 ]
