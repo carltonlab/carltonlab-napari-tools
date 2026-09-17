@@ -24,22 +24,13 @@ def _strip_ome_zarr_suffix(path: str | Path) -> str:
     return image_path.stem
 
 
-def _resolve_model_path(model_name: str) -> Path:
-    model_path = MODELS_DIR / model_name
-    if not model_path.exists():
-        raise FileNotFoundError(f"Segmentation model not found: {model_path}")
-    if not model_path.is_file():
-        raise ValueError(f"Segmentation model is not a file: {model_path}")
-    return model_path
-
-
 def _resolve_output_path(
     image_path: str | Path,
-    model_name: str,
+    output_name: str,
     output_dir: str | Path,
 ) -> Path:
     base_name = _strip_ome_zarr_suffix(image_path)
-    return Path(output_dir) / f"{base_name}_{model_name}_masks.npy"
+    return Path(output_dir) / f"{base_name}_{output_name}_masks.npy"
 
 
 def load_segmentation_npy(segmentation_path: str | Path) -> np.ndarray:
@@ -585,12 +576,14 @@ def _set_child_parent_death_signal() -> None:
 
 def run_segmentation_subprocess(
     image_path: str | Path,
-    model_name: str,
+    model_path: str | Path,
+    output_name: str,
     output_dir: str | Path,
 ) -> bool:
     payload = {
         "image_path": str(image_path),
-        "model_name": model_name,
+        "model_path": str(model_path),
+        "output_name": output_name,
         "output_dir": str(output_dir),
     }
     env = os.environ.copy()
@@ -629,7 +622,8 @@ def run_segmentation_subprocess(
 
 def run_segmentation_batch_subprocess(
     image_paths: list[str | Path],
-    model_name: str,
+    model_path: str | Path,
+    output_name: str,
     output_dir: str | Path,
 ) -> bool:
     if not image_paths:
@@ -637,7 +631,8 @@ def run_segmentation_batch_subprocess(
 
     payload = {
         "image_paths": [str(path) for path in image_paths],
-        "model_name": model_name,
+        "model_path": str(model_path),
+        "output_name": output_name,
         "output_dir": str(output_dir),
     }
     env = os.environ.copy()
@@ -676,7 +671,8 @@ def run_segmentation_batch_subprocess(
 
 def run_segmentation(
     image_path: str | Path,
-    model_name: str,
+    model_path: str | Path,
+    output_name: str,
     output_dir: str | Path,
     segmenter: CellposeSegmenter | None = None,
 ) -> bool:
@@ -691,12 +687,14 @@ def run_segmentation(
             f"Got {image_path_obj.name}."
         )
 
-    model_path = _resolve_model_path(model_name)
+    model_path = Path(model_path)
+    if not model_path.is_file():
+        raise FileNotFoundError(f"Segmentation model not found: {model_path}")
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
     output_path = _resolve_output_path(
         image_path=image_path_obj,
-        model_name=model_name,
+        output_name=output_name,
         output_dir=output_dir_path,
     )
     if output_path.exists():
@@ -729,13 +727,16 @@ def run_segmentation(
 
 def run_segmentation_batch(
     image_paths: list[str | Path],
-    model_name: str,
+    model_path: str | Path,
+    output_name: str,
     output_dir: str | Path,
 ) -> bool:
     if not image_paths:
         return True
 
-    model_path = _resolve_model_path(model_name)
+    model_path = Path(model_path)
+    if not model_path.is_file():
+        raise FileNotFoundError(f"Segmentation model not found: {model_path}")
     segmenter = CellposeSegmenter(model_path)
     for image_index, image_path in enumerate(image_paths, start=1):
         print(
@@ -744,7 +745,8 @@ def run_segmentation_batch(
         )
         run_segmentation(
             image_path=image_path,
-            model_name=model_name,
+            model_path=model_path,
+            output_name=output_name,
             output_dir=output_dir,
             segmenter=segmenter,
         )
@@ -767,7 +769,8 @@ def _main() -> int:
     if "image_paths" in payload:
         run_segmentation_batch(
             image_paths=payload["image_paths"],
-            model_name=payload["model_name"],
+            model_path=payload["model_path"],
+            output_name=payload["output_name"],
             output_dir=payload["output_dir"],
         )
         return 0
@@ -775,7 +778,8 @@ def _main() -> int:
     if "output_dir" in payload:
         run_segmentation(
             image_path=payload["image_path"],
-            model_name=payload["model_name"],
+            model_path=payload["model_path"],
+            output_name=payload["output_name"],
             output_dir=payload["output_dir"],
         )
         return 0

@@ -31,10 +31,12 @@ from carltonlab_napari_tools._model_directories import (
     ModelDirectoriesManager,
 )
 from carltonlab_napari_tools._model_download import (
+    get_bioimageio_weight_path,
     is_bioimageio_weight_available,
 )
 from carltonlab_napari_tools._shared_variables import (
     AUTO_COUNT_DIR_NAME,
+    CELLPOSE_MODEL_NAME,
     CUT_SBS_DIR_NAME,
     EXTRACTED_CHANNELS_FILE_NAME,
     NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
@@ -46,6 +48,8 @@ from carltonlab_napari_tools._shared_variables import (
     SCORED_NUCLEI_DIR_NAME,
     SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION,
     SEGMENTATION_DIR_NAME,
+    SEGMENTATION_MASKS_FILE_NAME_SUFFIX,
+    SEGMENTATION_OUTPUT_NAME,
     STITCHED_IMAGE_DIR_NAME,
     TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
@@ -923,7 +927,8 @@ def _get_segmentation_output_path_for_tile(
         _get_project_files_path(directory_path) / SEGMENTATION_DIR_NAME
     )
     return segmentation_output_dir / (
-        f"{tile_path_obj.name[: -len('.ome.zarr')]}_meiotic_3d_crops_masks.npy"
+        f"{tile_path_obj.name[: -len('.ome.zarr')]}"
+        f"{SEGMENTATION_MASKS_FILE_NAME_SUFFIX}"
     )
 
 
@@ -1091,7 +1096,7 @@ class AutoFociCountWidget(QWidget):
         directories = ModelDirectoriesManager().ensure_default_configuration()
         model_found = any(
             is_bioimageio_weight_available(
-                "cellpose_meiotic_nuclei_3d",
+                CELLPOSE_MODEL_NAME,
                 directory,
             )
             for directory in directories
@@ -1106,6 +1111,23 @@ class AutoFociCountWidget(QWidget):
             self._cellpose_model_status_lb.setStyleSheet(
                 "color: #A80000; font-weight: bold;"
             )
+
+    def _get_cellpose_model_path(self) -> Path:
+        directories = ModelDirectoriesManager().ensure_default_configuration()
+        for directory in directories:
+            if is_bioimageio_weight_available(
+                CELLPOSE_MODEL_NAME,
+                directory,
+            ):
+                return get_bioimageio_weight_path(
+                    CELLPOSE_MODEL_NAME,
+                    directory,
+                )
+
+        raise FileNotFoundError(
+            "The downloaded Cellpose model was not found in any configured "
+            "model directory."
+        )
 
         self._helper_widget = QWidget(parent=self)
         self._helper_widget.setObjectName("helper_widget")
@@ -1700,6 +1722,7 @@ class AutoFociCountWidget(QWidget):
         segmentation_output_dir = (
             _get_project_files_path(directory_path) / SEGMENTATION_DIR_NAME
         )
+        model_path = self._get_cellpose_model_path()
         total_tiles = len(tile_paths)
         pending_tile_paths: list[Path] = []
         print(
@@ -1707,7 +1730,8 @@ class AutoFociCountWidget(QWidget):
         )
         for tile_path in tile_paths:
             segmentation_output_path = segmentation_output_dir / (
-                f"{tile_path.name[: -len('.ome.zarr')]}_meiotic_3d_crops_masks.npy"
+                f"{tile_path.name[: -len('.ome.zarr')]}"
+                f"{SEGMENTATION_MASKS_FILE_NAME_SUFFIX}"
             )
             if segmentation_output_path.exists():
                 print(
@@ -1719,13 +1743,15 @@ class AutoFociCountWidget(QWidget):
 
         run_segmentation_batch_subprocess(
             image_paths=pending_tile_paths,
-            model_name="meiotic_3d_crops",
+            model_path=model_path,
+            output_name=SEGMENTATION_OUTPUT_NAME,
             output_dir=segmentation_output_dir,
         )
 
         for tile_index, tile_path in enumerate(tile_paths, start=1):
             segmentation_output_path = segmentation_output_dir / (
-                f"{tile_path.name[: -len('.ome.zarr')]}_meiotic_3d_crops_masks.npy"
+                f"{tile_path.name[: -len('.ome.zarr')]}"
+                f"{SEGMENTATION_MASKS_FILE_NAME_SUFFIX}"
             )
             cleaned_segmentation_output_path = (
                 get_cleaned_segmentation_output_path(segmentation_output_path)
