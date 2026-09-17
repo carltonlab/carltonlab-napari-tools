@@ -18,16 +18,13 @@ from napari.utils.notifications import show_warning
 from numpy.typing import NDArray
 from qtpy.QtCore import QMetaObject, Qt, Slot
 from qtpy.QtWidgets import (
-    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
-from superqt import QToggleSwitch
 from tifffile import imwrite
 
 from carltonlab_napari_tools._model_directories import (
@@ -79,6 +76,10 @@ from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
     run_auto_count_preprocessed_spots_on_paths,
     save_points_csv_for_napari,
 )
+from carltonlab_napari_tools.automatic_foci_count._auto_settings import (
+    AutoFociCountSettings,
+    AutoFociCountSettingsManager,
+)
 from carltonlab_napari_tools.automatic_foci_count._nuclei_features import (
     build_nucleus_candidates,
     deduplicate_nucleus_candidates,
@@ -100,9 +101,6 @@ from carltonlab_napari_tools.image_resolver import resolve_lazy_image_data
 from carltonlab_napari_tools.image_stitching import (
     get_stitched_coordinates_path,
     stitch_ome_zarr_images,
-)
-from carltonlab_napari_tools.image_stitching._stitching_options_widget import (
-    CLTStitchingOptionsWidget,
 )
 from carltonlab_napari_tools.segmentation import (
     clean_segmentation_file,
@@ -964,6 +962,7 @@ class AutoFociCountWidget(QWidget):
         set_regions_callback: Callable[[], None],
         generate_plots_callback: Callable[[], None],
         model_directories_callback: Callable[[], None],
+        settings_callback: Callable[[], None],
         status_update_callback: Callable[[], None],
     ):
         super().__init__(parent=parent)
@@ -975,8 +974,11 @@ class AutoFociCountWidget(QWidget):
         self._set_regions_callback = set_regions_callback
         self._generate_plots_callback = generate_plots_callback
         self._model_directories_callback = model_directories_callback
+        self._settings_callback = settings_callback
         self._status_update_callback = status_update_callback
         ModelDirectoriesManager().ensure_default_configuration()
+        self._settings_manager = AutoFociCountSettingsManager()
+        self._settings = self._settings_manager.load()
 
         self._helper_widget: QWidget
         self._helper_widget_layout: QVBoxLayout
@@ -996,139 +998,25 @@ class AutoFociCountWidget(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
 
-        self._all_c: QWidget = QWidget(parent=self)
-        self._layout.addWidget(self._all_c)
-        self._all_layout: QHBoxLayout = QHBoxLayout()
-        self._all_layout.setContentsMargins(0, 0, 0, 0)
-        self._all_layout.setSpacing(6)
-        self._all_c.setLayout(self._all_layout)
-
-        self._run_all_ts: QToggleSwitch = QToggleSwitch(parent=self)
-        self._run_all_ts.setChecked(True)
-        self._runn_all_l: QLabel = QLabel("Run entire workflow", parent=self)
-        self._all_layout.addWidget(self._run_all_ts)
-        self._all_layout.addWidget(self._runn_all_l)
-        self._all_layout.addStretch()
-
-        self._keep_channel_c: QWidget = QWidget(parent=self)
-        self._layout.addWidget(self._keep_channel_c)
-        self._keep_channel_layout: QVBoxLayout = QVBoxLayout()
-        self._keep_channel_layout.setContentsMargins(0, 0, 0, 0)
-        self._keep_channel_layout.setSpacing(6)
-        self._keep_channel_c.setLayout(self._keep_channel_layout)
-
-        self._keep_channel_l: QLabel = QLabel("Keeping channels")
-        self._keep_channel_l.setStyleSheet("font-weight: bold")
-        self._keep_channel_layout.addWidget(self._keep_channel_l)
-
-        self._channel_edit_c: QWidget = QWidget(parent=self)
-        self._keep_channel_layout.addWidget(self._channel_edit_c)
-        self._channel_edit_layout: QHBoxLayout = QHBoxLayout()
-        self._channel_edit_layout.setContentsMargins(0, 0, 0, 0)
-        self._channel_edit_layout.setSpacing(6)
-        self._channel_edit_c.setLayout(self._channel_edit_layout)
-
-        self._keep_channel_ts: QToggleSwitch = QToggleSwitch()
-        self._channel_edit_layout.addWidget(self._keep_channel_ts)
-        self._keep_channel_ts.clicked.connect(self._keep_ts_toggled)
-
-        self._keep_channel_le: QLineEdit = QLineEdit(parent=self)
-        self._keep_channel_le.setSizePolicy(
-            QSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-            )
+        self._settings_row = QWidget(parent=self)
+        self._settings_row_layout = QHBoxLayout()
+        self._settings_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._settings_row.setLayout(self._settings_row_layout)
+        self._settings_status_lb = QLabel(parent=self)
+        self._settings_status_lb.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Preferred,
         )
-        self._keep_channel_le.setText("1,2")
-        self._channel_edit_layout.addWidget(self._keep_channel_le)
-        self._keep_channel_ts.setChecked(True)
-
-        self._keep_channel_ex_l: QLabel = QLabel("e.g. 1-2,4", parent=self)
-        self._keep_channel_ex_l.setSizePolicy(
-            QSizePolicy(
-                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
-            )
+        self._settings_row_layout.addWidget(self._settings_status_lb)
+        self._edit_settings_button = QPushButton("Edit settings", parent=self)
+        self._edit_settings_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
         )
-        self._channel_edit_layout.addWidget(self._keep_channel_ex_l)
-
-        self._stitching_options_widget = CLTStitchingOptionsWidget(parent=self)
-        self._stitching_options_widget.set_gpu_enabled(True)
-        self._stitching_options_widget.connect_gpu_toggle(
-            self._use_gpu_ts_toggled
-        )
-        self._layout.addWidget(self._stitching_options_widget)
-
-        self._binary_mask_filter_c: QWidget = QWidget(parent=self)
-        self._layout.addWidget(self._binary_mask_filter_c)
-        self._binary_mask_filter_layout: QVBoxLayout = QVBoxLayout()
-        self._binary_mask_filter_layout.setContentsMargins(0, 0, 0, 0)
-        self._binary_mask_filter_layout.setSpacing(6)
-        self._binary_mask_filter_c.setLayout(self._binary_mask_filter_layout)
-
-        self._binary_mask_filter_row_c: QWidget = QWidget(parent=self)
-        self._binary_mask_filter_layout.addWidget(
-            self._binary_mask_filter_row_c
-        )
-        self._binary_mask_filter_row_layout: QHBoxLayout = QHBoxLayout()
-        self._binary_mask_filter_row_layout.setContentsMargins(0, 0, 0, 0)
-        self._binary_mask_filter_row_layout.setSpacing(6)
-        self._binary_mask_filter_row_c.setLayout(
-            self._binary_mask_filter_row_layout
-        )
-
-        self._binary_mask_filter_ts: QToggleSwitch = QToggleSwitch(parent=self)
-        self._binary_mask_filter_ts.setChecked(True)
-        self._binary_mask_filter_ts.clicked.connect(
-            self._binary_mask_filter_ts_toggled
-        )
-        self._binary_mask_filter_row_layout.addWidget(
-            self._binary_mask_filter_ts
-        )
-
-        self._binary_mask_filter_l: QLabel = QLabel(
-            "Filter channels", parent=self
-        )
-        self._binary_mask_filter_row_layout.addWidget(
-            self._binary_mask_filter_l
-        )
-
-        self._binary_mask_channels_le: QLineEdit = QLineEdit(parent=self)
-        self._binary_mask_channels_le.setSizePolicy(
-            QSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-            )
-        )
-        self._binary_mask_channels_le.setText("1")
-        self._binary_mask_filter_row_layout.addWidget(
-            self._binary_mask_channels_le
-        )
-        self._minimum_colocalization_intensity_ratio_c = QWidget(parent=self)
-        self._layout.addWidget(self._minimum_colocalization_intensity_ratio_c)
-        self._minimum_colocalization_intensity_ratio_layout = QHBoxLayout()
-        self._minimum_colocalization_intensity_ratio_layout.setContentsMargins(
-            0, 0, 0, 0
-        )
-        self._minimum_colocalization_intensity_ratio_c.setLayout(
-            self._minimum_colocalization_intensity_ratio_layout
-        )
-        self._minimum_colocalization_intensity_ratio_l = QLabel(
-            "Minimum colocalization intensity ratio",
-            parent=self,
-        )
-        self._minimum_colocalization_intensity_ratio_layout.addWidget(
-            self._minimum_colocalization_intensity_ratio_l
-        )
-        self._minimum_colocalization_intensity_ratio_sb = QDoubleSpinBox(
-            parent=self
-        )
-        self._minimum_colocalization_intensity_ratio_sb.setRange(0.0, 1.0)
-        self._minimum_colocalization_intensity_ratio_sb.setSingleStep(0.05)
-        self._minimum_colocalization_intensity_ratio_sb.setDecimals(2)
-        self._minimum_colocalization_intensity_ratio_sb.setValue(0.25)
-        self._minimum_colocalization_intensity_ratio_layout.addWidget(
-            self._minimum_colocalization_intensity_ratio_sb
-        )
-        self._minimum_colocalization_intensity_ratio_layout.addStretch()
-        self._binary_mask_filter_ts_toggled()
+        self._edit_settings_button.clicked.connect(self._settings_callback)
+        self._settings_row_layout.addWidget(self._edit_settings_button)
+        self._layout.addWidget(self._settings_row)
+        self._update_settings_status()
 
         self._edit_model_directories_b = QPushButton(
             "Edit/download model",
@@ -1265,7 +1153,7 @@ class AutoFociCountWidget(QWidget):
             stitching_succeeded = stitch_ome_zarr_images(
                 image_list=tile_paths,
                 output_dir=stitched_path,
-                **self._stitching_options_widget.get_stitching_options(),
+                **self._get_stitching_options(),
             )
             self._project_list_widget.refresh_rows()
             return stitching_succeeded
@@ -1561,8 +1449,8 @@ class AutoFociCountWidget(QWidget):
         except ValueError as exc:
             show_warning(str(exc))
             return
-        minimum_colocalization_intensity_ratio = float(
-            self._minimum_colocalization_intensity_ratio_sb.value()
+        minimum_colocalization_intensity_ratio = (
+            self._settings.minimum_colocalization_intensity_ratio
         )
 
         invalid_directories: list[str] = []
@@ -1723,22 +1611,10 @@ class AutoFociCountWidget(QWidget):
                 Qt.ConnectionType.QueuedConnection,
             )
 
-    def _keep_ts_toggled(self) -> None:
-        self._keep_channel_le.setEnabled(self._keep_channel_ts.isChecked())
-
-    def _binary_mask_filter_ts_toggled(self) -> None:
-        enabled = self._binary_mask_filter_ts.isChecked()
-        self._binary_mask_channels_le.setEnabled(enabled)
-        self._binary_mask_filter_l.setEnabled(enabled)
-        self._minimum_colocalization_intensity_ratio_l.setEnabled(enabled)
-        self._minimum_colocalization_intensity_ratio_sb.setEnabled(enabled)
-
     def _get_colocalization_channels_filter(self) -> list[str]:
-        if not self._binary_mask_filter_ts.isChecked():
+        if not self._settings.filter_channels_enabled:
             return []
-        channels_raw = parse_channel_string(
-            self._binary_mask_channels_le.text()
-        )
+        channels_raw = parse_channel_string(self._settings.filter_channels)
         if not channels_raw:
             raise ValueError(
                 "Binary mask filtering is enabled but no valid channels were provided."
@@ -1752,38 +1628,32 @@ class AutoFociCountWidget(QWidget):
             )
         return [str(channel) for channel in positive_channels]
 
-    def _use_gpu_ts_toggled(self) -> None:
-        if not self._stitching_options_widget.is_gpu_enabled():
-            return
+    def _get_stitching_options(self) -> dict[str, int | bool | None]:
+        return {
+            "registration_channel": self._settings.registration_channel - 1,
+            "registration_scale": self._settings.registration_scale,
+            "num_workers": (
+                None
+                if self._settings.num_workers == 0
+                else self._settings.num_workers
+            ),
+            "n_batch": (
+                None if self._settings.n_batch == 0 else self._settings.n_batch
+            ),
+            "use_gpu": self._settings.use_gpu,
+        }
 
-        if importlib.util.find_spec("cupy") is None:
-            show_warning(
-                "CuPy is not installed in the current environment. "
-                "GPU stitching has been disabled."
-            )
-            self._stitching_options_widget.set_gpu_enabled(False)
-            return
+    def _on_settings_saved(self) -> None:
+        self._settings = self._settings_manager.load()
+        self._update_settings_status()
 
-        try:
-            import cupy
-        except (ImportError, OSError) as exc:
-            show_warning(
-                f"GPU stitching is not available in this environment: {exc}"
-            )
-            self._stitching_options_widget.set_gpu_enabled(False)
-            return
-
-        try:
-            if cupy.cuda.runtime.getDeviceCount() < 1:
-                show_warning(
-                    "No CUDA-capable GPU was detected. GPU stitching has been disabled."
-                )
-                self._stitching_options_widget.set_gpu_enabled(False)
-        except cupy.cuda.runtime.CUDARuntimeError as exc:
-            show_warning(
-                f"GPU stitching is not available in this environment: {exc}"
-            )
-            self._stitching_options_widget.set_gpu_enabled(False)
+    def _update_settings_status(self) -> None:
+        status = (
+            "default"
+            if self._settings == AutoFociCountSettings()
+            else "custom"
+        )
+        self._settings_status_lb.setText(f"Settings: {status}")
 
     def _call_segmentation(self, directory_path: str | Path) -> None:
         tile_paths = self._get_ready_tile_paths(directory_path)
@@ -2032,7 +1902,7 @@ class AutoFociCountWidget(QWidget):
             image_path=image_path,
             segmentation_path=segmentation_path,
             output_dir=auto_count_output_dir,
-            use_gpu=self._stitching_options_widget.is_gpu_enabled(),
+            use_gpu=self._settings.use_gpu,
             model_name=self._spotiflow_model_name,
             colocalization_channels_filter=colocalization_channels_filter,
             minimum_colocalization_intensity_ratio=(
@@ -2150,7 +2020,7 @@ class AutoFociCountWidget(QWidget):
                 image_paths=processed_image_paths,
                 output_csv_paths=unfiltered_points_paths,
                 model_name=self._spotiflow_model_name,
-                use_gpu=self._stitching_options_widget.is_gpu_enabled(),
+                use_gpu=self._settings.use_gpu,
             )
 
         for tile_path, segmentation_output_path in zip(

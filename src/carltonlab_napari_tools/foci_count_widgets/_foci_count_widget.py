@@ -39,6 +39,9 @@ from carltonlab_napari_tools._shared_widgets import (
 from carltonlab_napari_tools.foci_count_widgets._auto_foci_count_widget import (
     AutoFociCountWidget,
 )
+from carltonlab_napari_tools.foci_count_widgets._auto_settings_widget import (
+    CLTAutoFociCountSettingsWidget,
+)
 from carltonlab_napari_tools.foci_count_widgets._generate_plots_widget import (
     CLTGeneratePlotsWidget,
 )
@@ -713,6 +716,13 @@ class CarltonLabCountTool(QWidget):
             model_directories_widget
         )
 
+    def _show_auto_settings_widget(self) -> None:
+        settings_widget = CLTAutoFociCountSettingsWidget(
+            parent=self,
+            status_update_callback=self._auto_widget._on_settings_saved,
+        )
+        self._manual_foci_count_widget._set_current_widget(settings_widget)
+
     def _on_workflow_tab_changed(self, index: int) -> None:
         self._manual_foci_count_widget._remove_current_widget()
         self._update_workflow_tabs_height(index)
@@ -879,6 +889,7 @@ class CarltonLabCountTool(QWidget):
             set_regions_callback=self._show_stitched_regions_widget,
             generate_plots_callback=self._show_generate_plots_widget,
             model_directories_callback=self._show_model_directories_widget,
+            settings_callback=self._show_auto_settings_widget,
             status_update_callback=(
                 self._manual_foci_count_widget._update_process_status_labels
             ),

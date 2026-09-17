@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from qtpy.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -23,8 +25,14 @@ from carltonlab_napari_tools.automatic_foci_count._auto_settings import (
 class CLTAutoFociCountSettingsWidget(QWidget):
     """Edit and save automatic foci-counting settings."""
 
-    def __init__(self, parent: QWidget) -> None:
+    def __init__(
+        self,
+        parent: QWidget,
+        status_update_callback: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__(parent)
+
+        self._status_update_callback = status_update_callback
 
         self._manager = AutoFociCountSettingsManager()
         self._settings = self._manager.load()
@@ -120,6 +128,15 @@ class CLTAutoFociCountSettingsWidget(QWidget):
             self._minimum_ratio,
         )
 
+        self._restore_defaults_button = QPushButton(
+            "Restore to default",
+            parent=self,
+        )
+        self._restore_defaults_button.clicked.connect(
+            self._restore_default_settings
+        )
+        self._layout.addWidget(self._restore_defaults_button)
+
         self._save_button = QPushButton("Save settings", parent=self)
         self._save_button.clicked.connect(self._on_save)
         self._layout.addWidget(self._save_button)
@@ -132,9 +149,35 @@ class CLTAutoFociCountSettingsWidget(QWidget):
         self._filter_channels.setEnabled(enabled)
         self._minimum_ratio.setEnabled(enabled)
 
+    def _restore_default_settings(self) -> None:
+        self._settings = AutoFociCountSettings()
+        self._run_entire_workflow.setChecked(
+            self._settings.run_entire_workflow
+        )
+        self._registration_channel.setValue(
+            self._settings.registration_channel
+        )
+        self._registration_scale.setValue(
+            -1
+            if self._settings.registration_scale is None
+            else self._settings.registration_scale
+        )
+        self._use_gpu.setChecked(self._settings.use_gpu)
+        self._num_workers.setValue(self._settings.num_workers)
+        self._n_batch.setValue(self._settings.n_batch)
+        self._filter_channels_enabled.setChecked(
+            self._settings.filter_channels_enabled
+        )
+        self._filter_channels.setText(self._settings.filter_channels)
+        self._minimum_ratio.setValue(
+            self._settings.minimum_colocalization_intensity_ratio
+        )
+
     def _on_save(self) -> None:
         self._settings = self.get_settings()
         self._manager.save(self._settings)
+        if self._status_update_callback is not None:
+            self._status_update_callback()
 
     def get_settings(self) -> AutoFociCountSettings:
         registration_scale = self._registration_scale.value()
