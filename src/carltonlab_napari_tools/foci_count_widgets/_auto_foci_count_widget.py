@@ -5,7 +5,8 @@ import csv
 import importlib
 import json
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,6 +15,7 @@ import pandas as pd
 from matplotlib.path import Path as MplPath
 from multiview_stitcher import ngff_utils
 from napari.layers import Image
+from napari.qt.threading import thread_worker
 from napari.utils.notifications import show_warning
 from numpy.typing import NDArray
 from qtpy.QtCore import QMetaObject, Qt, Slot
@@ -116,6 +118,110 @@ from carltonlab_napari_tools.segmentation import (
 
 if TYPE_CHECKING:
     from napari.components import ViewerModel
+
+
+@dataclass(frozen=True)
+class ContrastPreparationUpdate:
+    """One background-preparation update for one project."""
+
+    project_path: Path
+    project_index: int
+    project_total: int
+    stage: str
+    error: str | None = None
+
+
+@thread_worker
+def _prepare_contrasts_worker(
+    project_paths: list[Path],
+    channels: list[int],
+    stitching_options: dict[str, int | bool | None],
+) -> Generator[ContrastPreparationUpdate, None, list[Path]]:
+    prepared_projects: list[Path] = []
+
+    for project_index, starting_path in enumerate(project_paths, start=1):
+        project_path = get_clsp_project_path(starting_path)
+
+        try:
+            yield ContrastPreparationUpdate(
+                project_path,
+                project_index,
+                len(project_paths),
+                "Creating project structure",
+            )
+            create_project_structure(project_path, "clsp")
+
+            tiles_path = project_path / TILES_DIR_NAME
+            if tiles_path.is_dir() and not any(tiles_path.iterdir()):
+                yield ContrastPreparationUpdate(
+                    project_path,
+                    project_index,
+                    len(project_paths),
+                    "Moving tiles",
+                )
+                if not move_tiles(starting_path, project_path):
+                    raise RuntimeError(
+                        "Could not move tiles into the project."
+                    )
+
+            yield ContrastPreparationUpdate(
+                project_path,
+                project_index,
+                len(project_paths),
+                "Checking tile configuration",
+            )
+            if not ensure_tiles_config(project_path):
+                raise RuntimeError("Could not create tiles.config.")
+
+            yield ContrastPreparationUpdate(
+                project_path,
+                project_index,
+                len(project_paths),
+                "Extracting channels",
+            )
+            tile_paths = extract_project_tiles(project_path, channels)
+
+            stitched_path = project_path / STITCHED_IMAGE_DIR_NAME
+            if any(stitched_path.glob("*.ome.zarr")):
+                prepared_projects.append(project_path)
+                yield ContrastPreparationUpdate(
+                    project_path,
+                    project_index,
+                    len(project_paths),
+                    "Stitched image already exists",
+                )
+                continue
+
+            yield ContrastPreparationUpdate(
+                project_path,
+                project_index,
+                len(project_paths),
+                "Stitching images",
+            )
+            stitch_ome_zarr_images(
+                image_list=tile_paths,
+                output_dir=stitched_path,
+                **stitching_options,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            yield ContrastPreparationUpdate(
+                project_path,
+                project_index,
+                len(project_paths),
+                "Failed",
+                error=str(exc),
+            )
+            continue
+
+        prepared_projects.append(project_path)
+        yield ContrastPreparationUpdate(
+            project_path,
+            project_index,
+            len(project_paths),
+            "Ready",
+        )
+
+    return prepared_projects
 
 
 def _get_ome_zarr_channel_count(image_path: str | Path) -> int:
@@ -994,6 +1100,8 @@ class AutoFociCountWidget(QWidget):
         self._current_tile_paths: dict[int, str] = {}
         self._current_tile_image_layers: list[Image] = []
         self._batch_fc_running = False
+        self._contrast_preparation_worker = None
+        self._contrast_failures: list[str] = []
         self._spotiflow_model_name = "synth_3d"
 
         self._layout: QVBoxLayout = QVBoxLayout()
@@ -1063,6 +1171,10 @@ class AutoFociCountWidget(QWidget):
         )
         self._layout.addWidget(self._set_contrasts_b)
 
+        self._contrast_status_lb = QLabel(parent=self)
+        self._contrast_status_lb.setWordWrap(True)
+        self._layout.addWidget(self._contrast_status_lb)
+
         self._count_foci_b: QPushButton = QPushButton(
             "2. Count foci",
             parent=self,
@@ -1091,6 +1203,17 @@ class AutoFociCountWidget(QWidget):
         )
         self._generate_plots_b.clicked.connect(self._generate_plots_callback)
         self._layout.addWidget(self._generate_plots_b)
+
+        self._helper_widget = QWidget(parent=self)
+        self._helper_widget.setObjectName("helper_widget")
+        self._helper_widget.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+        )
+        self._helper_widget_layout: QVBoxLayout = QVBoxLayout()
+        self._helper_widget_layout.setContentsMargins(0, 0, 0, 0)
+        self._helper_widget_layout.setSpacing(0)
+        self._helper_widget.setLayout(self._helper_widget_layout)
+        self._layout.addWidget(self._helper_widget, 1)
 
     def _update_cellpose_model_status(self) -> None:
         directories = ModelDirectoriesManager().ensure_default_configuration()
@@ -1129,58 +1252,10 @@ class AutoFociCountWidget(QWidget):
             "model directory."
         )
 
-        self._helper_widget = QWidget(parent=self)
-        self._helper_widget.setObjectName("helper_widget")
-        self._helper_widget.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
-        )
-        self._helper_widget_layout: QVBoxLayout = QVBoxLayout()
-        self._helper_widget_layout.setContentsMargins(0, 0, 0, 0)
-        self._helper_widget_layout.setSpacing(0)
-        self._helper_widget.setLayout(self._helper_widget_layout)
-        self._layout.addWidget(self._helper_widget, 1)
-
-    def _prepare_project_for_contrasts(
-        self,
-        starting_path: Path,
-        channels: list[int],
-    ) -> bool:
-        try:
-            project_path = get_clsp_project_path(starting_path)
-
-            create_project_structure(project_path, "clsp")
-
-            tiles_path = project_path / TILES_DIR_NAME
-            if (
-                tiles_path.is_dir()
-                and not any(tiles_path.iterdir())
-                and not move_tiles(starting_path, project_path)
-            ):
-                return False
-
-            if not ensure_tiles_config(project_path):
-                return False
-
-            tile_paths = extract_project_tiles(project_path, channels)
-
-            self._project_list_widget.refresh_rows()
-
-            stitched_path = project_path / STITCHED_IMAGE_DIR_NAME
-            if any(stitched_path.glob("*.ome.zarr")):
-                return True
-
-            stitch_ome_zarr_images(
-                image_list=tile_paths,
-                output_dir=stitched_path,
-                **self._get_stitching_options(),
-            )
-            self._project_list_widget.refresh_rows()
-            return True
-        except (OSError, ValueError, RuntimeError) as exc:
-            show_warning(f"Could not prepare project {starting_path}:\n{exc}")
-            return False
-
     def _set_contrasts_button_pressed(self) -> None:
+        if self._contrast_preparation_worker is not None:
+            return
+
         project_paths = self._project_list_widget.get_project_paths()
         if not project_paths:
             return
@@ -1188,28 +1263,72 @@ class AutoFociCountWidget(QWidget):
             return
 
         channels = self._keep_channels_widget.get_channels()
+        self._contrast_failures = []
+        self._set_contrasts_b.setEnabled(False)
+        self._contrast_status_lb.setText(
+            f"Preparing 0/{len(project_paths)} projects"
+        )
 
-        failed_projects: list[str] = []
-        prepared_projects = 0
-        for starting_path in project_paths:
-            project_prepared = self._prepare_project_for_contrasts(
-                starting_path,
-                channels,
+        self._contrast_preparation_worker = _prepare_contrasts_worker(
+            project_paths=project_paths,
+            channels=channels,
+            stitching_options=self._get_stitching_options(),
+        )
+        self._contrast_preparation_worker.yielded.connect(
+            self._on_contrast_preparation_update
+        )
+        self._contrast_preparation_worker.returned.connect(
+            self._on_contrast_preparation_finished
+        )
+        self._contrast_preparation_worker.errored.connect(
+            self._on_contrast_preparation_error
+        )
+        self._contrast_preparation_worker.start()
+
+    def _on_contrast_preparation_update(
+        self,
+        update: ContrastPreparationUpdate,
+    ) -> None:
+        self._contrast_status_lb.setText(
+            f"Project {update.project_index}/{update.project_total}: "
+            f"{update.project_path.name}\n{update.stage}"
+        )
+        if update.error is not None:
+            self._contrast_failures.append(
+                f"{update.project_path.name}: {update.error}"
             )
+        if update.stage in {"Ready", "Stitched image already exists"}:
             self._project_list_widget.refresh_rows()
-            if not project_prepared:
-                failed_projects.append(str(starting_path))
-            else:
-                prepared_projects += 1
 
-        if failed_projects:
+    def _on_contrast_preparation_finished(
+        self,
+        prepared_projects: list[Path],
+    ) -> None:
+        self._contrast_preparation_worker = None
+        self._set_contrasts_b.setEnabled(True)
+        self._project_list_widget.refresh_rows()
+
+        if self._contrast_failures:
             show_warning(
-                "The following projects were skipped or could not be prepared:\n\n"
-                + "\n".join(failed_projects)
+                "The following projects could not be prepared:\n\n"
+                + "\n".join(self._contrast_failures)
             )
 
-        if prepared_projects > 0:
+        total_projects = len(prepared_projects) + len(self._contrast_failures)
+        self._contrast_status_lb.setText(
+            f"Prepared {len(prepared_projects)}/{total_projects} projects"
+        )
+        if prepared_projects:
             self._set_contrasts_callback()
+
+    def _on_contrast_preparation_error(
+        self,
+        error: BaseException,
+    ) -> None:
+        self._contrast_preparation_worker = None
+        self._set_contrasts_b.setEnabled(True)
+        self._contrast_status_lb.setText("Preparation failed")
+        show_warning(f"Unexpected contrast-preparation error:\n{error}")
 
     @Slot()
     def _refresh_qlist_on_gui_thread(self) -> None:
