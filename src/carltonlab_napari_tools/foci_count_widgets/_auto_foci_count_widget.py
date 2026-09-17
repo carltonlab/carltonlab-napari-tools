@@ -53,6 +53,7 @@ from carltonlab_napari_tools._shared_variables import (
     TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
 )
+from carltonlab_napari_tools._shared_widgets import KeepChannelsWidget
 from carltonlab_napari_tools._tile_utils import (
     ensure_tiles_config,
     get_extracted_tile_path,
@@ -958,6 +959,7 @@ class AutoFociCountWidget(QWidget):
         viewer: ViewerModel,
         parent: QWidget,
         project_list_widget: CLTProjectListWidget,
+        keep_channels_widget: KeepChannelsWidget,
         set_contrasts_callback: Callable[[], None],
         set_regions_callback: Callable[[], None],
         generate_plots_callback: Callable[[], None],
@@ -968,6 +970,7 @@ class AutoFociCountWidget(QWidget):
         self._viewer: ViewerModel = viewer
         self._parent: QWidget = parent
         self._project_list_widget = project_list_widget
+        self._keep_channels_widget = keep_channels_widget
         self._set_contrasts_callback = set_contrasts_callback
         self._set_regions_callback = set_regions_callback
         self._generate_plots_callback = generate_plots_callback
@@ -1275,13 +1278,7 @@ class AutoFociCountWidget(QWidget):
         if not project_paths:
             return
 
-        if self._keep_channel_ts.isChecked():
-            channels = parse_channel_string(self._keep_channel_le.text())
-            if not channels:
-                show_warning("Enter a valid channel selection.")
-                return
-        else:
-            channels = []
+        channels = self._keep_channels_widget.get_channels()
 
         failed_projects: list[str] = []
         prepared_projects = 0

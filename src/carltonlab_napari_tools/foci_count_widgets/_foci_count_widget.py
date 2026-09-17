@@ -874,6 +874,7 @@ class CarltonLabCountTool(QWidget):
             viewer=self._napari_viewer,
             parent=self._auto_scroll_area,
             project_list_widget=self._manual_foci_count_widget._project_directories_list,
+            keep_channels_widget=self._keep_channels_widget,
             set_contrasts_callback=self._show_set_contrast_widget,
             set_regions_callback=self._show_stitched_regions_widget,
             generate_plots_callback=self._show_generate_plots_widget,
