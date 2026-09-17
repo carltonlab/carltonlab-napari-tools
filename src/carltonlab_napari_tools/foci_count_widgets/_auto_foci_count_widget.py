@@ -30,6 +30,12 @@ from qtpy.QtWidgets import (
 from superqt import QToggleSwitch
 from tifffile import imwrite
 
+from carltonlab_napari_tools._model_directories import (
+    ModelDirectoriesManager,
+)
+from carltonlab_napari_tools._model_download import (
+    is_bioimageio_weight_available,
+)
 from carltonlab_napari_tools._shared_variables import (
     AUTO_COUNT_DIR_NAME,
     CUT_SBS_DIR_NAME,
@@ -967,6 +973,7 @@ class AutoFociCountWidget(QWidget):
         self._generate_plots_callback = generate_plots_callback
         self._model_directories_callback = model_directories_callback
         self._status_update_callback = status_update_callback
+        ModelDirectoriesManager().ensure_default_configuration()
 
         self._helper_widget: QWidget
         self._helper_widget_layout: QVBoxLayout
@@ -1121,13 +1128,30 @@ class AutoFociCountWidget(QWidget):
         self._binary_mask_filter_ts_toggled()
 
         self._edit_model_directories_b = QPushButton(
-            "Edit model directory paths",
+            "Edit/download model",
             parent=self,
         )
         self._edit_model_directories_b.clicked.connect(
             self._model_directories_callback
         )
-        self._layout.addWidget(self._edit_model_directories_b)
+        self._model_status_row = QWidget(parent=self)
+        self._model_status_row_layout = QHBoxLayout()
+        self._model_status_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._model_status_row.setLayout(self._model_status_row_layout)
+        self._layout.addWidget(self._model_status_row)
+
+        self._cellpose_model_status_lb = QLabel(parent=self)
+        self._cellpose_model_status_lb.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._model_status_row_layout.addWidget(self._cellpose_model_status_lb)
+        self._edit_model_directories_b.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._model_status_row_layout.addWidget(self._edit_model_directories_b)
+        self._update_cellpose_model_status()
 
         self._steps_l = QLabel("Steps:", parent=self)
         self._steps_l.setStyleSheet("font-weight: bold")
@@ -1171,6 +1195,26 @@ class AutoFociCountWidget(QWidget):
         )
         self._generate_plots_b.clicked.connect(self._generate_plots_callback)
         self._layout.addWidget(self._generate_plots_b)
+
+    def _update_cellpose_model_status(self) -> None:
+        directories = ModelDirectoriesManager().ensure_default_configuration()
+        model_found = any(
+            is_bioimageio_weight_available(
+                "cellpose_meiotic_nuclei_3d",
+                directory,
+            )
+            for directory in directories
+        )
+        if model_found:
+            self._cellpose_model_status_lb.setText("Cellpose model found")
+            self._cellpose_model_status_lb.setStyleSheet(
+                "color: #29BA00; font-weight: bold;"
+            )
+        else:
+            self._cellpose_model_status_lb.setText("Cellpose model not found")
+            self._cellpose_model_status_lb.setStyleSheet(
+                "color: #A80000; font-weight: bold;"
+            )
 
         self._helper_widget = QWidget(parent=self)
         self._helper_widget.setObjectName("helper_widget")

@@ -91,6 +91,28 @@ def download_bioimageio_weight(
     return output_path
 
 
+def get_bioimageio_weight_path(
+    model_name: str,
+    model_directory: str | Path,
+) -> Path:
+    """Return the configured weight path inside one model directory."""
+    model_config = load_bioimageio_model_config(model_name)
+    return Path(model_directory) / model_config["weight_source"]
+
+
+def is_bioimageio_weight_available(
+    model_name: str,
+    model_directory: str | Path,
+) -> bool:
+    """Return whether one directory contains the valid configured weight."""
+    model_config = load_bioimageio_model_config(model_name)
+    weight_path = Path(model_directory) / model_config["weight_source"]
+    return weight_path.is_file() and _matches_sha256(
+        weight_path,
+        model_config["sha256"],
+    )
+
+
 def _matches_sha256(path: Path, expected_sha256: str) -> bool:
     digest = sha256()
     with path.open("rb") as input_file:

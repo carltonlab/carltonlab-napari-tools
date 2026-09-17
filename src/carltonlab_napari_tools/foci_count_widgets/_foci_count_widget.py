@@ -646,12 +646,6 @@ class ManualFociCountWidget(QWidget):
         )
         self._set_current_widget(generate_plots_widget)
 
-    def _show_model_directories_widget(self) -> None:
-        model_directories_widget = CLTSegmentationModelDirectoriesWidget(
-            parent=self,
-        )
-        self._set_current_widget(model_directories_widget)
-
     def _save_score_nuclei_from_key(self, _event=None) -> None:
         if not isinstance(self._current_widget, CLTScoreNucleiWidget):
             return
@@ -709,7 +703,13 @@ class CarltonLabCountTool(QWidget):
         self._manual_foci_count_widget._show_generate_plots_widget()
 
     def _show_model_directories_widget(self) -> None:
-        self._manual_foci_count_widget._show_model_directories_widget()
+        model_directories_widget = CLTSegmentationModelDirectoriesWidget(
+            parent=self,
+            status_update_callback=(
+                self._auto_widget._update_cellpose_model_status
+            ),
+        )
+        self._set_current_widget(model_directories_widget)
 
     def _on_workflow_tab_changed(self, index: int) -> None:
         self._manual_foci_count_widget._remove_current_widget()

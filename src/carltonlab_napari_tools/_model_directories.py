@@ -4,8 +4,9 @@ from collections.abc import Iterable
 from configparser import ConfigParser
 from pathlib import Path
 
-from platformdirs import user_config_path
+from platformdirs import user_config_path, user_data_path
 
+_APP_NAME = "carltonlab-napari-tools"
 _CONFIG_DIRECTORY_NAME = "carltonlab-napari-tools"
 _CONFIG_FILE_NAME = "models.config"
 _CONFIG_SECTION = "ModelDirectories"
@@ -15,8 +16,21 @@ class ModelDirectoriesManager:
     """Load and save user-configured model directories."""
 
     def __init__(self) -> None:
-        self.config_directory = user_config_path(_CONFIG_DIRECTORY_NAME)
+        self.config_directory = user_config_path(_APP_NAME)
         self.config_path = self.config_directory / _CONFIG_FILE_NAME
+        self.default_models_directory = user_data_path(_APP_NAME) / "models"
+
+    def ensure_default_configuration(self) -> list[Path]:
+        """Ensure a usable configuration and default model directory exist."""
+        directories = self.load()
+        if not directories:
+            directories = [self.default_models_directory]
+            self.save(directories)
+
+        for directory in directories:
+            directory.mkdir(parents=True, exist_ok=True)
+
+        return directories
 
     def load(self) -> list[Path]:
         """Return the configured model directories."""
