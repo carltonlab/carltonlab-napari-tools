@@ -709,7 +709,9 @@ class CarltonLabCountTool(QWidget):
                 self._auto_widget._update_cellpose_model_status
             ),
         )
-        self._set_current_widget(model_directories_widget)
+        self._manual_foci_count_widget._set_current_widget(
+            model_directories_widget
+        )
 
     def _on_workflow_tab_changed(self, index: int) -> None:
         self._manual_foci_count_widget._remove_current_widget()
