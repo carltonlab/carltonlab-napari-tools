@@ -45,6 +45,7 @@ dependencies = [
     "platformdirs",
     "superqt",
     "zarr",
+    "bioimageio-spec>=0.5.14.2",
 ]
 
 [project.optional-dependencies]
