@@ -65,9 +65,11 @@ from carltonlab_napari_tools._tile_utils import (
 from carltonlab_napari_tools._utils import (
     create_project_structure,
     get_clsp_project_path,
+    get_complete_ome_zarr_paths,
     get_project_stitched_image_path,
     is_supported_image_entry,
     parse_channel_string,
+    remove_incomplete_ome_zarr_paths,
     resolve_clsp_project_path,
 )
 from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
@@ -191,7 +193,16 @@ def _prepare_contrasts_worker(
             tile_paths = extract_project_tiles(project_path, channels)
 
             stitched_path = project_path / STITCHED_IMAGE_DIR_NAME
-            if any(stitched_path.glob("*.ome.zarr")):
+            removed_paths = remove_incomplete_ome_zarr_paths(stitched_path)
+            if removed_paths:
+                yield ContrastPreparationUpdate(
+                    project_path,
+                    project_index,
+                    len(project_paths),
+                    "Removed incomplete stitched image",
+                )
+
+            if get_complete_ome_zarr_paths(stitched_path):
                 prepared_projects.append(project_path)
                 yield ContrastPreparationUpdate(
                     project_path,
@@ -1520,7 +1531,7 @@ class AutoFociCountWidget(QWidget):
 
     def _stitched_image_is_ready(self, directory_path: str | Path) -> bool:
         stitched_directory = Path(directory_path) / STITCHED_IMAGE_DIR_NAME
-        stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
+        stitched_paths = get_complete_ome_zarr_paths(stitched_directory)
         if not stitched_paths:
             return False
 

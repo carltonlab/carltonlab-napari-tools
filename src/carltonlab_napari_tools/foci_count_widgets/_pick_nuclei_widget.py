@@ -34,7 +34,10 @@ from carltonlab_napari_tools._shared_variables import (
     STITCHED_IMAGE_DIR_NAME,
 )
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
-from carltonlab_napari_tools._utils import resolve_clsp_project_path
+from carltonlab_napari_tools._utils import (
+    get_complete_ome_zarr_paths,
+    resolve_clsp_project_path,
+)
 from carltonlab_napari_tools._viewer_utils import open_ome_zarr_layers
 from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
     SBSFlag,
@@ -707,7 +710,7 @@ class CLTPickNucleiWidget(QWidget):
         self._load_nuclei_file_paths(project_path)
 
         stitched_directory = project_path / STITCHED_IMAGE_DIR_NAME
-        stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
+        stitched_paths = get_complete_ome_zarr_paths(stitched_directory)
         if not stitched_paths:
             return
 

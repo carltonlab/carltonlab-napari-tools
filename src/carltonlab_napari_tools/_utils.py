@@ -3,8 +3,10 @@ from __future__ import annotations
 import configparser
 import json
 import os
+import shutil
 from pathlib import Path
 
+import zarr
 from napari.utils.notifications import show_error
 
 from carltonlab_napari_tools._shared_variables import (
@@ -29,6 +31,42 @@ def resolve_clsp_project_path(starting_path: Path) -> Path | None:
         return None
 
     return project_paths[0] if project_paths else None
+
+
+def is_complete_ome_zarr(path: Path) -> bool:
+    """Return whether ``path`` is a readable OME-Zarr group."""
+    if not path.is_dir() or not path.name.endswith(".ome.zarr"):
+        return False
+
+    try:
+        group = zarr.open_group(str(path), mode="r")
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+
+    return "multiscales" in group.attrs
+
+
+def get_complete_ome_zarr_paths(directory: Path) -> list[Path]:
+    """Return only readable OME-Zarr images in ``directory``."""
+    return [
+        path
+        for path in sorted(directory.glob("*.ome.zarr"))
+        if is_complete_ome_zarr(path)
+    ]
+
+
+def remove_incomplete_ome_zarr_paths(directory: Path) -> list[Path]:
+    """Remove unreadable OME-Zarr directories made by an interrupted run."""
+    removed_paths: list[Path] = []
+
+    for path in sorted(directory.glob("*.ome.zarr")):
+        if is_complete_ome_zarr(path):
+            continue
+
+        shutil.rmtree(path)
+        removed_paths.append(path)
+
+    return removed_paths
 
 
 def get_clsp_project_path(starting_path: Path) -> Path:
@@ -59,7 +97,7 @@ def get_project_stitched_image_path(
     project_path: Path,
 ) -> Path | None:
     stitched_directory = project_path / STITCHED_IMAGE_DIR_NAME
-    stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
+    stitched_paths = get_complete_ome_zarr_paths(stitched_directory)
     return stitched_paths[0] if stitched_paths else None
 
 

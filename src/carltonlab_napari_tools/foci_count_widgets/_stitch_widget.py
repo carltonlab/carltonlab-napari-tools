@@ -34,6 +34,7 @@ from carltonlab_napari_tools._tile_utils import (
 from carltonlab_napari_tools._utils import (
     create_project_structure,
     get_clsp_project_path,
+    get_complete_ome_zarr_paths,
     parse_channel_string,
 )
 from carltonlab_napari_tools.channel_extraction import (
@@ -124,7 +125,7 @@ class StitchOmeZarrWidget(QWidget):
 
     def _has_stitched_image(self, project_path: Path) -> bool:
         stitched_dir = project_path / STITCHED_IMAGE_DIR_NAME
-        return stitched_dir.is_dir() and any(stitched_dir.glob("*.ome.zarr"))
+        return bool(get_complete_ome_zarr_paths(stitched_dir))
 
     @staticmethod
     def get_project_status(
@@ -199,8 +200,8 @@ class StitchOmeZarrWidget(QWidget):
             contrast_tooltip = "Contrasts haven't been set"
 
         stitched_image_directory = project_path / STITCHED_IMAGE_DIR_NAME
-        stitched_image_exists = stitched_image_directory.is_dir() and any(
-            stitched_image_directory.glob("*.ome.zarr")
+        stitched_image_exists = bool(
+            get_complete_ome_zarr_paths(stitched_image_directory)
         )
 
         if not stitched_image_exists:

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from napari.layers import Image
-from napari.utils.notifications import show_error
+from napari.utils.notifications import show_error, show_info
 from qtpy.QtCore import QSignalBlocker, Qt
 from qtpy.QtWidgets import (
     QHBoxLayout,
@@ -32,7 +32,9 @@ from carltonlab_napari_tools._shared_variables import (
 from carltonlab_napari_tools._shared_widgets import FrameSeparator
 from carltonlab_napari_tools._tile_utils import get_extracted_tile_path
 from carltonlab_napari_tools._utils import (
+    get_complete_ome_zarr_paths,
     parse_channel_string,
+    remove_incomplete_ome_zarr_paths,
     resolve_clsp_project_path,
 )
 from carltonlab_napari_tools._viewer_utils import open_ome_zarr_layers
@@ -394,7 +396,14 @@ class CLTSetContrastWidget(QWidget):
             self._add_image_entry(tile_path.name, tile_path)
 
         stitched_directory = project_path / STITCHED_IMAGE_DIR_NAME
-        for stitched_path in sorted(stitched_directory.glob("*.ome.zarr")):
+        removed_paths = remove_incomplete_ome_zarr_paths(stitched_directory)
+        if removed_paths:
+            show_info(
+                "Removed incomplete stitched image. "
+                "Run Set contrasts again to stitch it."
+            )
+
+        for stitched_path in get_complete_ome_zarr_paths(stitched_directory):
             self._add_image_entry("Stitched image", stitched_path)
 
     def _add_image_entry(
