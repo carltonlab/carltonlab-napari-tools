@@ -8,6 +8,7 @@ from qtpy.QtCore import QSize, Qt, QTimer
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
     QWIDGETSIZE_MAX,
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -69,6 +70,9 @@ from carltonlab_napari_tools.general_widgets._set_contrast_widget import (
 )
 from carltonlab_napari_tools.segmentation._model_directories_widget import (
     CLTSegmentationModelDirectoriesWidget,
+)
+from carltonlab_napari_tools.segmentation._segmentation import (
+    terminate_active_model_processes,
 )
 from carltonlab_napari_tools.stitched_regions_widgets._stitched_regions_widget import (
     CLTStitchedRegionsWidget,
@@ -741,6 +745,10 @@ class CarltonLabCountTool(QWidget):
         self._workflow_tabs.updateGeometry()
 
     def _initialize_gui(self) -> None:
+        application = QApplication.instance()
+        if application is not None:
+            application.aboutToQuit.connect(terminate_active_model_processes)
+
         self._main_layout = QVBoxLayout()
         self.setLayout(self._main_layout)
         self._main_layout.setContentsMargins(25, 2, 2, 25)

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import atexit
 import csv
-import ctypes
 import json
 import os
 import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,57 @@ from multiview_stitcher import spatial_image_utils as si_utils
 from scipy import ndimage
 
 MODELS_DIR = Path(__file__).resolve().parent / "models"
+_ACTIVE_MODEL_PROCESSES: set[subprocess.Popen[str]] = set()
+_ACTIVE_MODEL_PROCESSES_LOCK = threading.Lock()
+
+
+def _register_model_process(process: subprocess.Popen[str]) -> None:
+    """Remember a model process so it can be stopped during shutdown."""
+    with _ACTIVE_MODEL_PROCESSES_LOCK:
+        _ACTIVE_MODEL_PROCESSES.add(process)
+
+
+def _unregister_model_process(process: subprocess.Popen[str]) -> None:
+    """Stop tracking a model process that has already finished."""
+    with _ACTIVE_MODEL_PROCESSES_LOCK:
+        _ACTIVE_MODEL_PROCESSES.discard(process)
+
+
+def _terminate_model_process(
+    process: subprocess.Popen[str],
+    timeout_seconds: float = 5.0,
+) -> None:
+    """Stop one active model job and its child processes."""
+    if process.poll() is not None:
+        return
+
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+
+
+def terminate_active_model_processes() -> None:
+    """Stop every model job currently launched by this plugin."""
+    with _ACTIVE_MODEL_PROCESSES_LOCK:
+        active_processes = list(_ACTIVE_MODEL_PROCESSES)
+
+    for process in active_processes:
+        _terminate_model_process(process)
+
+
+atexit.register(terminate_active_model_processes)
 
 
 def _strip_ome_zarr_suffix(path: str | Path) -> str:
@@ -463,38 +515,7 @@ def run_spotiflow_subprocess(
         "model_name": model_name,
         "use_gpu": bool(use_gpu),
     }
-    env = os.environ.copy()
-    env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
-    command = [
-        sys.executable,
-        "-m",
-        "carltonlab_napari_tools.segmentation._segmentation",
-        json.dumps(payload),
-    ]
-    print(f"Starting Spotiflow subprocess: {' '.join(command[:3])} ...")
-    popen_kwargs = {
-        "env": env,
-        "text": True,
-    }
-    if sys.platform.startswith("linux"):
-        popen_kwargs["preexec_fn"] = _set_child_parent_death_signal
-
-    process = subprocess.Popen(
-        command,
-        **popen_kwargs,
-    )
-    try:
-        returncode = process.wait()
-    except BaseException:
-        process.terminate()
-        process.wait()
-        raise
-
-    if returncode != 0:
-        raise RuntimeError(
-            f"Spotiflow subprocess failed with exit code {returncode}"
-        )
-    return True
+    return _run_model_subprocess(payload, "Spotiflow")
 
 
 def run_spotiflow_batch_subprocess(
@@ -509,35 +530,7 @@ def run_spotiflow_batch_subprocess(
         "model_name": model_name,
         "use_gpu": bool(use_gpu),
     }
-    env = os.environ.copy()
-    env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
-    command = [
-        sys.executable,
-        "-m",
-        "carltonlab_napari_tools.segmentation._segmentation",
-        json.dumps(payload),
-    ]
-    print(f"Starting Spotiflow batch subprocess for {len(image_paths)} images")
-    popen_kwargs = {
-        "env": env,
-        "text": True,
-    }
-    if sys.platform.startswith("linux"):
-        popen_kwargs["preexec_fn"] = _set_child_parent_death_signal
-
-    process = subprocess.Popen(command, **popen_kwargs)
-    try:
-        returncode = process.wait()
-    except BaseException:
-        process.terminate()
-        process.wait()
-        raise
-
-    if returncode != 0:
-        raise RuntimeError(
-            f"Spotiflow batch subprocess failed with exit code {returncode}"
-        )
-    return True
+    return _run_model_subprocess(payload, "Spotiflow batch")
 
 
 def load_ome_zarr_image_zyx(
@@ -565,13 +558,42 @@ def load_ome_zarr_image_zyx(
     )
 
 
-def _set_child_parent_death_signal() -> None:
-    if not sys.platform.startswith("linux"):
-        return
+def _run_model_subprocess(
+    payload: dict[str, object],
+    description: str,
+) -> bool:
+    """Run one external model job and clean it up if this call is interrupted."""
+    environment = os.environ.copy()
+    environment.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    command = [
+        sys.executable,
+        "-m",
+        "carltonlab_napari_tools.segmentation._segmentation",
+        json.dumps(payload),
+    ]
+    popen_kwargs: dict[str, object] = {
+        "env": environment,
+        "text": True,
+    }
+    if os.name == "posix":
+        popen_kwargs["start_new_session"] = True
 
-    libc = ctypes.CDLL("libc.so.6")
-    pr_set_pdeathsig = 1
-    libc.prctl(pr_set_pdeathsig, signal.SIGTERM)
+    print(f"Starting {description} subprocess: {' '.join(command[:3])} ...")
+    process = subprocess.Popen(command, **popen_kwargs)
+    _register_model_process(process)
+    try:
+        returncode = process.wait()
+    except BaseException:
+        _terminate_model_process(process)
+        raise
+    finally:
+        _unregister_model_process(process)
+
+    if returncode != 0:
+        raise RuntimeError(
+            f"{description} subprocess failed with exit code {returncode}"
+        )
+    return True
 
 
 def run_segmentation_subprocess(
@@ -586,38 +608,7 @@ def run_segmentation_subprocess(
         "output_name": output_name,
         "output_dir": str(output_dir),
     }
-    env = os.environ.copy()
-    env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
-    command = [
-        sys.executable,
-        "-m",
-        "carltonlab_napari_tools.segmentation._segmentation",
-        json.dumps(payload),
-    ]
-    print(f"Starting segmentation subprocess: {' '.join(command[:3])} ...")
-    popen_kwargs = {
-        "env": env,
-        "text": True,
-    }
-    if sys.platform.startswith("linux"):
-        popen_kwargs["preexec_fn"] = _set_child_parent_death_signal
-
-    process = subprocess.Popen(
-        command,
-        **popen_kwargs,
-    )
-    try:
-        returncode = process.wait()
-    except BaseException:
-        process.terminate()
-        process.wait()
-        raise
-
-    if returncode != 0:
-        raise RuntimeError(
-            f"Segmentation subprocess failed with exit code {returncode}"
-        )
-    return True
+    return _run_model_subprocess(payload, "Segmentation")
 
 
 def run_segmentation_batch_subprocess(
@@ -635,38 +626,7 @@ def run_segmentation_batch_subprocess(
         "output_name": output_name,
         "output_dir": str(output_dir),
     }
-    env = os.environ.copy()
-    env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
-    command = [
-        sys.executable,
-        "-m",
-        "carltonlab_napari_tools.segmentation._segmentation",
-        json.dumps(payload),
-    ]
-    print(f"Starting Cellpose batch subprocess for {len(image_paths)} tiles")
-    popen_kwargs = {
-        "env": env,
-        "text": True,
-    }
-    if sys.platform.startswith("linux"):
-        popen_kwargs["preexec_fn"] = _set_child_parent_death_signal
-
-    process = subprocess.Popen(
-        command,
-        **popen_kwargs,
-    )
-    try:
-        returncode = process.wait()
-    except BaseException:
-        process.terminate()
-        process.wait()
-        raise
-
-    if returncode != 0:
-        raise RuntimeError(
-            f"Cellpose batch subprocess failed with exit code {returncode}"
-        )
-    return True
+    return _run_model_subprocess(payload, "Cellpose batch")
 
 
 def run_segmentation(
