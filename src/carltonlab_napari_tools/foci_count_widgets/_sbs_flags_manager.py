@@ -15,6 +15,7 @@ class SBSFlag(str, Enum):
     IGNORE = "Ignore"
     APOPTOTIC = "Apoptotic"
     COORD_RECALC_NEEDED = "COORD_RECALC_NEEDED"
+    OUT_OF_SPLINE = "OUT_OF_SPLINE"
 
 
 class SBSFlagsManager:

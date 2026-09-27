@@ -34,6 +34,7 @@ from carltonlab_napari_tools._tile_utils import (
 from carltonlab_napari_tools._utils import (
     create_project_structure,
     get_clsp_project_path,
+    get_complete_ome_zarr_paths,
     parse_channel_string,
 )
 from carltonlab_napari_tools.channel_extraction import (
@@ -124,7 +125,7 @@ class StitchOmeZarrWidget(QWidget):
 
     def _has_stitched_image(self, project_path: Path) -> bool:
         stitched_dir = project_path / STITCHED_IMAGE_DIR_NAME
-        return stitched_dir.is_dir() and any(stitched_dir.glob("*.ome.zarr"))
+        return bool(get_complete_ome_zarr_paths(stitched_dir))
 
     @staticmethod
     def get_project_status(
@@ -199,8 +200,8 @@ class StitchOmeZarrWidget(QWidget):
             contrast_tooltip = "Contrasts haven't been set"
 
         stitched_image_directory = project_path / STITCHED_IMAGE_DIR_NAME
-        stitched_image_exists = stitched_image_directory.is_dir() and any(
-            stitched_image_directory.glob("*.ome.zarr")
+        stitched_image_exists = bool(
+            get_complete_ome_zarr_paths(stitched_image_directory)
         )
 
         if not stitched_image_exists:
@@ -293,7 +294,13 @@ class StitchOmeZarrWidget(QWidget):
         for starting_project in starting_projects:
             project_path = get_clsp_project_path(starting_project)
 
-            if not create_project_structure(project_path, "clsp"):
+            try:
+                create_project_structure(project_path, "clsp")
+            except (OSError, ValueError) as exc:
+                show_error(
+                    f"Could not create project for {starting_project.name}:\n"
+                    f"{exc}"
+                )
                 continue
 
             tiles_path = project_path / TILES_DIR_NAME
@@ -390,24 +397,32 @@ class StitchOmeZarrWidget(QWidget):
                 f"({project_number}/{len(project_paths)})",
                 flush=True,
             )
-            extracted_paths = extract_project_tiles(
-                project_path,
-                requested_channels,
-            )
-            if extracted_paths is None:
+            try:
+                extracted_paths = extract_project_tiles(
+                    project_path,
+                    requested_channels,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                show_error(
+                    f"Could not extract tiles for {project_path.name}:\n{exc}"
+                )
                 continue
 
             print(
                 f"\nStitching: {project_path.name}",
                 flush=True,
             )
-            stitching_succeeded = stitch_ome_zarr_images(
-                image_list=extracted_paths,
-                output_dir=project_path / STITCHED_IMAGE_DIR_NAME,
-                **stitching_options,
-            )
-            if stitching_succeeded:
-                print("Done stitching...\n", flush=True)
+            try:
+                stitch_ome_zarr_images(
+                    image_list=extracted_paths,
+                    output_dir=project_path / STITCHED_IMAGE_DIR_NAME,
+                    **stitching_options,
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                show_error(f"Could not stitch {project_path.name}:\n{exc}")
+                continue
+
+            print("Done stitching...\n", flush=True)
 
         print("\nDone processing all projects.\n", flush=True)
         self._project_list_widget.refresh_rows()

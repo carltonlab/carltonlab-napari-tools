@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import ctypes
+import atexit
+import csv
 import json
 import os
 import signal
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +16,57 @@ from multiview_stitcher import spatial_image_utils as si_utils
 from scipy import ndimage
 
 MODELS_DIR = Path(__file__).resolve().parent / "models"
+_ACTIVE_MODEL_PROCESSES: set[subprocess.Popen[str]] = set()
+_ACTIVE_MODEL_PROCESSES_LOCK = threading.Lock()
+
+
+def _register_model_process(process: subprocess.Popen[str]) -> None:
+    """Remember a model process so it can be stopped during shutdown."""
+    with _ACTIVE_MODEL_PROCESSES_LOCK:
+        _ACTIVE_MODEL_PROCESSES.add(process)
+
+
+def _unregister_model_process(process: subprocess.Popen[str]) -> None:
+    """Stop tracking a model process that has already finished."""
+    with _ACTIVE_MODEL_PROCESSES_LOCK:
+        _ACTIVE_MODEL_PROCESSES.discard(process)
+
+
+def _terminate_model_process(
+    process: subprocess.Popen[str],
+    timeout_seconds: float = 5.0,
+) -> None:
+    """Stop one active model job and its child processes."""
+    if process.poll() is not None:
+        return
+
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait()
+
+
+def terminate_active_model_processes() -> None:
+    """Stop every model job currently launched by this plugin."""
+    with _ACTIVE_MODEL_PROCESSES_LOCK:
+        active_processes = list(_ACTIVE_MODEL_PROCESSES)
+
+    for process in active_processes:
+        _terminate_model_process(process)
+
+
+atexit.register(terminate_active_model_processes)
 
 
 def _strip_ome_zarr_suffix(path: str | Path) -> str:
@@ -23,22 +76,13 @@ def _strip_ome_zarr_suffix(path: str | Path) -> str:
     return image_path.stem
 
 
-def _resolve_model_path(model_name: str) -> Path:
-    model_path = MODELS_DIR / model_name
-    if not model_path.exists():
-        raise FileNotFoundError(f"Segmentation model not found: {model_path}")
-    if not model_path.is_file():
-        raise ValueError(f"Segmentation model is not a file: {model_path}")
-    return model_path
-
-
 def _resolve_output_path(
     image_path: str | Path,
-    model_name: str,
+    output_name: str,
     output_dir: str | Path,
 ) -> Path:
     base_name = _strip_ome_zarr_suffix(image_path)
-    return Path(output_dir) / f"{base_name}_{model_name}_masks.npy"
+    return Path(output_dir) / f"{base_name}_{output_name}_masks.npy"
 
 
 def load_segmentation_npy(segmentation_path: str | Path) -> np.ndarray:
@@ -133,35 +177,104 @@ def _prepare_3d_image_channel_zyx(
     return image_zyx, spacing
 
 
-def _run_cellpose_3d(
-    image_zyx: np.ndarray,
-    model_path: Path,
-    anisotropy: float | None,
-) -> np.ndarray:
-    import torch
-    from cellpose import models
+class CellposeSegmenter:
+    def __init__(self, model_path: Path):
+        import torch
+        from cellpose import models
 
-    use_gpu = torch.cuda.is_available()
-    print(f"Loading Cellpose model: {model_path}")
-    print(f"Cellpose GPU available: {use_gpu}")
-    print(f"Cellpose anisotropy: {anisotropy}")
+        use_gpu = torch.cuda.is_available()
+        print(f"Loading Cellpose model: {model_path}")
+        print(f"Cellpose GPU available: {use_gpu}")
+        self._model = models.CellposeModel(
+            gpu=use_gpu,
+            pretrained_model=str(model_path),
+        )
 
-    model = models.CellposeModel(
-        gpu=use_gpu,
-        pretrained_model=str(model_path),
+    def segment(
+        self,
+        image_zyx: np.ndarray,
+        anisotropy: float | None,
+    ) -> np.ndarray:
+        print(f"Cellpose anisotropy: {anisotropy}")
+        masks, flows, styles = self._model.eval(
+            image_zyx,
+            channels=[0, 0],
+            channel_axis=None,
+            z_axis=0,
+            normalize={"normalize": True, "norm3D": True},
+            do_3D=True,
+            anisotropy=anisotropy,
+            flow3D_smooth=[1.5, 0.0, 0.0],
+        )
+        del flows
+        del styles
+        return np.asarray(masks, dtype=np.uint32)
+
+
+Z_EDGE_AREA_RATIO_THRESHOLD = 0.20
+
+
+def _get_label_central_area(
+    labels_zyx: np.ndarray,
+    label_id: int,
+) -> float:
+    occupied_z_sections = np.flatnonzero(
+        np.any(labels_zyx == label_id, axis=(1, 2))
     )
-    masks, flows, styles = model.eval(
-        image_zyx,
-        channels=[0, 0],
-        channel_axis=None,
-        z_axis=0,
-        normalize={"normalize": True, "norm3D": True},
-        do_3D=True,
-        anisotropy=anisotropy,
-    )
-    del flows
-    del styles
-    return np.asarray(masks, dtype=np.uint32)
+    if len(occupied_z_sections) == 0:
+        return 0.0
+
+    middle_index = len(occupied_z_sections) // 2
+    if len(occupied_z_sections) % 2:
+        central_z = occupied_z_sections[middle_index]
+        return float(np.count_nonzero(labels_zyx[central_z] == label_id))
+
+    lower_central_z = occupied_z_sections[middle_index - 1]
+    upper_central_z = occupied_z_sections[middle_index]
+    lower_area = np.count_nonzero(labels_zyx[lower_central_z] == label_id)
+    upper_area = np.count_nonzero(labels_zyx[upper_central_z] == label_id)
+    return float(lower_area + upper_area) / 2.0
+
+
+def _get_truncated_z_edge_labels(
+    labels_zyx: np.ndarray,
+) -> set[int]:
+    if labels_zyx.shape[0] < 2:
+        return {
+            int(label_id) for label_id in np.unique(labels_zyx) if label_id > 0
+        }
+
+    lower_edge_labels = {
+        int(label_id) for label_id in np.unique(labels_zyx[:2]) if label_id > 0
+    }
+    upper_edge_labels = {
+        int(label_id)
+        for label_id in np.unique(labels_zyx[-2:])
+        if label_id > 0
+    }
+
+    labels_to_remove: set[int] = set()
+    for label_id in lower_edge_labels | upper_edge_labels:
+        central_area = _get_label_central_area(labels_zyx, label_id)
+        if central_area <= 0:
+            labels_to_remove.add(label_id)
+            continue
+
+        edge_areas: list[int] = []
+        if label_id in lower_edge_labels:
+            edge_areas.append(int(np.count_nonzero(labels_zyx[1] == label_id)))
+        if label_id in upper_edge_labels:
+            edge_areas.append(
+                int(np.count_nonzero(labels_zyx[-2] == label_id))
+            )
+
+        if any(
+            edge_area >= central_area * Z_EDGE_AREA_RATIO_THRESHOLD
+            for edge_area in edge_areas
+        ):
+            labels_to_remove.add(label_id)
+
+    return labels_to_remove
 
 
 def remove_edge_objects(labels_zyx: np.ndarray) -> np.ndarray:
@@ -171,14 +284,11 @@ def remove_edge_objects(labels_zyx: np.ndarray) -> np.ndarray:
             f"Expected a 3D label image, got shape {labels.shape}"
         )
 
-    z_max = labels.shape[0] - 1
     y_max = labels.shape[1] - 1
     x_max = labels.shape[2] - 1
-    edge_labels = np.unique(
+    xy_edge_labels = np.unique(
         np.concatenate(
             [
-                labels[0:2, :, :].ravel(),
-                labels[z_max - 1 : z_max + 1, :, :].ravel(),
                 labels[:, 0:2, :].ravel(),
                 labels[:, y_max - 1 : y_max + 1, :].ravel(),
                 labels[:, :, 0:2].ravel(),
@@ -186,12 +296,16 @@ def remove_edge_objects(labels_zyx: np.ndarray) -> np.ndarray:
             ]
         )
     )
-    edge_labels = edge_labels[edge_labels > 0]
-    if len(edge_labels) == 0:
+    labels_to_remove = {
+        int(label_id) for label_id in xy_edge_labels if label_id > 0
+    }
+    labels_to_remove.update(_get_truncated_z_edge_labels(labels))
+
+    if not labels_to_remove:
         return labels.astype(np.uint32, copy=True)
 
     filtered = labels.copy()
-    filtered[np.isin(filtered, edge_labels)] = 0
+    filtered[np.isin(filtered, list(labels_to_remove))] = 0
     return np.asarray(filtered, dtype=np.uint32)
 
 
@@ -301,35 +415,92 @@ def _resolve_spotiflow_model_dir(model_name: str) -> Path:
     return model_path
 
 
+class SpotiflowDetector:
+    def __init__(self, model_name: str = "smfish_3d", use_gpu: bool = True):
+        from spotiflow.model import Spotiflow
+
+        self._device = "auto" if use_gpu else "cpu"
+        model_dir = MODELS_DIR / model_name
+        if model_dir.exists():
+            print(f"Loading Spotiflow model from folder: {model_dir}")
+            self._model = Spotiflow.from_folder(
+                str(model_dir),
+                map_location=self._device,
+            )
+        else:
+            print(f"Loading Spotiflow pretrained model: {model_name}")
+            self._model = Spotiflow.from_pretrained(
+                model_name,
+                map_location=self._device,
+            )
+
+    def predict(self, image_zyx: np.ndarray) -> np.ndarray:
+        spots, _details = self._model.predict(
+            np.asarray(image_zyx),
+            normalizer=None,
+            verbose=False,
+            device=self._device,
+        )
+        return np.asarray(spots)
+
+
+def _save_spotiflow_points(
+    output_csv_path: str | Path,
+    spots_coords: np.ndarray,
+) -> None:
+    output_path = Path(output_csv_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    points = np.asarray(spots_coords)
+    if points.size == 0:
+        points = np.empty((0, 3), dtype=float)
+    elif points.ndim == 1:
+        points = points.reshape(1, -1)
+
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["index", "axis-0", "axis-1", "axis-2"])
+        for point_index, point in enumerate(points):
+            writer.writerow([point_index, *point.tolist()])
+
+
 def run_spotiflow_spot_detection(
     image_zyx: np.ndarray,
     model_name: str = "smfish_3d",
     use_gpu: bool = True,
 ) -> np.ndarray:
-    from spotiflow.model import Spotiflow
+    return SpotiflowDetector(model_name, use_gpu).predict(image_zyx)
 
-    device = "auto" if use_gpu else "cpu"
-    print(f"Spotiflow device request: {device}")
-    model_dir = MODELS_DIR / model_name
-    if model_dir.exists():
-        print(f"Loading Spotiflow model from folder: {model_dir}")
-        model = Spotiflow.from_folder(
-            str(model_dir),
-            map_location=device,
-        )
-    else:
-        print(f"Loading Spotiflow pretrained model: {model_name}")
-        model = Spotiflow.from_pretrained(
-            model_name,
-            map_location=device,
-        )
-    spots, _details = model.predict(
-        np.asarray(image_zyx),
-        normalizer=None,
-        verbose=False,
-        device=device,
+
+def run_spotiflow_batch(
+    image_paths: list[str | Path],
+    output_csv_paths: list[str | Path],
+    model_name: str,
+    use_gpu: bool,
+) -> bool:
+    if len(image_paths) != len(output_csv_paths):
+        raise ValueError("Spotiflow image and output path counts must match.")
+    if not image_paths:
+        return True
+
+    from tifffile import imread
+
+    detector = SpotiflowDetector(
+        model_name=model_name,
+        use_gpu=use_gpu,
     )
-    return np.asarray(spots)
+    for image_index, (image_path, output_path) in enumerate(
+        zip(image_paths, output_csv_paths, strict=True),
+        start=1,
+    ):
+        print(
+            "Running Spotiflow "
+            f"{image_index}/{len(image_paths)}: {image_path}"
+        )
+        image_zyx = np.asarray(imread(image_path))
+        spots_coords = detector.predict(image_zyx)
+        _save_spotiflow_points(output_path, spots_coords)
+
+    return True
 
 
 def run_spotiflow_subprocess(
@@ -344,38 +515,22 @@ def run_spotiflow_subprocess(
         "model_name": model_name,
         "use_gpu": bool(use_gpu),
     }
-    env = os.environ.copy()
-    env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
-    command = [
-        sys.executable,
-        "-m",
-        "carltonlab_napari_tools.segmentation._segmentation",
-        json.dumps(payload),
-    ]
-    print(f"Starting Spotiflow subprocess: {' '.join(command[:3])} ...")
-    popen_kwargs = {
-        "env": env,
-        "text": True,
+    return _run_model_subprocess(payload, "Spotiflow")
+
+
+def run_spotiflow_batch_subprocess(
+    image_paths: list[str | Path],
+    output_csv_paths: list[str | Path],
+    model_name: str = "smfish_3d",
+    use_gpu: bool = True,
+) -> bool:
+    payload = {
+        "spotiflow_image_paths": [str(path) for path in image_paths],
+        "spotiflow_output_csv_paths": [str(path) for path in output_csv_paths],
+        "model_name": model_name,
+        "use_gpu": bool(use_gpu),
     }
-    if sys.platform.startswith("linux"):
-        popen_kwargs["preexec_fn"] = _set_child_parent_death_signal
-
-    process = subprocess.Popen(
-        command,
-        **popen_kwargs,
-    )
-    try:
-        returncode = process.wait()
-    except BaseException:
-        process.terminate()
-        process.wait()
-        raise
-
-    if returncode != 0:
-        raise RuntimeError(
-            f"Spotiflow subprocess failed with exit code {returncode}"
-        )
-    return True
+    return _run_model_subprocess(payload, "Spotiflow batch")
 
 
 def load_ome_zarr_image_zyx(
@@ -403,63 +558,83 @@ def load_ome_zarr_image_zyx(
     )
 
 
-def _set_child_parent_death_signal() -> None:
-    if not sys.platform.startswith("linux"):
-        return
-
-    libc = ctypes.CDLL("libc.so.6")
-    pr_set_pdeathsig = 1
-    libc.prctl(pr_set_pdeathsig, signal.SIGTERM)
-
-
-def run_segmentation_subprocess(
-    image_path: str | Path,
-    model_name: str,
-    output_dir: str | Path,
+def _run_model_subprocess(
+    payload: dict[str, object],
+    description: str,
 ) -> bool:
-    payload = {
-        "image_path": str(image_path),
-        "model_name": model_name,
-        "output_dir": str(output_dir),
-    }
-    env = os.environ.copy()
-    env.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    """Run one external model job and clean it up if this call is interrupted."""
+    environment = os.environ.copy()
+    environment.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
     command = [
         sys.executable,
         "-m",
         "carltonlab_napari_tools.segmentation._segmentation",
         json.dumps(payload),
     ]
-    print(f"Starting segmentation subprocess: {' '.join(command[:3])} ...")
-    popen_kwargs = {
-        "env": env,
+    popen_kwargs: dict[str, object] = {
+        "env": environment,
         "text": True,
     }
-    if sys.platform.startswith("linux"):
-        popen_kwargs["preexec_fn"] = _set_child_parent_death_signal
+    if os.name == "posix":
+        popen_kwargs["start_new_session"] = True
 
-    process = subprocess.Popen(
-        command,
-        **popen_kwargs,
-    )
+    print(f"Starting {description} subprocess: {' '.join(command[:3])} ...")
+    process = subprocess.Popen(command, **popen_kwargs)
+    _register_model_process(process)
     try:
         returncode = process.wait()
     except BaseException:
-        process.terminate()
-        process.wait()
+        _terminate_model_process(process)
         raise
+    finally:
+        _unregister_model_process(process)
 
     if returncode != 0:
         raise RuntimeError(
-            f"Segmentation subprocess failed with exit code {returncode}"
+            f"{description} subprocess failed with exit code {returncode}"
         )
     return True
 
 
+def run_segmentation_subprocess(
+    image_path: str | Path,
+    model_path: str | Path,
+    output_name: str,
+    output_dir: str | Path,
+) -> bool:
+    payload = {
+        "image_path": str(image_path),
+        "model_path": str(model_path),
+        "output_name": output_name,
+        "output_dir": str(output_dir),
+    }
+    return _run_model_subprocess(payload, "Segmentation")
+
+
+def run_segmentation_batch_subprocess(
+    image_paths: list[str | Path],
+    model_path: str | Path,
+    output_name: str,
+    output_dir: str | Path,
+) -> bool:
+    if not image_paths:
+        return True
+
+    payload = {
+        "image_paths": [str(path) for path in image_paths],
+        "model_path": str(model_path),
+        "output_name": output_name,
+        "output_dir": str(output_dir),
+    }
+    return _run_model_subprocess(payload, "Cellpose batch")
+
+
 def run_segmentation(
     image_path: str | Path,
-    model_name: str,
+    model_path: str | Path,
+    output_name: str,
     output_dir: str | Path,
+    segmenter: CellposeSegmenter | None = None,
 ) -> bool:
     image_path_obj = Path(image_path)
     if not image_path_obj.exists():
@@ -472,12 +647,14 @@ def run_segmentation(
             f"Got {image_path_obj.name}."
         )
 
-    model_path = _resolve_model_path(model_name)
+    model_path = Path(model_path)
+    if not model_path.is_file():
+        raise FileNotFoundError(f"Segmentation model not found: {model_path}")
     output_dir_path = Path(output_dir)
     output_dir_path.mkdir(parents=True, exist_ok=True)
     output_path = _resolve_output_path(
         image_path=image_path_obj,
-        model_name=model_name,
+        output_name=output_name,
         output_dir=output_dir_path,
     )
     if output_path.exists():
@@ -495,9 +672,11 @@ def run_segmentation(
     print(f"Segmentation output path: {output_path}")
     print(f"Segmentation spacing: {spacing}")
 
-    masks_zyx = _run_cellpose_3d(
+    if segmenter is None:
+        segmenter = CellposeSegmenter(model_path)
+
+    masks_zyx = segmenter.segment(
         image_zyx=image_zyx,
-        model_path=model_path,
         anisotropy=anisotropy,
     )
     print(f"Segmentation mask shape (ZYX): {masks_zyx.shape}")
@@ -506,19 +685,64 @@ def run_segmentation(
     return True
 
 
+def run_segmentation_batch(
+    image_paths: list[str | Path],
+    model_path: str | Path,
+    output_name: str,
+    output_dir: str | Path,
+) -> bool:
+    if not image_paths:
+        return True
+
+    model_path = Path(model_path)
+    if not model_path.is_file():
+        raise FileNotFoundError(f"Segmentation model not found: {model_path}")
+    segmenter = CellposeSegmenter(model_path)
+    for image_index, image_path in enumerate(image_paths, start=1):
+        print(
+            "Running Cellpose segmentation "
+            f"{image_index}/{len(image_paths)}: {image_path}"
+        )
+        run_segmentation(
+            image_path=image_path,
+            model_path=model_path,
+            output_name=output_name,
+            output_dir=output_dir,
+            segmenter=segmenter,
+        )
+    return True
+
+
 def _main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("Expected one JSON payload argument")
     payload = json.loads(sys.argv[1])
-    if "output_dir" in payload:
-        run_segmentation(
-            image_path=payload["image_path"],
+    if "spotiflow_image_paths" in payload:
+        run_spotiflow_batch(
+            image_paths=payload["spotiflow_image_paths"],
+            output_csv_paths=payload["spotiflow_output_csv_paths"],
             model_name=payload["model_name"],
+            use_gpu=bool(payload.get("use_gpu", True)),
+        )
+        return 0
+
+    if "image_paths" in payload:
+        run_segmentation_batch(
+            image_paths=payload["image_paths"],
+            model_path=payload["model_path"],
+            output_name=payload["output_name"],
             output_dir=payload["output_dir"],
         )
         return 0
 
-    import csv
+    if "output_dir" in payload:
+        run_segmentation(
+            image_path=payload["image_path"],
+            model_path=payload["model_path"],
+            output_name=payload["output_name"],
+            output_dir=payload["output_dir"],
+        )
+        return 0
 
     from tifffile import imread
 
@@ -534,15 +758,7 @@ def _main() -> int:
         model_name=model_name,
         use_gpu=use_gpu,
     )
-    if spots_coords.ndim == 1 and spots_coords.size == 0:
-        spots_coords = np.empty((0, 3), dtype=float)
-
-    output_csv_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_csv_path.open("w", encoding="utf-8", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(["index", "axis-0", "axis-1", "axis-2"])
-        for point_index, point in enumerate(np.asarray(spots_coords)):
-            writer.writerow([point_index, *point.tolist()])
+    _save_spotiflow_points(output_csv_path, spots_coords)
     return 0
 
 

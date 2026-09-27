@@ -4,6 +4,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import numpy as np
 from dask.diagnostics.progress import ProgressBar
@@ -18,7 +19,11 @@ from multiview_stitcher import spatial_image_utils as si_utils
 from napari.utils.notifications import show_error
 
 from carltonlab_napari_tools._shared_variables import STITCHED_IMAGE_SUFFIX
-from carltonlab_napari_tools._utils import get_common_prefix
+from carltonlab_napari_tools._utils import (
+    get_common_prefix,
+    is_complete_ome_zarr,
+    remove_incomplete_ome_zarr_paths,
+)
 
 
 def _process_batch_using_threads(
@@ -448,15 +453,17 @@ def stitch_ome_zarr_images(
     num_workers: int | None = None,
     n_batch: int | None = None,
     use_gpu: bool = False,
-) -> bool:
+) -> None:
     if not image_list:
-        show_error("No images to stitch, list is empty.")
-    if any(not str(p).endswith(".ome.zarr") for p in image_list):
-        message: str = " \nThe stitching files are not in .ome.zarr format:"
-        for image in image_list:
-            message = message + "\n" + str(image)
-        show_error(message)
-        return False
+        raise ValueError("No images to stitch; image list is empty.")
+
+    invalid_paths = [
+        str(path) for path in image_list if not str(path).endswith(".ome.zarr")
+    ]
+    if invalid_paths:
+        raise ValueError(
+            "Stitching requires .ome.zarr images:\n" + "\n".join(invalid_paths)
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -464,6 +471,21 @@ def stitch_ome_zarr_images(
     common_prefix = get_common_prefix(image_names)
     stitched_name = common_prefix + STITCHED_IMAGE_SUFFIX
     stitched_path = Path(os.path.normpath(str(output_dir / stitched_name)))
+    temporary_stitched_path = stitched_path.with_name(
+        f".{stitched_path.name}.{uuid4().hex}.in_progress"
+    )
+
+    if stitched_path.exists():
+        if is_complete_ome_zarr(stitched_path):
+            raise FileExistsError(
+                f"Stitched image already exists: {stitched_path}"
+            )
+
+        remove_incomplete_ome_zarr_paths(output_dir)
+        print(
+            f"Removed incomplete stitched image: {stitched_path}",
+            flush=True,
+        )
 
     msims = load_ome_zarr_msims(image_list)
     msims = register_ome_zarr_msims(
@@ -506,7 +528,7 @@ def stitch_ome_zarr_images(
     fusion.fuse(
         images=msims,
         transform_key="translation_registered",
-        output_zarr_url=str(stitched_path),
+        output_zarr_url=str(temporary_stitched_path),
         zarr_options={"ome_zarr": True},
         backend=fusion_backend,
         output_chunksize=output_chunksize,  # type: ignore
@@ -520,8 +542,7 @@ def stitch_ome_zarr_images(
         output_zarr=stitched_path,
         transform_key="translation_registered",
     )
-
-    return True
+    temporary_stitched_path.rename(stitched_path)
 
 
 def stitch_directories(

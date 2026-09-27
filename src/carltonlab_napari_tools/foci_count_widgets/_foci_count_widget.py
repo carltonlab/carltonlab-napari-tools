@@ -8,6 +8,7 @@ from qtpy.QtCore import QSize, Qt, QTimer
 from qtpy.QtGui import QIcon
 from qtpy.QtWidgets import (
     QWIDGETSIZE_MAX,
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -39,6 +40,9 @@ from carltonlab_napari_tools._shared_widgets import (
 from carltonlab_napari_tools.foci_count_widgets._auto_foci_count_widget import (
     AutoFociCountWidget,
 )
+from carltonlab_napari_tools.foci_count_widgets._auto_settings_widget import (
+    CLTAutoFociCountSettingsWidget,
+)
 from carltonlab_napari_tools.foci_count_widgets._generate_plots_widget import (
     CLTGeneratePlotsWidget,
 )
@@ -63,6 +67,12 @@ from carltonlab_napari_tools.general_widgets._project_list_widget import (
 )
 from carltonlab_napari_tools.general_widgets._set_contrast_widget import (
     CLTSetContrastWidget,
+)
+from carltonlab_napari_tools.segmentation._model_directories_widget import (
+    CLTSegmentationModelDirectoriesWidget,
+)
+from carltonlab_napari_tools.segmentation._segmentation import (
+    terminate_active_model_processes,
 )
 from carltonlab_napari_tools.stitched_regions_widgets._stitched_regions_widget import (
     CLTStitchedRegionsWidget,
@@ -696,6 +706,27 @@ class CarltonLabCountTool(QWidget):
     def _show_stitched_regions_widget(self) -> None:
         self._manual_foci_count_widget._show_stitched_regions_widget()
 
+    def _show_generate_plots_widget(self) -> None:
+        self._manual_foci_count_widget._show_generate_plots_widget()
+
+    def _show_model_directories_widget(self) -> None:
+        model_directories_widget = CLTSegmentationModelDirectoriesWidget(
+            parent=self,
+            status_update_callback=(
+                self._auto_widget._update_cellpose_model_status
+            ),
+        )
+        self._manual_foci_count_widget._set_current_widget(
+            model_directories_widget
+        )
+
+    def _show_auto_settings_widget(self) -> None:
+        settings_widget = CLTAutoFociCountSettingsWidget(
+            parent=self,
+            status_update_callback=self._auto_widget._on_settings_saved,
+        )
+        self._manual_foci_count_widget._set_current_widget(settings_widget)
+
     def _on_workflow_tab_changed(self, index: int) -> None:
         self._manual_foci_count_widget._remove_current_widget()
         self._update_workflow_tabs_height(index)
@@ -714,6 +745,10 @@ class CarltonLabCountTool(QWidget):
         self._workflow_tabs.updateGeometry()
 
     def _initialize_gui(self) -> None:
+        application = QApplication.instance()
+        if application is not None:
+            application.aboutToQuit.connect(terminate_active_model_processes)
+
         self._main_layout = QVBoxLayout()
         self.setLayout(self._main_layout)
         self._main_layout.setContentsMargins(25, 2, 2, 25)
@@ -857,8 +892,12 @@ class CarltonLabCountTool(QWidget):
             viewer=self._napari_viewer,
             parent=self._auto_scroll_area,
             project_list_widget=self._manual_foci_count_widget._project_directories_list,
+            keep_channels_widget=self._keep_channels_widget,
             set_contrasts_callback=self._show_set_contrast_widget,
             set_regions_callback=self._show_stitched_regions_widget,
+            generate_plots_callback=self._show_generate_plots_widget,
+            model_directories_callback=self._show_model_directories_widget,
+            settings_callback=self._show_auto_settings_widget,
             status_update_callback=(
                 self._manual_foci_count_widget._update_process_status_labels
             ),

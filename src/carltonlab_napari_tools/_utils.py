@@ -3,8 +3,10 @@ from __future__ import annotations
 import configparser
 import json
 import os
+import shutil
 from pathlib import Path
 
+import zarr
 from napari.utils.notifications import show_error
 
 from carltonlab_napari_tools._shared_variables import (
@@ -29,6 +31,42 @@ def resolve_clsp_project_path(starting_path: Path) -> Path | None:
         return None
 
     return project_paths[0] if project_paths else None
+
+
+def is_complete_ome_zarr(path: Path) -> bool:
+    """Return whether ``path`` is a readable OME-Zarr group."""
+    if not path.is_dir() or not path.name.endswith(".ome.zarr"):
+        return False
+
+    try:
+        group = zarr.open_group(str(path), mode="r")
+    except (KeyError, OSError, TypeError, ValueError):
+        return False
+
+    return "multiscales" in group.attrs
+
+
+def get_complete_ome_zarr_paths(directory: Path) -> list[Path]:
+    """Return only readable OME-Zarr images in ``directory``."""
+    return [
+        path
+        for path in sorted(directory.glob("*.ome.zarr"))
+        if is_complete_ome_zarr(path)
+    ]
+
+
+def remove_incomplete_ome_zarr_paths(directory: Path) -> list[Path]:
+    """Remove unreadable OME-Zarr directories made by an interrupted run."""
+    removed_paths: list[Path] = []
+
+    for path in sorted(directory.glob("*.ome.zarr")):
+        if is_complete_ome_zarr(path):
+            continue
+
+        shutil.rmtree(path)
+        removed_paths.append(path)
+
+    return removed_paths
 
 
 def get_clsp_project_path(starting_path: Path) -> Path:
@@ -59,7 +97,7 @@ def get_project_stitched_image_path(
     project_path: Path,
 ) -> Path | None:
     stitched_directory = project_path / STITCHED_IMAGE_DIR_NAME
-    stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
+    stitched_paths = get_complete_ome_zarr_paths(stitched_directory)
     return stitched_paths[0] if stitched_paths else None
 
 
@@ -113,7 +151,7 @@ SUPPORTED_IMAGE_EXTENSIONS: tuple[str, ...] = (
 
 def load_project_structure_from_json(project_type: str) -> list[Path]:
     if project_type not in PROJECT_TYPES:
-        return []
+        raise ValueError(f"Unsupported project type: {project_type}")
 
     resource_path = (
         Path(__file__).resolve().parent
@@ -125,8 +163,9 @@ def load_project_structure_from_json(project_type: str) -> list[Path]:
         with resource_path.open("r", encoding="utf-8") as structure_file:
             structure = json.load(structure_file)
     except (OSError, json.JSONDecodeError) as exc:
-        show_error(f"Could not load project structure: {exc}")
-        return []
+        raise ValueError(
+            f"Could not load project structure for {project_type}: {exc}"
+        ) from exc
 
     directory_paths: list[Path] = []
 
@@ -143,21 +182,19 @@ def load_project_structure_from_json(project_type: str) -> list[Path]:
 
     directory_tree = structure.get("dir_tree")
     if not isinstance(directory_tree, dict):
-        show_error("Project structure does not contain a valid dir_tree")
-        return []
+        raise ValueError("Project structure does not contain a valid dir_tree")
 
     collect_directories(directory_tree)
     return directory_paths
 
 
-def create_project_structure(project_path: Path, project_type: str) -> bool:
+def create_project_structure(project_path: Path, project_type: str) -> None:
     if project_path.exists() and not project_path.is_dir():
-        show_error(f"Project path is not a directory: {project_path}")
-        return False
+        raise NotADirectoryError(
+            f"Project path is not a directory: {project_path}"
+        )
 
     directory_paths = load_project_structure_from_json(project_type)
-    if not directory_paths:
-        return False
 
     try:
         project_path.mkdir(parents=True, exist_ok=True)
@@ -167,10 +204,7 @@ def create_project_structure(project_path: Path, project_type: str) -> bool:
                 exist_ok=True,
             )
     except OSError as exc:
-        show_error(f"Could not create project structure: {exc}")
-        return False
-
-    return True
+        raise OSError(f"Could not create project structure: {exc}") from exc
 
 
 def create_stitched_project_structure(project_path: Path) -> bool:

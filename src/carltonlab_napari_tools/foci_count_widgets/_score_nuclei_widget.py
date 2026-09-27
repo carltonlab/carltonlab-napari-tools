@@ -49,6 +49,7 @@ from carltonlab_napari_tools._tile_utils import (
     load_tile_contrasts,
 )
 from carltonlab_napari_tools._utils import (
+    get_complete_ome_zarr_paths,
     get_project_stitched_image_path,
     resolve_clsp_project_path,
 )
@@ -754,7 +755,7 @@ class CLTScoreNucleiWidget(QWidget):
             flags_manager.load()
 
             stitched_directory = project_path / STITCHED_IMAGE_DIR_NAME
-            stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
+            stitched_paths = get_complete_ome_zarr_paths(stitched_directory)
             tile_bounding_boxes = (
                 load_tile_bounding_boxes(
                     stitched_paths[0],

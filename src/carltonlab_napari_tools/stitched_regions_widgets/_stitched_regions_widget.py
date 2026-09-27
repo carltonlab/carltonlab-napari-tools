@@ -38,6 +38,10 @@ from carltonlab_napari_tools._viewer_utils import (
     apply_image_contrasts,
     open_ome_zarr_layers,
 )
+from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
+    SBSFlag,
+    SBSFlagsManager,
+)
 from carltonlab_napari_tools.general_widgets._project_list_widget import (
     CLTProjectListWidget,
 )
@@ -99,10 +103,20 @@ class CLTStitchedRegionsWidget(QWidget):
         ):
             return False
 
-        return (
-            not features.empty
-            and "region" in features
-            and bool(features["region"].notna().all())
+        if features.empty or not {"region", "sbs_number"}.issubset(
+            features.columns
+        ):
+            return False
+
+        flags_manager = SBSFlagsManager(resolved_project_path)
+        if not flags_manager.load():
+            return False
+
+        return all(
+            pd.notna(feature["region"])
+            or SBSFlag.OUT_OF_SPLINE.value
+            in flags_manager.get_flags(f"sbs{int(feature['sbs_number'])}")
+            for feature in features.to_dict(orient="records")
         )
 
     def __init__(
@@ -446,13 +460,38 @@ class CLTStitchedRegionsWidget(QWidget):
             return
 
         spline_shape = self._spline_layer._data_view.shapes[0]
-        projected_points, region_numbers = assign_points_to_spline_regions(
+        (
+            projected_points,
+            region_numbers,
+            out_of_spline,
+        ) = assign_points_to_spline_regions(
             points_yx,
             spline_shape,
             len(self._regions_layer._data_view.shapes),
         )
 
         self._nuclei_features["region"] = region_numbers
+        flags_manager = SBSFlagsManager(self._current_project_path)
+        if not flags_manager.load():
+            return
+        for sbs_number in self._nuclei_features["sbs_number"]:
+            flags_manager.remove_flag(
+                f"sbs{int(sbs_number)}",
+                SBSFlag.OUT_OF_SPLINE,
+            )
+        for sbs_number, is_out_of_spline in zip(
+            self._nuclei_features["sbs_number"],
+            out_of_spline,
+            strict=True,
+        ):
+            if is_out_of_spline:
+                flags_manager.add_flag(
+                    f"sbs{int(sbs_number)}",
+                    SBSFlag.OUT_OF_SPLINE,
+                )
+        if not flags_manager.save():
+            return
+
         features_path = (
             self._current_project_path
             / PROJECT_FILE_DIR_NAME
@@ -463,14 +502,18 @@ class CLTStitchedRegionsWidget(QWidget):
         if self._status_update_callback is not None:
             self._status_update_callback()
 
+        assigned_mask = ~out_of_spline
         line_data = np.stack(
-            [points_yx, projected_points],
+            [
+                points_yx[assigned_mask],
+                projected_points[assigned_mask],
+            ],
             axis=1,
         )
 
         line_colors = [
             REGION_COLOR_PALETTE[(region - 1) % len(REGION_COLOR_PALETTE)]
-            for region in region_numbers
+            for region in region_numbers[assigned_mask].astype(int)
         ]
         if (
             self._nuclei_connections_layer is not None
@@ -478,14 +521,15 @@ class CLTStitchedRegionsWidget(QWidget):
         ):
             self._napari_viewer.layers.remove(self._nuclei_connections_layer)
 
-        self._nuclei_connections_layer = self._napari_viewer.add_shapes(
-            name="clt_nuclei_spline_connections",
-            ndim=2,
-            edge_width=4,
-        )
-        self._nuclei_connections_layer.add_lines(line_data)
-        self._nuclei_connections_layer.edge_color = line_colors
-        self._nuclei_connections_layer.refresh()
+        if len(line_data) > 0:
+            self._nuclei_connections_layer = self._napari_viewer.add_shapes(
+                name="clt_nuclei_spline_connections",
+                ndim=2,
+                edge_width=4,
+            )
+            self._nuclei_connections_layer.add_lines(line_data)
+            self._nuclei_connections_layer.edge_color = line_colors
+            self._nuclei_connections_layer.refresh()
 
     def _get_spline_signature(
         self,
@@ -509,6 +553,14 @@ class CLTStitchedRegionsWidget(QWidget):
             return
 
         self._nuclei_features["region"] = None
+        flags_manager = SBSFlagsManager(self._current_project_path)
+        if flags_manager.load():
+            for sbs_number in self._nuclei_features["sbs_number"]:
+                flags_manager.remove_flag(
+                    f"sbs{int(sbs_number)}",
+                    SBSFlag.OUT_OF_SPLINE,
+                )
+            flags_manager.save()
         features_path = (
             self._current_project_path
             / PROJECT_FILE_DIR_NAME

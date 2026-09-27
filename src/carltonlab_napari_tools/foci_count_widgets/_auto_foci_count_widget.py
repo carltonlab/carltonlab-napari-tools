@@ -4,8 +4,8 @@ import configparser
 import csv
 import importlib
 import json
-import threading
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,24 +14,29 @@ import pandas as pd
 from matplotlib.path import Path as MplPath
 from multiview_stitcher import ngff_utils
 from napari.layers import Image
+from napari.qt.threading import thread_worker
 from napari.utils.notifications import show_warning
 from numpy.typing import NDArray
-from qtpy.QtCore import QMetaObject, Qt, Slot
 from qtpy.QtWidgets import (
-    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
-from superqt import QToggleSwitch
 from tifffile import imwrite
 
+from carltonlab_napari_tools._model_directories import (
+    ModelDirectoriesManager,
+)
+from carltonlab_napari_tools._model_download import (
+    get_bioimageio_weight_path,
+    is_bioimageio_weight_available,
+)
 from carltonlab_napari_tools._shared_variables import (
     AUTO_COUNT_DIR_NAME,
+    CELLPOSE_MODEL_NAME,
     CUT_SBS_DIR_NAME,
     EXTRACTED_CHANNELS_FILE_NAME,
     NUCLEI_POINTS_FEATURES_TABLE_FILE_NAME,
@@ -43,22 +48,28 @@ from carltonlab_napari_tools._shared_variables import (
     SCORED_NUCLEI_DIR_NAME,
     SCORED_NUCLEI_POINTS_FILE_NAME_EXTENSION,
     SEGMENTATION_DIR_NAME,
+    SEGMENTATION_MASKS_FILE_NAME_SUFFIX,
+    SEGMENTATION_OUTPUT_NAME,
     STITCHED_IMAGE_DIR_NAME,
     TILES_CONFIG_FILE_NAME,
     TILES_DIR_NAME,
 )
+from carltonlab_napari_tools._shared_widgets import KeepChannelsWidget
 from carltonlab_napari_tools._tile_utils import (
     ensure_tiles_config,
     get_extracted_tile_path,
+    get_tile_positions_path,
     load_tile_contrasts,
     move_tiles,
 )
 from carltonlab_napari_tools._utils import (
     create_project_structure,
     get_clsp_project_path,
+    get_complete_ome_zarr_paths,
     get_project_stitched_image_path,
     is_supported_image_entry,
     parse_channel_string,
+    remove_incomplete_ome_zarr_paths,
     resolve_clsp_project_path,
 )
 from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
@@ -68,7 +79,12 @@ from carltonlab_napari_tools.automatic_foci_count._auto_foci_count import (
     compute_shared_masked_normalization_bounds,
     get_auto_count_output_paths,
     run_auto_count_on_paths,
+    run_auto_count_preprocessed_spots_on_paths,
     save_points_csv_for_napari,
+)
+from carltonlab_napari_tools.automatic_foci_count._auto_settings import (
+    AutoFociCountSettings,
+    AutoFociCountSettingsManager,
 )
 from carltonlab_napari_tools.automatic_foci_count._nuclei_features import (
     build_nucleus_candidates,
@@ -92,18 +108,140 @@ from carltonlab_napari_tools.image_stitching import (
     get_stitched_coordinates_path,
     stitch_ome_zarr_images,
 )
-from carltonlab_napari_tools.image_stitching._stitching_options_widget import (
-    CLTStitchingOptionsWidget,
-)
 from carltonlab_napari_tools.segmentation import (
     clean_segmentation_file,
     get_cleaned_segmentation_output_path,
     load_segmentation_npy,
-    run_segmentation_subprocess,
+    run_segmentation_batch_subprocess,
+    run_spotiflow_batch_subprocess,
 )
 
 if TYPE_CHECKING:
     from napari.components import ViewerModel
+
+
+@dataclass(frozen=True)
+class ContrastPreparationUpdate:
+    """One background-preparation update for one project."""
+
+    project_path: Path
+    project_index: int
+    project_total: int
+    stage: str
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class FociCountUpdate:
+    """One background foci-counting update for one project."""
+
+    project_path: Path
+    project_index: int
+    project_total: int
+    stage: str
+    error: str | None = None
+
+
+@thread_worker
+def _prepare_contrasts_worker(
+    project_paths: list[Path],
+    channels: list[int],
+    stitching_options: dict[str, int | bool | None],
+) -> Generator[ContrastPreparationUpdate, None, list[Path]]:
+    prepared_projects: list[Path] = []
+
+    for project_index, starting_path in enumerate(project_paths, start=1):
+        project_path = get_clsp_project_path(starting_path)
+
+        try:
+            yield ContrastPreparationUpdate(
+                project_path,
+                project_index,
+                len(project_paths),
+                "Creating project structure",
+            )
+            create_project_structure(project_path, "clsp")
+
+            tiles_path = project_path / TILES_DIR_NAME
+            if tiles_path.is_dir() and not any(tiles_path.iterdir()):
+                yield ContrastPreparationUpdate(
+                    project_path,
+                    project_index,
+                    len(project_paths),
+                    "Moving tiles",
+                )
+                if not move_tiles(starting_path, project_path):
+                    raise RuntimeError(
+                        "Could not move tiles into the project."
+                    )
+
+            yield ContrastPreparationUpdate(
+                project_path,
+                project_index,
+                len(project_paths),
+                "Checking tile configuration",
+            )
+            if not ensure_tiles_config(project_path):
+                raise RuntimeError("Could not create tiles.config.")
+
+            yield ContrastPreparationUpdate(
+                project_path,
+                project_index,
+                len(project_paths),
+                "Extracting channels",
+            )
+            tile_paths = extract_project_tiles(project_path, channels)
+
+            stitched_path = project_path / STITCHED_IMAGE_DIR_NAME
+            removed_paths = remove_incomplete_ome_zarr_paths(stitched_path)
+            if removed_paths:
+                yield ContrastPreparationUpdate(
+                    project_path,
+                    project_index,
+                    len(project_paths),
+                    "Removed incomplete stitched image",
+                )
+
+            if get_complete_ome_zarr_paths(stitched_path):
+                prepared_projects.append(project_path)
+                yield ContrastPreparationUpdate(
+                    project_path,
+                    project_index,
+                    len(project_paths),
+                    "Stitched image already exists",
+                )
+                continue
+
+            yield ContrastPreparationUpdate(
+                project_path,
+                project_index,
+                len(project_paths),
+                "Stitching images",
+            )
+            stitch_ome_zarr_images(
+                image_list=tile_paths,
+                output_dir=stitched_path,
+                **stitching_options,
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            yield ContrastPreparationUpdate(
+                project_path,
+                project_index,
+                len(project_paths),
+                "Failed",
+                error=str(exc),
+            )
+            continue
+
+        prepared_projects.append(project_path)
+        yield ContrastPreparationUpdate(
+            project_path,
+            project_index,
+            len(project_paths),
+            "Ready",
+        )
+
+    return prepared_projects
 
 
 def _get_ome_zarr_channel_count(image_path: str | Path) -> int:
@@ -208,19 +346,12 @@ def build_tile_local_square_records_from_labels(
 
 def get_tile_stitched_pixel_offsets(
     stitched_image_path: str | Path,
-    tile_index: int,
-) -> tuple[float, float]:
-    stitched_path = Path(stitched_image_path)
-    stitched_name = stitched_path.name
-    if stitched_name.endswith(".ome.zarr"):
-        stitched_stem = stitched_name[: -len(".ome.zarr")]
-    else:
-        stitched_stem = stitched_path.stem
-
-    tile_positions_path = (
-        stitched_path.parent
-        / TILES_DIR_NAME
-        / f"{stitched_stem}_tile_positions.csv"
+    tiles_directory: str | Path,
+    tile_path: str | Path,
+) -> tuple[float, float, float]:
+    tile_positions_path = get_tile_positions_path(
+        Path(stitched_image_path),
+        Path(tiles_directory),
     )
     if not tile_positions_path.exists():
         raise FileNotFoundError(
@@ -229,17 +360,26 @@ def get_tile_stitched_pixel_offsets(
 
     with tile_positions_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
-        rows = [dict(row) for row in reader]
-
-    if tile_index < 0 or tile_index >= len(rows):
-        raise IndexError(
-            f"Tile index {tile_index} is out of bounds for {tile_positions_path}"
+        row = next(
+            (
+                dict(candidate)
+                for candidate in reader
+                if Path(candidate.get("tile_name", "")).name
+                == Path(tile_path).name
+            ),
+            None,
         )
 
-    row = rows[tile_index]
+    if row is None:
+        raise ValueError(
+            f"Tile {Path(tile_path).name!r} is missing from "
+            f"{tile_positions_path}"
+        )
+
+    z_offset = float((row.get("z_min_px_index") or "0").strip())
     y_offset = float((row.get("y_min_px_index") or "0").strip())
     x_offset = float((row.get("x_min_px_index") or "0").strip())
-    return y_offset, x_offset
+    return z_offset, y_offset, x_offset
 
 
 def load_napari_points_csv(
@@ -260,7 +400,8 @@ def load_napari_points_csv(
 def map_tile_local_points_to_stitched_image(
     tile_local_points_zyx: NDArray[np.float32],
     stitched_image_path: str | Path,
-    tile_index: int,
+    tiles_directory: str | Path,
+    tile_path: str | Path,
 ) -> NDArray[np.float32]:
     points = np.asarray(tile_local_points_zyx, dtype=np.float32)
     if points.ndim != 2 or points.shape[1] != 3:
@@ -270,13 +411,12 @@ def map_tile_local_points_to_stitched_image(
     if len(points) == 0:
         return np.empty((0, 3), dtype=np.float32)
 
-    y_offset, x_offset = get_tile_stitched_pixel_offsets(
-        stitched_image_path, tile_index
+    offsets_zyx = get_tile_stitched_pixel_offsets(
+        stitched_image_path,
+        tiles_directory,
+        tile_path,
     )
-    stitched_points = points.copy()
-    stitched_points[:, 1] += y_offset
-    stitched_points[:, 2] += x_offset
-    return stitched_points
+    return points + np.asarray(offsets_zyx, dtype=np.float32)
 
 
 def filter_points_inside_label(
@@ -349,7 +489,8 @@ def get_scored_nuclei_output_paths(
 def map_tile_local_squares_to_stitched_image(
     tile_local_squares_yx: NDArray[np.float32],
     stitched_image_path: str | Path,
-    tile_index: int,
+    tiles_directory: str | Path,
+    tile_path: str | Path,
 ) -> NDArray[np.float32]:
     squares = np.asarray(tile_local_squares_yx, dtype=np.float32)
     if squares.ndim != 3 or squares.shape[1:] != (4, 2):
@@ -360,8 +501,10 @@ def map_tile_local_squares_to_stitched_image(
     if len(squares) == 0:
         return np.empty((0, 4, 2), dtype=np.float32)
 
-    y_offset, x_offset = get_tile_stitched_pixel_offsets(
-        stitched_image_path, tile_index
+    _z_offset, y_offset, x_offset = get_tile_stitched_pixel_offsets(
+        stitched_image_path,
+        tiles_directory,
+        tile_path,
     )
     offset_yx = np.asarray([y_offset, x_offset], dtype=np.float32)
     return squares + offset_yx
@@ -370,12 +513,16 @@ def map_tile_local_squares_to_stitched_image(
 def map_tile_local_square_records_to_stitched_image(
     square_records: list[dict[str, object]],
     stitched_image_path: str | Path,
+    tiles_directory: str | Path,
     tile_index: int,
+    tile_path: str | Path,
 ) -> list[dict[str, object]]:
     if len(square_records) == 0:
         return []
-    y_offset, x_offset = get_tile_stitched_pixel_offsets(
-        stitched_image_path, tile_index
+    z_offset, y_offset, x_offset = get_tile_stitched_pixel_offsets(
+        stitched_image_path,
+        tiles_directory,
+        tile_path,
     )
     offset_yx = np.asarray([y_offset, x_offset], dtype=np.float32)
     stitched_records: list[dict[str, object]] = []
@@ -386,8 +533,8 @@ def map_tile_local_square_records_to_stitched_image(
                 "label_id": int(record["label_id"]),
                 "tile_index": tile_index,
                 "square_yx": square_yx + offset_yx,
-                "z1": int(record["z1"]),
-                "z2": int(record["z2"]),
+                "z1": int(record["z1"]) + int(z_offset),
+                "z2": int(record["z2"]) + int(z_offset),
             }
         )
     return stitched_records
@@ -533,12 +680,14 @@ def _concatenate_square_batches(
 def build_region_squares_from_cleaned_segmentations(
     segmentation_paths_by_tile: dict[int, str | Path],
     stitched_image_path: str | Path,
+    tiles_directory: str | Path,
     edited_regions_csv_path: str | Path,
 ) -> tuple[dict[int, NDArray[np.float32]], NDArray[np.float32]]:
     region_records_by_index, unassigned_records = (
         build_region_square_records_from_cleaned_segmentations(
             segmentation_paths_by_tile=segmentation_paths_by_tile,
             stitched_image_path=stitched_image_path,
+            tiles_directory=tiles_directory,
             edited_regions_csv_path=edited_regions_csv_path,
         )
     )
@@ -566,7 +715,9 @@ def build_region_squares_from_cleaned_segmentations(
 
 def build_region_square_records_from_cleaned_segmentations(
     segmentation_paths_by_tile: dict[int, str | Path],
+    tile_paths_by_tile: dict[int, str | Path],
     stitched_image_path: str | Path,
+    tiles_directory: str | Path,
     edited_regions_csv_path: str | Path,
 ) -> tuple[dict[int, list[dict[str, object]]], list[dict[str, object]]]:
     region_polygons_yx = load_expanded_region_polygons(edited_regions_csv_path)
@@ -586,7 +737,9 @@ def build_region_square_records_from_cleaned_segmentations(
             map_tile_local_square_records_to_stitched_image(
                 tile_local_square_records,
                 stitched_image_path=stitched_image_path,
+                tiles_directory=tiles_directory,
                 tile_index=tile_index,
+                tile_path=tile_paths_by_tile[tile_index],
             )
         )
         grouped_records, unassigned_records = (
@@ -680,7 +833,8 @@ def save_auto_scored_nuclei_files_from_features(
         stitched_label_points = map_tile_local_points_to_stitched_image(
             label_points,
             stitched_image_path=stitched_image_path,
-            tile_index=tile_index,
+            tiles_directory=project_path / TILES_DIR_NAME,
+            tile_path=tile_path,
         )
         feature_data = feature.to_dict()
         crop_bounds = get_sbs_crop_bounds(feature_data, stitched_data)
@@ -837,7 +991,8 @@ def save_auto_scored_nuclei_files_from_region_records(
             stitched_points = map_tile_local_points_to_stitched_image(
                 label_points_local,
                 stitched_image_path=stitched_image_path,
-                tile_index=tile_index,
+                tiles_directory=_get_project_tiles_path(directory_path),
+                tile_path=tile_paths[tile_index],
             )
 
             if len(stitched_points) > 0:
@@ -898,7 +1053,8 @@ def _get_segmentation_output_path_for_tile(
         _get_project_files_path(directory_path) / SEGMENTATION_DIR_NAME
     )
     return segmentation_output_dir / (
-        f"{tile_path_obj.name[: -len('.ome.zarr')]}_meiotic_3d_crops_masks.npy"
+        f"{tile_path_obj.name[: -len('.ome.zarr')]}"
+        f"{SEGMENTATION_MASKS_FILE_NAME_SUFFIX}"
     )
 
 
@@ -932,17 +1088,28 @@ class AutoFociCountWidget(QWidget):
         viewer: ViewerModel,
         parent: QWidget,
         project_list_widget: CLTProjectListWidget,
+        keep_channels_widget: KeepChannelsWidget,
         set_contrasts_callback: Callable[[], None],
         set_regions_callback: Callable[[], None],
+        generate_plots_callback: Callable[[], None],
+        model_directories_callback: Callable[[], None],
+        settings_callback: Callable[[], None],
         status_update_callback: Callable[[], None],
     ):
         super().__init__(parent=parent)
         self._viewer: ViewerModel = viewer
         self._parent: QWidget = parent
         self._project_list_widget = project_list_widget
+        self._keep_channels_widget = keep_channels_widget
         self._set_contrasts_callback = set_contrasts_callback
         self._set_regions_callback = set_regions_callback
+        self._generate_plots_callback = generate_plots_callback
+        self._model_directories_callback = model_directories_callback
+        self._settings_callback = settings_callback
         self._status_update_callback = status_update_callback
+        ModelDirectoriesManager().ensure_default_configuration()
+        self._settings_manager = AutoFociCountSettingsManager()
+        self._settings = self._settings_manager.load()
 
         self._helper_widget: QWidget
         self._helper_widget_layout: QVBoxLayout
@@ -952,7 +1119,11 @@ class AutoFociCountWidget(QWidget):
         self._current_stitched_images: list[Image] = []
         self._current_tile_paths: dict[int, str] = {}
         self._current_tile_image_layers: list[Image] = []
-        self._batch_fc_running = False
+        self._automatic_workflow_active = False
+        self._contrast_preparation_worker = None
+        self._contrast_failures: list[str] = []
+        self._foci_count_worker = None
+        self._foci_count_failures: list[str] = []
         self._spotiflow_model_name = "synth_3d"
 
         self._layout: QVBoxLayout = QVBoxLayout()
@@ -962,142 +1133,59 @@ class AutoFociCountWidget(QWidget):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
 
-        self._all_c: QWidget = QWidget(parent=self)
-        self._layout.addWidget(self._all_c)
-        self._all_layout: QHBoxLayout = QHBoxLayout()
-        self._all_layout.setContentsMargins(0, 0, 0, 0)
-        self._all_layout.setSpacing(6)
-        self._all_c.setLayout(self._all_layout)
-
-        self._run_all_ts: QToggleSwitch = QToggleSwitch(parent=self)
-        self._run_all_ts.setChecked(True)
-        self._runn_all_l: QLabel = QLabel("Run entire workflow", parent=self)
-        self._all_layout.addWidget(self._run_all_ts)
-        self._all_layout.addWidget(self._runn_all_l)
-        self._all_layout.addStretch()
-
-        self._keep_channel_c: QWidget = QWidget(parent=self)
-        self._layout.addWidget(self._keep_channel_c)
-        self._keep_channel_layout: QVBoxLayout = QVBoxLayout()
-        self._keep_channel_layout.setContentsMargins(0, 0, 0, 0)
-        self._keep_channel_layout.setSpacing(6)
-        self._keep_channel_c.setLayout(self._keep_channel_layout)
-
-        self._keep_channel_l: QLabel = QLabel("Keeping channels")
-        self._keep_channel_l.setStyleSheet("font-weight: bold")
-        self._keep_channel_layout.addWidget(self._keep_channel_l)
-
-        self._channel_edit_c: QWidget = QWidget(parent=self)
-        self._keep_channel_layout.addWidget(self._channel_edit_c)
-        self._channel_edit_layout: QHBoxLayout = QHBoxLayout()
-        self._channel_edit_layout.setContentsMargins(0, 0, 0, 0)
-        self._channel_edit_layout.setSpacing(6)
-        self._channel_edit_c.setLayout(self._channel_edit_layout)
-
-        self._keep_channel_ts: QToggleSwitch = QToggleSwitch()
-        self._channel_edit_layout.addWidget(self._keep_channel_ts)
-        self._keep_channel_ts.clicked.connect(self._keep_ts_toggled)
-
-        self._keep_channel_le: QLineEdit = QLineEdit(parent=self)
-        self._keep_channel_le.setSizePolicy(
-            QSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-            )
+        self._settings_row = QWidget(parent=self)
+        self._settings_row_layout = QHBoxLayout()
+        self._settings_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._settings_row.setLayout(self._settings_row_layout)
+        self._settings_status_lb = QLabel(parent=self)
+        self._settings_status_lb.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Preferred,
         )
-        self._keep_channel_le.setText("1,2")
-        self._channel_edit_layout.addWidget(self._keep_channel_le)
-        self._keep_channel_ts.setChecked(True)
+        self._settings_row_layout.addWidget(self._settings_status_lb)
+        self._edit_settings_button = QPushButton("Edit settings", parent=self)
+        self._edit_settings_button.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        self._edit_settings_button.clicked.connect(self._settings_callback)
+        self._settings_row_layout.addWidget(self._edit_settings_button)
+        self._layout.addWidget(self._settings_row)
+        self._update_settings_status()
 
-        self._keep_channel_ex_l: QLabel = QLabel("e.g. 1-2,4", parent=self)
-        self._keep_channel_ex_l.setSizePolicy(
-            QSizePolicy(
-                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
-            )
-        )
-        self._channel_edit_layout.addWidget(self._keep_channel_ex_l)
-
-        self._stitching_options_widget = CLTStitchingOptionsWidget(parent=self)
-        self._stitching_options_widget.set_gpu_enabled(True)
-        self._stitching_options_widget.connect_gpu_toggle(
-            self._use_gpu_ts_toggled
-        )
-        self._layout.addWidget(self._stitching_options_widget)
-
-        self._binary_mask_filter_c: QWidget = QWidget(parent=self)
-        self._layout.addWidget(self._binary_mask_filter_c)
-        self._binary_mask_filter_layout: QVBoxLayout = QVBoxLayout()
-        self._binary_mask_filter_layout.setContentsMargins(0, 0, 0, 0)
-        self._binary_mask_filter_layout.setSpacing(6)
-        self._binary_mask_filter_c.setLayout(self._binary_mask_filter_layout)
-
-        self._binary_mask_filter_row_c: QWidget = QWidget(parent=self)
-        self._binary_mask_filter_layout.addWidget(
-            self._binary_mask_filter_row_c
-        )
-        self._binary_mask_filter_row_layout: QHBoxLayout = QHBoxLayout()
-        self._binary_mask_filter_row_layout.setContentsMargins(0, 0, 0, 0)
-        self._binary_mask_filter_row_layout.setSpacing(6)
-        self._binary_mask_filter_row_c.setLayout(
-            self._binary_mask_filter_row_layout
-        )
-
-        self._binary_mask_filter_ts: QToggleSwitch = QToggleSwitch(parent=self)
-        self._binary_mask_filter_ts.setChecked(True)
-        self._binary_mask_filter_ts.clicked.connect(
-            self._binary_mask_filter_ts_toggled
-        )
-        self._binary_mask_filter_row_layout.addWidget(
-            self._binary_mask_filter_ts
-        )
-
-        self._binary_mask_filter_l: QLabel = QLabel(
-            "Filter channels", parent=self
-        )
-        self._binary_mask_filter_row_layout.addWidget(
-            self._binary_mask_filter_l
-        )
-
-        self._binary_mask_channels_le: QLineEdit = QLineEdit(parent=self)
-        self._binary_mask_channels_le.setSizePolicy(
-            QSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-            )
-        )
-        self._binary_mask_channels_le.setText("1")
-        self._binary_mask_filter_row_layout.addWidget(
-            self._binary_mask_channels_le
-        )
-        self._minimum_colocalization_intensity_ratio_c = QWidget(parent=self)
-        self._layout.addWidget(self._minimum_colocalization_intensity_ratio_c)
-        self._minimum_colocalization_intensity_ratio_layout = QHBoxLayout()
-        self._minimum_colocalization_intensity_ratio_layout.setContentsMargins(
-            0, 0, 0, 0
-        )
-        self._minimum_colocalization_intensity_ratio_c.setLayout(
-            self._minimum_colocalization_intensity_ratio_layout
-        )
-        self._minimum_colocalization_intensity_ratio_l = QLabel(
-            "Minimum colocalization intensity ratio",
+        self._edit_model_directories_b = QPushButton(
+            "Edit/download model",
             parent=self,
         )
-        self._minimum_colocalization_intensity_ratio_layout.addWidget(
-            self._minimum_colocalization_intensity_ratio_l
+        self._edit_model_directories_b.clicked.connect(
+            self._model_directories_callback
         )
-        self._minimum_colocalization_intensity_ratio_sb = QDoubleSpinBox(
-            parent=self
+        self._model_status_row = QWidget(parent=self)
+        self._model_status_row_layout = QHBoxLayout()
+        self._model_status_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._model_status_row.setLayout(self._model_status_row_layout)
+        self._layout.addWidget(self._model_status_row)
+
+        self._cellpose_model_status_lb = QLabel(parent=self)
+        self._cellpose_model_status_lb.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Preferred,
         )
-        self._minimum_colocalization_intensity_ratio_sb.setRange(0.0, 1.0)
-        self._minimum_colocalization_intensity_ratio_sb.setSingleStep(0.05)
-        self._minimum_colocalization_intensity_ratio_sb.setDecimals(2)
-        self._minimum_colocalization_intensity_ratio_sb.setValue(0.25)
-        self._minimum_colocalization_intensity_ratio_layout.addWidget(
-            self._minimum_colocalization_intensity_ratio_sb
+        self._model_status_row_layout.addWidget(self._cellpose_model_status_lb)
+        self._edit_model_directories_b.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
         )
-        self._minimum_colocalization_intensity_ratio_layout.addStretch()
-        self._binary_mask_filter_ts_toggled()
+        self._model_status_row_layout.addWidget(self._edit_model_directories_b)
+        self._update_cellpose_model_status()
+
+        self._steps_l = QLabel("Steps:", parent=self)
+        self._steps_l.setStyleSheet("font-weight: bold")
+        self._layout.addSpacing(6)
+        self._layout.addWidget(self._steps_l)
 
         self._set_contrasts_b: QPushButton = QPushButton(
-            "Set contrasts",
+            "1. Set contrasts",
             parent=self,
         )
         self._set_contrasts_b.clicked.connect(
@@ -1105,19 +1193,42 @@ class AutoFociCountWidget(QWidget):
         )
         self._layout.addWidget(self._set_contrasts_b)
 
+        self._contrast_status_lb = QLabel(parent=self)
+        self._contrast_status_lb.setWordWrap(True)
+        self._layout.addWidget(self._contrast_status_lb)
+
         self._count_foci_b: QPushButton = QPushButton(
-            "Count foci",
+            "2. Count foci",
             parent=self,
         )
         self._count_foci_b.clicked.connect(self._start_fc_button_pressed)
         self._layout.addWidget(self._count_foci_b)
 
+        self._foci_count_status_lb = QLabel(parent=self)
+        self._foci_count_status_lb.setWordWrap(True)
+        self._layout.addWidget(self._foci_count_status_lb)
+
+        self._automatic_fc_dependency_status_lb = QLabel(parent=self)
+        self._automatic_fc_dependency_status_lb.setStyleSheet(
+            "color: #A80000; font-weight: bold;"
+        )
+        self._automatic_fc_dependency_status_lb.setWordWrap(True)
+        self._layout.addWidget(self._automatic_fc_dependency_status_lb)
+        self._update_automatic_fc_dependency_status()
+
         self._set_regions_b: QPushButton = QPushButton(
-            "Set regions",
+            "3. Set regions",
             parent=self,
         )
         self._set_regions_b.clicked.connect(self._set_regions_callback)
         self._layout.addWidget(self._set_regions_b)
+
+        self._generate_plots_b: QPushButton = QPushButton(
+            "4. Generate plots",
+            parent=self,
+        )
+        self._generate_plots_b.clicked.connect(self._generate_plots_callback)
+        self._layout.addWidget(self._generate_plots_b)
 
         self._helper_widget = QWidget(parent=self)
         self._helper_widget.setObjectName("helper_widget")
@@ -1130,88 +1241,129 @@ class AutoFociCountWidget(QWidget):
         self._helper_widget.setLayout(self._helper_widget_layout)
         self._layout.addWidget(self._helper_widget, 1)
 
-    def _prepare_project_for_contrasts(
-        self,
-        starting_path: Path,
-        channels: list[int],
-    ) -> bool:
-        try:
-            project_path = get_clsp_project_path(starting_path)
-
-            if not create_project_structure(project_path, "clsp"):
-                return False
-
-            tiles_path = project_path / TILES_DIR_NAME
-            if (
-                tiles_path.is_dir()
-                and not any(tiles_path.iterdir())
-                and not move_tiles(starting_path, project_path)
-            ):
-                return False
-
-            if not ensure_tiles_config(project_path):
-                return False
-
-            tile_paths = extract_project_tiles(project_path, channels)
-            if tile_paths is None:
-                return False
-
-            self._project_list_widget.refresh_rows()
-
-            stitched_path = project_path / STITCHED_IMAGE_DIR_NAME
-            if any(stitched_path.glob("*.ome.zarr")):
-                return True
-
-            stitching_succeeded = stitch_ome_zarr_images(
-                image_list=tile_paths,
-                output_dir=stitched_path,
-                **self._stitching_options_widget.get_stitching_options(),
+    def _update_cellpose_model_status(self) -> None:
+        directories = ModelDirectoriesManager().ensure_default_configuration()
+        model_found = any(
+            is_bioimageio_weight_available(
+                CELLPOSE_MODEL_NAME,
+                directory,
             )
-            self._project_list_widget.refresh_rows()
-            return stitching_succeeded
-        except (OSError, ValueError, RuntimeError) as exc:
-            show_warning(f"Could not prepare project {starting_path}:\n{exc}")
-            return False
+            for directory in directories
+        )
+        if model_found:
+            self._cellpose_model_status_lb.setText("Cellpose model found")
+            self._cellpose_model_status_lb.setStyleSheet(
+                "color: #29BA00; font-weight: bold;"
+            )
+        else:
+            self._cellpose_model_status_lb.setText("Cellpose model not found")
+            self._cellpose_model_status_lb.setStyleSheet(
+                "color: #A80000; font-weight: bold;"
+            )
+
+    def _get_cellpose_model_path(self) -> Path:
+        directories = ModelDirectoriesManager().ensure_default_configuration()
+        for directory in directories:
+            if is_bioimageio_weight_available(
+                CELLPOSE_MODEL_NAME,
+                directory,
+            ):
+                return get_bioimageio_weight_path(
+                    CELLPOSE_MODEL_NAME,
+                    directory,
+                )
+
+        raise FileNotFoundError(
+            "The downloaded Cellpose model was not found in any configured "
+            "model directory."
+        )
 
     def _set_contrasts_button_pressed(self) -> None:
+        if self._automatic_workflow_active:
+            return
+
         project_paths = self._project_list_widget.get_project_paths()
         if not project_paths:
             return
+        if not self._validate_gpu_setting():
+            return
 
-        if self._keep_channel_ts.isChecked():
-            channels = parse_channel_string(self._keep_channel_le.text())
-            if not channels:
-                show_warning("Enter a valid channel selection.")
-                return
-        else:
-            channels = []
+        channels = self._keep_channels_widget.get_channels()
+        self._contrast_failures = []
+        self._set_automatic_workflow_active(True)
+        self._contrast_status_lb.setText(
+            f"Preparing 0/{len(project_paths)} projects"
+        )
 
-        failed_projects: list[str] = []
-        prepared_projects = 0
-        for starting_path in project_paths:
-            project_prepared = self._prepare_project_for_contrasts(
-                starting_path,
-                channels,
+        self._contrast_preparation_worker = _prepare_contrasts_worker(
+            project_paths=project_paths,
+            channels=channels,
+            stitching_options=self._get_stitching_options(),
+        )
+        self._contrast_preparation_worker.yielded.connect(
+            self._on_contrast_preparation_update
+        )
+        self._contrast_preparation_worker.returned.connect(
+            self._on_contrast_preparation_finished
+        )
+        self._contrast_preparation_worker.errored.connect(
+            self._on_contrast_preparation_error
+        )
+        self._contrast_preparation_worker.start()
+
+    def _on_contrast_preparation_update(
+        self,
+        update: ContrastPreparationUpdate,
+    ) -> None:
+        self._contrast_status_lb.setText(
+            f"Project {update.project_index}/{update.project_total}: "
+            f"{update.project_path.name}\n{update.stage}"
+        )
+        if update.error is not None:
+            self._contrast_failures.append(
+                f"{update.project_path.name}: {update.error}"
             )
+        if update.stage in {"Ready", "Stitched image already exists"}:
             self._project_list_widget.refresh_rows()
-            if not project_prepared:
-                failed_projects.append(str(starting_path))
-            else:
-                prepared_projects += 1
 
-        if failed_projects:
+    def _on_contrast_preparation_finished(
+        self,
+        prepared_projects: list[Path],
+    ) -> None:
+        self._contrast_preparation_worker = None
+        self._set_automatic_workflow_active(False)
+        self._project_list_widget.refresh_rows()
+
+        if self._contrast_failures:
             show_warning(
-                "The following projects were skipped or could not be prepared:\n\n"
-                + "\n".join(failed_projects)
+                "The following projects could not be prepared:\n\n"
+                + "\n".join(self._contrast_failures)
             )
 
-        if prepared_projects > 0:
+        total_projects = len(prepared_projects) + len(self._contrast_failures)
+        self._contrast_status_lb.setText(
+            f"Prepared {len(prepared_projects)}/{total_projects} projects"
+        )
+        if prepared_projects:
             self._set_contrasts_callback()
 
-    @Slot()
-    def _refresh_qlist_on_gui_thread(self) -> None:
-        self._project_list_widget.refresh_rows()
-        self._status_update_callback()
+    def _on_contrast_preparation_error(
+        self,
+        error: BaseException,
+    ) -> None:
+        self._contrast_preparation_worker = None
+        self._set_automatic_workflow_active(False)
+        self._contrast_status_lb.setText("Preparation failed")
+        show_warning(f"Unexpected contrast-preparation error:\n{error}")
+
+    def _set_automatic_workflow_active(self, active: bool) -> None:
+        """Prevent automatic preparation and counting from overlapping."""
+        self._automatic_workflow_active = active
+        self._set_contrasts_b.setEnabled(not active)
+        if active:
+            self._count_foci_b.setEnabled(False)
+        else:
+            self._update_automatic_fc_dependency_status()
 
     def _clear_helper_widget(self) -> None:
         while self._helper_widget_layout.count():
@@ -1329,7 +1481,9 @@ class AutoFociCountWidget(QWidget):
         return metadata_df["sbs_image_name"].astype(str).tolist()
 
     def _tile_fc_outputs_exist_for_directory(
-        self, directory_path: str | Path
+        self,
+        directory_path: str | Path,
+        colocalization_channels_filter: list[str],
     ) -> bool:
         tile_paths = self._get_ready_tile_paths(directory_path)
         if not tile_paths:
@@ -1338,12 +1492,6 @@ class AutoFociCountWidget(QWidget):
             self._get_project_files_dir_for_directory(directory_path)
             / AUTO_COUNT_DIR_NAME
         )
-        try:
-            colocalization_channels_filter = (
-                self._get_colocalization_channels_filter()
-            )
-        except ValueError:
-            return False
         requested_channel_indices = [
             int(channel) - 1 for channel in colocalization_channels_filter
         ]
@@ -1383,7 +1531,7 @@ class AutoFociCountWidget(QWidget):
 
     def _stitched_image_is_ready(self, directory_path: str | Path) -> bool:
         stitched_directory = Path(directory_path) / STITCHED_IMAGE_DIR_NAME
-        stitched_paths = sorted(stitched_directory.glob("*.ome.zarr"))
+        stitched_paths = get_complete_ome_zarr_paths(stitched_directory)
         if not stitched_paths:
             return False
 
@@ -1429,9 +1577,40 @@ class AutoFociCountWidget(QWidget):
 
         return segmentation_ready, regions_ready, contrasts_ready
 
+    def _update_automatic_fc_dependency_status(self) -> None:
+        required_modules = ("torch", "cellpose", "spotiflow")
+        missing_modules = [
+            module_name
+            for module_name in required_modules
+            if importlib.util.find_spec(module_name) is None
+        ]
+
+        dependencies_available = not missing_modules
+        self._count_foci_b.setEnabled(
+            dependencies_available and not self._automatic_workflow_active
+        )
+        self._automatic_fc_dependency_status_lb.setVisible(
+            not dependencies_available
+        )
+
+        if dependencies_available:
+            self._automatic_fc_dependency_status_lb.clear()
+            self._count_foci_b.setToolTip("")
+            return
+
+        missing_text = ", ".join(missing_modules)
+        status_text = (
+            "Automatic foci counting unavailable. "
+            f"Missing dependencies: {missing_text}"
+        )
+        self._automatic_fc_dependency_status_lb.setText(status_text)
+        self._count_foci_b.setToolTip(status_text)
+
     def _start_fc_button_pressed(self) -> None:
-        if self._batch_fc_running:
-            print("Run batch FC is already running")
+        if self._automatic_workflow_active:
+            print("An automatic workflow is already running")
+            return
+        if not self._validate_gpu_setting():
             return
         try:
             colocalization_channels_filter = (
@@ -1440,9 +1619,16 @@ class AutoFociCountWidget(QWidget):
         except ValueError as exc:
             show_warning(str(exc))
             return
-        minimum_colocalization_intensity_ratio = float(
-            self._minimum_colocalization_intensity_ratio_sb.value()
+        minimum_colocalization_intensity_ratio = (
+            self._settings.minimum_colocalization_intensity_ratio
         )
+        settings = replace(self._settings)
+        spotiflow_model_name = self._spotiflow_model_name
+        try:
+            cellpose_model_path = self._get_cellpose_model_path()
+        except FileNotFoundError as exc:
+            show_warning(str(exc))
+            return
 
         invalid_directories: list[str] = []
         directory_paths = self._project_list_widget.get_project_paths()
@@ -1478,37 +1664,57 @@ class AutoFociCountWidget(QWidget):
             )
             return
 
-        self._batch_fc_running = True
         directory_paths = [str(path) for path in directory_paths]
-        print(f"Run batch FC started for {len(directory_paths)} directories")
-        worker = threading.Thread(
-            target=self._run_batch_fc_worker,
-            args=(
-                directory_paths,
-                colocalization_channels_filter,
-                minimum_colocalization_intensity_ratio,
-            ),
-            daemon=True,
+        self._foci_count_failures = []
+        self._set_automatic_workflow_active(True)
+        self._foci_count_status_lb.setText(
+            f"Processing 0/{len(directory_paths)} projects"
         )
-        worker.start()
+        print(f"Run batch FC started for {len(directory_paths)} directories")
+        self._foci_count_worker = self._run_batch_fc_worker(
+            directory_paths=directory_paths,
+            colocalization_channels_filter=colocalization_channels_filter,
+            minimum_colocalization_intensity_ratio=(
+                minimum_colocalization_intensity_ratio
+            ),
+            settings=settings,
+            cellpose_model_path=cellpose_model_path,
+            spotiflow_model_name=spotiflow_model_name,
+        )
+        self._foci_count_worker.yielded.connect(self._on_foci_count_update)
+        self._foci_count_worker.returned.connect(self._on_foci_count_finished)
+        self._foci_count_worker.errored.connect(self._on_foci_count_error)
+        self._foci_count_worker.start()
 
+    @thread_worker
     def _run_batch_fc_worker(
         self,
         directory_paths: list[str],
         colocalization_channels_filter: list[str],
         minimum_colocalization_intensity_ratio: float,
-    ) -> None:
-        try:
-            for directory_index, directory_path in enumerate(
-                directory_paths, start=1
-            ):
+        settings: AutoFociCountSettings,
+        cellpose_model_path: Path,
+        spotiflow_model_name: str,
+    ) -> Generator[FociCountUpdate, None, list[Path]]:
+        completed_projects: list[Path] = []
+
+        for directory_index, directory_path in enumerate(
+            directory_paths, start=1
+        ):
+            project_path = _get_project_path(directory_path)
+            try:
                 print("")
                 print(
                     "Run batch FC "
                     f"[{directory_index}/{len(directory_paths)}] "
                     f"starting {directory_path}"
                 )
-                project_path = _get_project_path(directory_path)
+                yield FociCountUpdate(
+                    project_path,
+                    directory_index,
+                    len(directory_paths),
+                    "Checking project files",
+                )
                 tile_paths = self._get_ready_tile_paths(project_path)
                 if not tile_paths:
                     raise ValueError(
@@ -1523,11 +1729,30 @@ class AutoFociCountWidget(QWidget):
                         f"No stitched image found for {directory_path}"
                     )
 
-                self._call_segmentation(project_path)
+                yield FociCountUpdate(
+                    project_path,
+                    directory_index,
+                    len(directory_paths),
+                    "Segmenting nuclei",
+                )
+                self._call_segmentation(project_path, cellpose_model_path)
+
+                yield FociCountUpdate(
+                    project_path,
+                    directory_index,
+                    len(directory_paths),
+                    "Creating nuclei features",
+                )
                 self._create_auto_nuclei_features(
                     project_path=project_path,
                     tile_paths=tile_paths,
                     stitched_image_path=stitched_image_path,
+                )
+                yield FociCountUpdate(
+                    project_path,
+                    directory_index,
+                    len(directory_paths),
+                    "Creating SBS crops",
                 )
                 self._create_auto_sbs_crops_from_features(
                     project_path=project_path,
@@ -1535,7 +1760,8 @@ class AutoFociCountWidget(QWidget):
                 )
                 need_tile_fc_stage = (
                     not self._tile_fc_outputs_exist_for_directory(
-                        directory_path
+                        directory_path,
+                        colocalization_channels_filter,
                     )
                 )
                 need_scored_stage = (
@@ -1544,10 +1770,18 @@ class AutoFociCountWidget(QWidget):
                     )
                 )
                 if need_tile_fc_stage:
+                    yield FociCountUpdate(
+                        project_path,
+                        directory_index,
+                        len(directory_paths),
+                        "Counting foci",
+                    )
                     self._run_auto_tile_foci_count_for_directory(
                         directory_path,
                         colocalization_channels_filter,
                         minimum_colocalization_intensity_ratio,
+                        use_gpu=settings.use_gpu,
+                        spotiflow_model_name=spotiflow_model_name,
                     )
                 else:
                     print(
@@ -1556,6 +1790,12 @@ class AutoFociCountWidget(QWidget):
                     )
 
                 if need_scored_stage:
+                    yield FociCountUpdate(
+                        project_path,
+                        directory_index,
+                        len(directory_paths),
+                        "Saving scored nuclei",
+                    )
                     save_auto_scored_nuclei_files_from_features(
                         project_path=project_path,
                         tile_paths=tile_paths,
@@ -1572,38 +1812,77 @@ class AutoFociCountWidget(QWidget):
                     f"[{directory_index}/{len(directory_paths)}] "
                     f"finished {directory_path}"
                 )
-                QMetaObject.invokeMethod(
-                    self,
-                    "_refresh_qlist_on_gui_thread",
-                    Qt.ConnectionType.QueuedConnection,
+            except (OSError, RuntimeError, ValueError) as exc:
+                print(
+                    "Run batch FC failed "
+                    f"for project {project_path!r}: "
+                    f"{type(exc).__name__}: {exc}"
                 )
-        except (OSError, ValueError, RuntimeError) as exc:
-            print(f"Run batch FC failed: {exc}")
-        finally:
-            self._batch_fc_running = False
-            print("Run batch FC finished")
-            QMetaObject.invokeMethod(
-                self,
-                "_refresh_qlist_on_gui_thread",
-                Qt.ConnectionType.QueuedConnection,
+                yield FociCountUpdate(
+                    project_path,
+                    directory_index,
+                    len(directory_paths),
+                    "Failed",
+                    error=str(exc),
+                )
+                continue
+
+            completed_projects.append(project_path)
+            yield FociCountUpdate(
+                project_path,
+                directory_index,
+                len(directory_paths),
+                "Ready",
             )
 
-    def _keep_ts_toggled(self) -> None:
-        self._keep_channel_le.setEnabled(self._keep_channel_ts.isChecked())
+        print("Run batch FC finished")
+        return completed_projects
 
-    def _binary_mask_filter_ts_toggled(self) -> None:
-        enabled = self._binary_mask_filter_ts.isChecked()
-        self._binary_mask_channels_le.setEnabled(enabled)
-        self._binary_mask_filter_l.setEnabled(enabled)
-        self._minimum_colocalization_intensity_ratio_l.setEnabled(enabled)
-        self._minimum_colocalization_intensity_ratio_sb.setEnabled(enabled)
+    def _on_foci_count_update(self, update: FociCountUpdate) -> None:
+        self._foci_count_status_lb.setText(
+            f"Project {update.project_index}/{update.project_total}: "
+            f"{update.project_path.name}\n{update.stage}"
+        )
+        if update.error is not None:
+            self._foci_count_failures.append(
+                f"{update.project_path.name}: {update.error}"
+            )
+        if update.stage == "Ready":
+            self._project_list_widget.refresh_rows()
+            self._status_update_callback()
+
+    def _on_foci_count_finished(
+        self,
+        completed_projects: list[Path],
+    ) -> None:
+        self._foci_count_worker = None
+        self._set_automatic_workflow_active(False)
+        self._project_list_widget.refresh_rows()
+        self._status_update_callback()
+
+        if self._foci_count_failures:
+            show_warning(
+                "The following projects could not be counted:\n\n"
+                + "\n".join(self._foci_count_failures)
+            )
+
+        total_projects = len(completed_projects) + len(
+            self._foci_count_failures
+        )
+        self._foci_count_status_lb.setText(
+            f"Processed {len(completed_projects)}/{total_projects} projects"
+        )
+
+    def _on_foci_count_error(self, error: BaseException) -> None:
+        self._foci_count_worker = None
+        self._set_automatic_workflow_active(False)
+        self._foci_count_status_lb.setText("Counting failed")
+        show_warning(f"Unexpected automatic foci-counting error:\n{error}")
 
     def _get_colocalization_channels_filter(self) -> list[str]:
-        if not self._binary_mask_filter_ts.isChecked():
+        if not self._settings.filter_channels_enabled:
             return []
-        channels_raw = parse_channel_string(
-            self._binary_mask_channels_le.text()
-        )
+        channels_raw = parse_channel_string(self._settings.filter_channels)
         if not channels_raw:
             raise ValueError(
                 "Binary mask filtering is enabled but no valid channels were provided."
@@ -1617,40 +1896,68 @@ class AutoFociCountWidget(QWidget):
             )
         return [str(channel) for channel in positive_channels]
 
-    def _use_gpu_ts_toggled(self) -> None:
-        if not self._stitching_options_widget.is_gpu_enabled():
-            return
+    def _get_stitching_options(self) -> dict[str, int | bool | None]:
+        return {
+            "registration_channel": self._settings.registration_channel - 1,
+            "registration_scale": self._settings.registration_scale,
+            "num_workers": (
+                None
+                if self._settings.num_workers == 0
+                else self._settings.num_workers
+            ),
+            "n_batch": (
+                None if self._settings.n_batch == 0 else self._settings.n_batch
+            ),
+            "use_gpu": self._settings.use_gpu,
+        }
+
+    def _on_settings_saved(self) -> None:
+        self._settings = self._settings_manager.load()
+        self._update_settings_status()
+
+    def _update_settings_status(self) -> None:
+        status = (
+            "default"
+            if self._settings == AutoFociCountSettings()
+            else "custom"
+        )
+        self._settings_status_lb.setText(f"Settings: {status}")
+
+    def _validate_gpu_setting(self) -> bool:
+        if not self._settings.use_gpu:
+            return True
 
         if importlib.util.find_spec("cupy") is None:
             show_warning(
-                "CuPy is not installed in the current environment. "
-                "GPU stitching has been disabled."
+                "GPU processing is enabled, but CuPy is not installed."
             )
-            self._stitching_options_widget.set_gpu_enabled(False)
-            return
+            return False
 
         try:
             import cupy
         except (ImportError, OSError) as exc:
-            show_warning(
-                f"GPU stitching is not available in this environment: {exc}"
-            )
-            self._stitching_options_widget.set_gpu_enabled(False)
-            return
+            show_warning(f"GPU processing is not available: {exc}")
+            return False
 
         try:
-            if cupy.cuda.runtime.getDeviceCount() < 1:
-                show_warning(
-                    "No CUDA-capable GPU was detected. GPU stitching has been disabled."
-                )
-                self._stitching_options_widget.set_gpu_enabled(False)
+            device_count = cupy.cuda.runtime.getDeviceCount()
         except cupy.cuda.runtime.CUDARuntimeError as exc:
-            show_warning(
-                f"GPU stitching is not available in this environment: {exc}"
-            )
-            self._stitching_options_widget.set_gpu_enabled(False)
+            show_warning(f"GPU processing is not available: {exc}")
+            return False
 
-    def _call_segmentation(self, directory_path: str | Path) -> None:
+        if device_count < 1:
+            show_warning(
+                "GPU processing is enabled, but no CUDA GPU was found."
+            )
+            return False
+
+        return True
+
+    def _call_segmentation(
+        self,
+        directory_path: str | Path,
+        model_path: Path,
+    ) -> None:
         tile_paths = self._get_ready_tile_paths(directory_path)
         if not tile_paths:
             print(
@@ -1662,15 +1969,14 @@ class AutoFociCountWidget(QWidget):
             _get_project_files_path(directory_path) / SEGMENTATION_DIR_NAME
         )
         total_tiles = len(tile_paths)
+        pending_tile_paths: list[Path] = []
         print(
             f"Starting segmentation for {total_tiles} tiles in {directory_path}"
         )
-        for tile_index, tile_path in enumerate(tile_paths, start=1):
-            print(
-                f"Starting segmentation for tile {tile_index}/{total_tiles}: {tile_path}"
-            )
+        for tile_path in tile_paths:
             segmentation_output_path = segmentation_output_dir / (
-                f"{tile_path.name[: -len('.ome.zarr')]}_meiotic_3d_crops_masks.npy"
+                f"{tile_path.name[: -len('.ome.zarr')]}"
+                f"{SEGMENTATION_MASKS_FILE_NAME_SUFFIX}"
             )
             if segmentation_output_path.exists():
                 print(
@@ -1678,11 +1984,20 @@ class AutoFociCountWidget(QWidget):
                     f"{tile_path}; skipping segmentation"
                 )
             else:
-                run_segmentation_subprocess(
-                    image_path=tile_path,
-                    model_name="meiotic_3d_crops",
-                    output_dir=segmentation_output_dir,
-                )
+                pending_tile_paths.append(tile_path)
+
+        run_segmentation_batch_subprocess(
+            image_paths=pending_tile_paths,
+            model_path=model_path,
+            output_name=SEGMENTATION_OUTPUT_NAME,
+            output_dir=segmentation_output_dir,
+        )
+
+        for tile_index, tile_path in enumerate(tile_paths, start=1):
+            segmentation_output_path = segmentation_output_dir / (
+                f"{tile_path.name[: -len('.ome.zarr')]}"
+                f"{SEGMENTATION_MASKS_FILE_NAME_SUFFIX}"
+            )
             cleaned_segmentation_output_path = (
                 get_cleaned_segmentation_output_path(segmentation_output_path)
             )
@@ -1721,7 +2036,7 @@ class AutoFociCountWidget(QWidget):
             return
 
         labels_by_tile: dict[int, NDArray[np.uint32]] = {}
-        tile_offsets_yx: dict[int, tuple[float, float]] = {}
+        tile_offsets_zyx: dict[int, tuple[float, float, float]] = {}
         for tile_index, tile_path in enumerate(tile_paths):
             segmentation_path = _get_segmentation_output_path_for_tile(
                 project_path, tile_path
@@ -1729,18 +2044,20 @@ class AutoFociCountWidget(QWidget):
             labels_by_tile[tile_index] = load_cleaned_segmentation_labels(
                 segmentation_path
             )
-            tile_offsets_yx[tile_index] = get_tile_stitched_pixel_offsets(
-                stitched_image_path, tile_index
+            tile_offsets_zyx[tile_index] = get_tile_stitched_pixel_offsets(
+                stitched_image_path,
+                project_path / TILES_DIR_NAME,
+                tile_path,
             )
 
         candidates = build_nucleus_candidates(
             labels_by_tile=labels_by_tile,
-            tile_offsets_yx=tile_offsets_yx,
+            tile_offsets_zyx=tile_offsets_zyx,
         )
         candidates = deduplicate_nucleus_candidates(
             candidates=candidates,
             labels_by_tile=labels_by_tile,
-            tile_offsets_yx=tile_offsets_yx,
+            tile_offsets_zyx=tile_offsets_zyx,
         )
         save_nucleus_features_and_points(
             candidates=candidates,
@@ -1863,6 +2180,9 @@ class AutoFociCountWidget(QWidget):
         normalization_input_max: float,
         colocalization_channels_filter: list[str],
         minimum_colocalization_intensity_ratio: float,
+        *,
+        use_gpu: bool,
+        spotiflow_model_name: str,
     ) -> None:
         auto_count_output_dir = (
             Path(segmentation_path).parent.parent / AUTO_COUNT_DIR_NAME
@@ -1875,7 +2195,7 @@ class AutoFociCountWidget(QWidget):
             return
 
         print(f"Starting automatic foci counting for {image_path}")
-        print(f"Using Spotiflow model name: {self._spotiflow_model_name}")
+        print(f"Using Spotiflow model name: {spotiflow_model_name}")
         (
             ref_image_zyx,
             segmentation_arr,
@@ -1890,8 +2210,8 @@ class AutoFociCountWidget(QWidget):
             image_path=image_path,
             segmentation_path=segmentation_path,
             output_dir=auto_count_output_dir,
-            use_gpu=self._stitching_options_widget.is_gpu_enabled(),
-            model_name=self._spotiflow_model_name,
+            use_gpu=use_gpu,
+            model_name=spotiflow_model_name,
             colocalization_channels_filter=colocalization_channels_filter,
             minimum_colocalization_intensity_ratio=(
                 minimum_colocalization_intensity_ratio
@@ -1927,6 +2247,9 @@ class AutoFociCountWidget(QWidget):
         directory_path: str | Path,
         colocalization_channels_filter: list[str],
         minimum_colocalization_intensity_ratio: float,
+        *,
+        use_gpu: bool,
+        spotiflow_model_name: str,
     ) -> None:
         tile_paths = self._get_ready_tile_paths(directory_path)
         if not tile_paths:
@@ -1973,6 +2296,44 @@ class AutoFociCountWidget(QWidget):
             "Automatic foci count shared normalization bounds: "
             f"min={normalization_input_min}, max={normalization_input_max}"
         )
+
+        processed_image_paths: list[Path] = []
+        unfiltered_points_paths: list[Path] = []
+        for tile_path, segmentation_output_path in zip(
+            pending_tile_paths, segmentation_paths, strict=True
+        ):
+            auto_count_output_dir = (
+                segmentation_output_path.parent.parent / AUTO_COUNT_DIR_NAME
+            )
+            (*_, processed_image_path, _preprocessing_stats_path) = (
+                run_auto_count_preprocessed_spots_on_paths(
+                    image_path=tile_path,
+                    segmentation_path=segmentation_output_path,
+                    output_dir=auto_count_output_dir,
+                    normalize_spots_channel=True,
+                    normalization_input_min=normalization_input_min,
+                    normalization_input_max=normalization_input_max,
+                    normalization_output_max=1000,
+                )
+            )
+            (_semantic_mask_path, unfiltered_points_path, _filtered_path) = (
+                get_auto_count_output_paths(
+                    image_path=tile_path,
+                    output_dir=auto_count_output_dir,
+                )
+            )
+            if not unfiltered_points_path.exists():
+                processed_image_paths.append(processed_image_path)
+                unfiltered_points_paths.append(unfiltered_points_path)
+
+        if processed_image_paths:
+            run_spotiflow_batch_subprocess(
+                image_paths=processed_image_paths,
+                output_csv_paths=unfiltered_points_paths,
+                model_name=spotiflow_model_name,
+                use_gpu=use_gpu,
+            )
+
         for tile_path, segmentation_output_path in zip(
             pending_tile_paths, segmentation_paths, strict=True
         ):
@@ -1985,4 +2346,6 @@ class AutoFociCountWidget(QWidget):
                 minimum_colocalization_intensity_ratio=(
                     minimum_colocalization_intensity_ratio
                 ),
+                use_gpu=use_gpu,
+                spotiflow_model_name=spotiflow_model_name,
             )

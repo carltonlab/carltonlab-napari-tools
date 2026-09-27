@@ -36,14 +36,17 @@ dependencies = [
     "scikit-image",
     "ndevio",
     "bioio-tifffile",
+    "bioio-dv",
     "multiview-stitcher>=0.1.37",
     "mrc",
     "tifffile",
     "pandas",
     "scipy",
     "dask",
+    "platformdirs",
     "superqt",
     "zarr",
+    "bioimageio-spec>=0.5.14.2",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +55,7 @@ dependencies = [
 all = ["napari[all]"]
 segmentation = [
     "cellpose",
+    "spotiflow",
     "torch",
 ]
 gpu-cuda12 = [
@@ -60,11 +64,13 @@ gpu-cuda12 = [
 full-cpu = [
     "napari[all]",
     "cellpose",
+    "spotiflow",
     "torch",
 ]
 full-cuda12 = [
     "napari[all]",
     "cellpose",
+    "spotiflow",
     "torch",
     "cupy-cuda12x",
 ]
