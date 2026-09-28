@@ -9,71 +9,93 @@
 [![npe2](https://img.shields.io/badge/plugin-npe2-blue?link=https://napari.org/stable/plugins/index.html)](https://napari.org/stable/plugins/index.html)
 [![Copier](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-purple.json)](https://github.com/copier-org/copier)
 
-The carltonlab count tool made for napari. This is made thinking about RAD-51 counting in C.elegans gonads.
+## About the plugin
 
-----------------------------------
+Work in progress, please expect bugs V0.1.0
 
-This [napari] plugin was generated with [copier] using the [napari-plugin-template] (None).
+This napari plugin is a tool designed to computationally count the number of foci in microscopy of
+_C. elegans_ gonads. It has two operational methods, manual and automatic counting. It uses `ndevio`
+to extract the required metadata and uses `multiview-stitcher` to stitch the gonad tiles into a single
+image.
 
-<!--
-Don't miss the full getting started guide to set up your new package:
-https://github.com/napari/napari-plugin-template#getting-started
+The tool was designed for RAD-51 foci counting in 4D images (CZYX) since it is the most common assay
+for quantification of DSBs in _C. elegans_ but can be used to count other foci in any image.
 
-and review the napari docs for plugin developers:
-https://napari.org/stable/plugins/index.html
--->
+It features multi-gonad project creation where all genotypes and gonads are mixed after individual
+nuclei are selected (manual or automatic) and are scored in a blind manner to minimize human bias.
+
+We recommend using the automatic process, which uses a trained `cellpose` model to segment the
+nuclei. By default, it uses our trained model:
+<https://bioimage.io/#/artifacts/sneaky-panda>.
+
+For the automatic counting, it uses `spotiflow` with a default model and then point filtering
+based on user provided parameters such as expected foci volume, channel (usually DAPI)
+co-localization and more.
+
+It'll export the data as plots that can be organized by genotype similar to the conventional RAD-51
+scoring figures commonly used in papers.
+
+It also writes all the intermediate files for troubleshooting, data archive and manual inspection.
+Formats are `OME-Zarr` for tiles and stitched images, `TIFF` files for cropped nuclei, `CSV` files
+for foci coordinates and feature tables. All which are easy to inspect even without the tool.
+
+You can also do the entire counting and refinement of the data using the manual process.
+
+## Use manual (coming soon)
 
 ## Installation
 
-You can install `carltonlab-napari-tools` via [pip]:
+Clone the repository and enter its directory:
 
-```
-pip install carltonlab-napari-tools
-```
-
-If napari is not already installed, you can install `carltonlab-napari-tools` with napari and Qt via:
-
-```
-pip install "carltonlab-napari-tools[all]"
+```sh
+git clone git@github.com:carltonlab/carltonlab-napari-tools.git
+cd carltonlab-napari-tools
 ```
 
+Select what segmentation you'll be using (Automatic workflow only).
 
-To install latest development version :
+For the manual workflow, install napari and Qt without the segmentation
+models:
 
+```sh
+uv sync --extra all
 ```
-pip install git+https://github.com/carlosmariorr/carltonlab-napari-tools.git
+
+For automatic segmentation on CPU, use:
+
+```sh
+uv sync --extra full-cpu
 ```
 
+For automatic segmentation with CUDA 12, use:
 
+```sh
+uv sync --extra full-cuda12
+```
+
+We highly recommend using a GPU for the segmentation. Depending on the setup, you might need to
+install a different `PyTorch` version.
+
+For our workflow, with approximately 2 × 50 × 1024 × 1024 (CZYX) images,
+segmentation and foci counting use about 6 GB
+of VRAM.
+
+## Running
+
+Launch napari using the uv environment:
+
+```sh
+uv run napari
+```
+
+Then, use the Plugins menu to launch the tool.
 
 ## Contributing
 
-Contributions are very welcome. Tests can be run with [tox], please ensure
-the coverage at least stays the same before you submit a pull request.
+Contributions are very welcome.
 
 ## License
 
-Distributed under the terms of the [BSD-3] license,
+Distributed under the terms of the
+[BSD-3](https://opensource.org/licenses/BSD-3-Clause) license,
 "carltonlab-napari-tools" is free and open source software
-
-## Issues
-
-If you encounter any problems, please [file an issue] along with a detailed description.
-
-[napari]: https://github.com/napari/napari
-[copier]: https://copier.readthedocs.io/en/stable/
-[@napari]: https://github.com/napari
-[MIT]: http://opensource.org/licenses/MIT
-[BSD-3]: http://opensource.org/licenses/BSD-3-Clause
-[GNU GPL v3.0]: http://www.gnu.org/licenses/gpl-3.0.txt
-[GNU LGPL v3.0]: http://www.gnu.org/licenses/lgpl-3.0.txt
-[Apache Software License 2.0]: http://www.apache.org/licenses/LICENSE-2.0
-[Mozilla Public License 2.0]: https://www.mozilla.org/media/MPL/2.0/index.txt
-[napari-plugin-template]: https://github.com/napari/napari-plugin-template
-
-[file an issue]: https://github.com/carlosmariorr/carltonlab-napari-tools/issues
-
-[napari]: https://github.com/napari/napari
-[tox]: https://tox.readthedocs.io/en/latest/
-[pip]: https://pypi.org/project/pip/
-[PyPI]: https://pypi.org/
