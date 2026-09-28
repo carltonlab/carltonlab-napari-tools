@@ -17,6 +17,22 @@ def test_acquire_creates_lock_and_records_ownership(
     assert manager._lock_path("sbs1").is_file()
 
 
+def test_acquire_works_without_user_environment_variables(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    for variable in ("USERNAME", "USER", "LOGNAME"):
+        monkeypatch.delenv(variable, raising=False)
+
+    manager = SBSLockManager(tmp_path)
+
+    assert manager.acquire("sbs1")
+    lock_data = json.loads(
+        manager._lock_path("sbs1").read_text(encoding="utf-8")
+    )
+    assert lock_data["user"] == "unknown"
+
+
 def test_second_manager_cannot_acquire_active_lock(
     tmp_path: Path,
 ) -> None:

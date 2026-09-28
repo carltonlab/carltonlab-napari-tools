@@ -3,7 +3,6 @@ import os
 import socket
 import uuid
 from datetime import UTC, datetime
-from getpass import getuser
 from pathlib import Path
 
 from carltonlab_napari_tools._shared_variables import (
@@ -13,6 +12,15 @@ from carltonlab_napari_tools._shared_variables import (
     SBS_LOCK_TIMEOUT_SECONDS,
     SBS_LOCKS_DIR_NAME,
 )
+
+
+def _get_user_name() -> str:
+    return (
+        os.environ.get("USERNAME")
+        or os.environ.get("USER")
+        or os.environ.get("LOGNAME")
+        or "unknown"
+    )
 
 
 class SBSLockManager:
@@ -86,7 +94,7 @@ class SBSLockManager:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         lock_data = {
             "owner_token": self._owner_token,
-            "user": getuser(),
+            "user": _get_user_name(),
             "host": socket.gethostname(),
             "pid": os.getpid(),
             "created_at": datetime.now(UTC).isoformat(),
