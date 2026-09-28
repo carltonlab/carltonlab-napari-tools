@@ -1195,6 +1195,7 @@ class AutoFociCountWidget(QWidget):
 
         self._contrast_status_lb = QLabel(parent=self)
         self._contrast_status_lb.setWordWrap(True)
+        self._contrast_status_lb.setVisible(False)
         self._layout.addWidget(self._contrast_status_lb)
 
         self._count_foci_b: QPushButton = QPushButton(
@@ -1206,6 +1207,7 @@ class AutoFociCountWidget(QWidget):
 
         self._foci_count_status_lb = QLabel(parent=self)
         self._foci_count_status_lb.setWordWrap(True)
+        self._foci_count_status_lb.setVisible(False)
         self._layout.addWidget(self._foci_count_status_lb)
 
         self._automatic_fc_dependency_status_lb = QLabel(parent=self)
@@ -1261,6 +1263,15 @@ class AutoFociCountWidget(QWidget):
                 "color: #A80000; font-weight: bold;"
             )
 
+    @staticmethod
+    def _set_step_status_label(
+        status_label: QLabel,
+        text: str,
+    ) -> None:
+        """Set a step status label and hide it when it has no text."""
+        status_label.setText(text)
+        status_label.setVisible(bool(text))
+
     def _get_cellpose_model_path(self) -> Path:
         directories = ModelDirectoriesManager().ensure_default_configuration()
         for directory in directories:
@@ -1291,8 +1302,9 @@ class AutoFociCountWidget(QWidget):
         channels = self._keep_channels_widget.get_channels()
         self._contrast_failures = []
         self._set_automatic_workflow_active(True)
-        self._contrast_status_lb.setText(
-            f"Preparing 0/{len(project_paths)} projects"
+        self._set_step_status_label(
+            self._contrast_status_lb,
+            f"Preparing 0/{len(project_paths)} projects",
         )
 
         self._contrast_preparation_worker = _prepare_contrasts_worker(
@@ -1315,9 +1327,10 @@ class AutoFociCountWidget(QWidget):
         self,
         update: ContrastPreparationUpdate,
     ) -> None:
-        self._contrast_status_lb.setText(
+        self._set_step_status_label(
+            self._contrast_status_lb,
             f"Project {update.project_index}/{update.project_total}: "
-            f"{update.project_path.name}\n{update.stage}"
+            f"{update.project_path.name}\n{update.stage}",
         )
         if update.error is not None:
             self._contrast_failures.append(
@@ -1341,8 +1354,9 @@ class AutoFociCountWidget(QWidget):
             )
 
         total_projects = len(prepared_projects) + len(self._contrast_failures)
-        self._contrast_status_lb.setText(
-            f"Prepared {len(prepared_projects)}/{total_projects} projects"
+        self._set_step_status_label(
+            self._contrast_status_lb,
+            f"Prepared {len(prepared_projects)}/{total_projects} projects",
         )
         if prepared_projects:
             self._set_contrasts_callback()
@@ -1353,7 +1367,10 @@ class AutoFociCountWidget(QWidget):
     ) -> None:
         self._contrast_preparation_worker = None
         self._set_automatic_workflow_active(False)
-        self._contrast_status_lb.setText("Preparation failed")
+        self._set_step_status_label(
+            self._contrast_status_lb,
+            "Preparation failed",
+        )
         show_warning(f"Unexpected contrast-preparation error:\n{error}")
 
     def _set_automatic_workflow_active(self, active: bool) -> None:
@@ -1667,8 +1684,9 @@ class AutoFociCountWidget(QWidget):
         directory_paths = [str(path) for path in directory_paths]
         self._foci_count_failures = []
         self._set_automatic_workflow_active(True)
-        self._foci_count_status_lb.setText(
-            f"Processing 0/{len(directory_paths)} projects"
+        self._set_step_status_label(
+            self._foci_count_status_lb,
+            f"Processing 0/{len(directory_paths)} projects",
         )
         print(f"Run batch FC started for {len(directory_paths)} directories")
         self._foci_count_worker = self._run_batch_fc_worker(
@@ -1839,9 +1857,10 @@ class AutoFociCountWidget(QWidget):
         return completed_projects
 
     def _on_foci_count_update(self, update: FociCountUpdate) -> None:
-        self._foci_count_status_lb.setText(
+        self._set_step_status_label(
+            self._foci_count_status_lb,
             f"Project {update.project_index}/{update.project_total}: "
-            f"{update.project_path.name}\n{update.stage}"
+            f"{update.project_path.name}\n{update.stage}",
         )
         if update.error is not None:
             self._foci_count_failures.append(
@@ -1869,14 +1888,18 @@ class AutoFociCountWidget(QWidget):
         total_projects = len(completed_projects) + len(
             self._foci_count_failures
         )
-        self._foci_count_status_lb.setText(
-            f"Processed {len(completed_projects)}/{total_projects} projects"
+        self._set_step_status_label(
+            self._foci_count_status_lb,
+            f"Processed {len(completed_projects)}/{total_projects} projects",
         )
 
     def _on_foci_count_error(self, error: BaseException) -> None:
         self._foci_count_worker = None
         self._set_automatic_workflow_active(False)
-        self._foci_count_status_lb.setText("Counting failed")
+        self._set_step_status_label(
+            self._foci_count_status_lb,
+            "Counting failed",
+        )
         show_warning(f"Unexpected automatic foci-counting error:\n{error}")
 
     def _get_colocalization_channels_filter(self) -> list[str]:

@@ -1,4 +1,5 @@
 from configparser import ConfigParser
+from configparser import Error as ConfigParserError
 from datetime import datetime
 from pathlib import Path
 
@@ -20,7 +21,7 @@ def save_multigonad_project(
     try:
         version_config.read(version_config_path)
         project_version = version_config.get("project", "version")
-    except (ConfigParser.Error, OSError, KeyError):
+    except (ConfigParserError, OSError, KeyError):
         return False
 
     config_path = Path(saving_path)
@@ -62,7 +63,7 @@ def load_multigonad_project(
     try:
         with Path(project_file_path).open(encoding="utf-8") as config_file:
             config.read_file(config_file)
-    except (OSError, ConfigParser.Error):
+    except (OSError, ConfigParserError):
         return None
 
     return config
