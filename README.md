@@ -1,9 +1,8 @@
 # carltonlab-napari-tools
 
-[![License BSD-3](https://img.shields.io/pypi/l/carltonlab-napari-tools.svg?color=green)](https://github.com/carlosmariorr/carltonlab-napari-tools/raw/main/LICENSE)
-[![PyPI](https://img.shields.io/pypi/v/carltonlab-napari-tools.svg?color=green)](https://pypi.org/project/carltonlab-napari-tools)
-[![Python Version](https://img.shields.io/pypi/pyversions/carltonlab-napari-tools.svg?color=green)](https://python.org)
-[![tests](https://github.com/carlosmariorr/carltonlab-napari-tools/workflows/tests/badge.svg)](https://github.com/carlosmariorr/carltonlab-napari-tools/actions)
+[![License BSD-3](https://img.shields.io/github/license/carltonlab/carltonlab-napari-tools.svg?color=green)](https://github.com/carltonlab/carltonlab-napari-tools/blob/main/LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+[![tests](https://github.com/carltonlab/carltonlab-napari-tools/actions/workflows/test_and_deploy.yml/badge.svg)](https://github.com/carltonlab/carltonlab-napari-tools/actions/workflows/test_and_deploy.yml)
 [![napari hub](https://img.shields.io/endpoint?url=https://api.napari-hub.org/shields/carltonlab-napari-tools)](https://napari-hub.org/plugins/carltonlab-napari-tools)
 [![npe2](https://img.shields.io/badge/plugin-npe2-blue?link=https://napari.org/stable/plugins/index.html)](https://napari.org/stable/plugins/index.html)
 [![Copier](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-purple.json)](https://github.com/copier-org/copier)
