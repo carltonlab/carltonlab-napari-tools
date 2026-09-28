@@ -12,12 +12,13 @@
 Work in progress, please expect bugs V0.1.0
 
 This napari plugin is a tool designed to computationally count the number of foci in microscopy of
-_C. elegans_ gonads. It has two operational methods, manual and automatic counting. It uses `ndevio`
-to extract the required metadata and uses `multiview-stitcher` to stitch the gonad tiles into a single
-image.
+_C. elegans_ gonads. It has two operational methods, manual and automatic counting. It uses
+[ndevio](https://github.com/ndev-kit/ndevio) to extract the required metadata and
+[multiview-stitcher](https://github.com/multiview-stitcher/multiview-stitcher) to stitch the gonad
+tiles into a single image.
 
 <p align="center">
-  <img src="docs/images/stitched_image_example.png" alt="Example of a stitched gonad image">
+  <img src="https://raw.githubusercontent.com/carltonlab/carltonlab-napari-tools/main/docs/images/stitched_image_example.png" alt="Example of a stitched gonad image">
 </p>
 
 The tool was designed for RAD-51 foci counting in 4D images (CZYX) since it is the most common assay
@@ -31,7 +32,7 @@ nuclei. By default, it uses our trained model:
 <https://bioimage.io/#/artifacts/sneaky-panda>.
 
 <p align="center">
-  <img src="docs/images/meiotic_nuclei_segmentation_model_v1.png" alt="Example of meiotic nuclei segmentation">
+  <img src="https://raw.githubusercontent.com/carltonlab/carltonlab-napari-tools/main/docs/images/meiotic_nuclei_segmentation_model_v1.png" alt="Example of meiotic nuclei segmentation">
 </p>
 
 For the automatic counting, it uses `spotiflow` with a default model and then point filtering
@@ -42,7 +43,7 @@ It'll export the data as plots that can be organized by genotype similar to the 
 scoring figures commonly used in papers.
 
 <p align="center">
-  <img src="docs/images/plot_example.svg" alt="Example of generated foci-counting plots">
+  <img src="https://raw.githubusercontent.com/carltonlab/carltonlab-napari-tools/main/docs/images/plot_example.svg" alt="Example of generated foci-counting plots">
 </p>
 
 It also writes all the intermediate files for troubleshooting, data archive and manual inspection.
@@ -51,9 +52,42 @@ for foci coordinates and feature tables. All which are easy to inspect even with
 
 You can also do the entire counting and refinement of the data using the manual process.
 
-## Use manual (coming soon)
-
 ## Installation
+
+### Install from PyPI or napari Hub
+
+Install the plugin in napari:
+
+- In napari, open **Plugins → Install/Uninstall Plugins…**, search for
+  `carltonlab-napari-tools`, select it, and click **Install**. Restart napari if
+  prompted.
+- If **Install/Uninstall Plugins…** isn't available, install the
+  [napari plugin manager](https://napari.org/napari-plugin-manager/) in the
+  same environment as napari.
+- Or, in the Python environment used by napari, run:
+
+  ```sh
+  python -m pip install carltonlab-napari-tools
+  ```
+
+The commands above install the plugin's base dependencies. For automatic
+segmentation, install the matching extra in the same Python environment:
+
+For CPU:
+
+```sh
+python -m pip install "carltonlab-napari-tools[full-cpu]"
+```
+
+For CUDA 12:
+
+```sh
+python -m pip install "carltonlab-napari-tools[full-cuda12]"
+```
+
+Depending on your system, you may need a different PyTorch build for CUDA.
+
+### Install from source
 
 Clone the repository and enter its directory:
 
@@ -92,7 +126,11 @@ of VRAM.
 
 ## Running
 
-Launch napari using the uv environment:
+Launch napari from the environment where you installed the plugin:
+
+- If you installed it through napari's plugin manager, pip, or conda, launch
+  napari as you normally do.
+- If you installed from source using uv, run this from the repository directory:
 
 ```sh
 uv run napari
@@ -103,6 +141,15 @@ Then, use the Plugins menu to launch the tool.
 ## Contributing
 
 Contributions are very welcome.
+
+## Acknowledgements
+
+This plugin uses [ndevio](https://github.com/ndev-kit/ndevio) for image metadata
+and [multiview-stitcher](https://github.com/multiview-stitcher/multiview-stitcher)
+for image stitching.
+
+If you use `multiview-stitcher` in published research, cite its
+[Zenodo record](https://doi.org/10.5281/zenodo.13151252).
 
 ## License
 

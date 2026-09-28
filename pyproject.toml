@@ -1,12 +1,11 @@
 [project]
 name = "carltonlab-napari-tools"
 dynamic = ["version"]
-description = "The carltonlab count tool made for napari. This is made thinking about RAD-51 counting in C.elegans gonads."
+description = "A napari plugin for manual and automated foci counting in microscopy images, developed for RAD-51 foci in C. elegans gonads."
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
-  {name = "Carlos Rodriguez"},
-  {email = "carlosmariorr90@hotmail.com"},
+  {name = "Carlos Rodriguez", email = "carlosmariorr90@hotmail.com"},
 ]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
@@ -24,10 +23,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
 requires-python = ">=3.11"
-# napari can be included in dependencies if napari imports are required.
-# However, you should not include napari[all], napari[qt],
-# or any other Qt bindings directly (e.g. PyQt5, PySide2).
-# See best practices: https://napari.org/stable/plugins/building_a_plugin/best_practices.html
 dependencies = [
     "napari",
     "numpy",
@@ -89,10 +84,10 @@ dev = [
 carltonlab-napari-tools = "carltonlab_napari_tools:napari.yaml"
 
 [project.urls]
-"Bug Tracker" = "https://github.com/carlosmariorr/carltonlab-napari-tools/issues"
-"Documentation" = "https://github.com/carlosmariorr/carltonlab-napari-tools#README.md"
-"Source Code" = "https://github.com/carlosmariorr/carltonlab-napari-tools"
-"User Support" = "https://github.com/carlosmariorr/carltonlab-napari-tools/issues"
+"Bug Tracker" = "https://github.com/carltonlab/carltonlab-napari-tools/issues"
+"Documentation" = "https://github.com/carltonlab/carltonlab-napari-tools#README.md"
+"Source Code" = "https://github.com/carltonlab/carltonlab-napari-tools"
+"User Support" = "https://github.com/carltonlab/carltonlab-napari-tools/issues"
 
 [build-system]
 requires = ["setuptools>=42.0.0", "setuptools_scm"]
