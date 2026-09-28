@@ -41,7 +41,7 @@ dependencies = [
     "multiview-stitcher>=0.1.37",
     "mrc",
     "tifffile",
-    "pandas",
+    "pandas>=2.2.3",
     "scipy",
     "dask",
     "platformdirs",
