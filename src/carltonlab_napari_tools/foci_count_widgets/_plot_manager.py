@@ -10,6 +10,7 @@ from scipy.interpolate import splev, splprep
 
 from carltonlab_napari_tools._shared_variables import (
     CLSP_PLOTS_DIRECTORY_PREFIX,
+    CLSP_PROJECT_SUFFIX,
     FOCI_COUNT_AVERAGE_PLOT_NAME,
     FOCI_COUNT_CUMULATIVE_PLOT_NAME,
     FOCI_COUNT_PLOT_FILE_NAME_PREFIX,
@@ -21,9 +22,13 @@ from carltonlab_napari_tools._shared_variables import (
     REGIONS_CONFIGURATION_FILE_NAME,
     REGIONS_DIR_NAME,
     RESULTS_DIR,
+    SBS_FILE_NAME_EXTENSION,
     SPLINE_LAYER_FILE_NAME,
 )
 from carltonlab_napari_tools._utils import resolve_clsp_project_path
+from carltonlab_napari_tools.foci_count_widgets._sbs_flags_manager import (
+    SBSFlagsManager,
+)
 from carltonlab_napari_tools.spline_manager._spline_manager import (
     load_regions_configuration,
     project_point_to_polyline,
@@ -112,6 +117,7 @@ def _load_project_plot_data(project_path: Path) -> pd.DataFrame | None:
 
     required_columns = {
         "region",
+        "sbs_number",
         "scored_foci_number",
         "stitched_x_coord",
         "stitched_y_coord",
@@ -122,6 +128,7 @@ def _load_project_plot_data(project_path: Path) -> pd.DataFrame | None:
     plot_data = features.loc[
         :,
         [
+            "sbs_number",
             "region",
             "scored_foci_number",
             "stitched_x_coord",
@@ -137,6 +144,11 @@ def _load_project_plot_data(project_path: Path) -> pd.DataFrame | None:
     plot_data = plot_data.dropna()
     if plot_data.empty:
         return None
+
+    plot_data = plot_data.sort_values(
+        ["region", "sbs_number"],
+        kind="stable",
+    ).reset_index(drop=True)
 
     spline = _load_interpolated_spline(project_path)
     if spline is None:
@@ -172,6 +184,70 @@ def _save_figure_pair(
     figure.savefig(png_path, dpi=300)
     plt.close(figure)
     return [pdf_path, png_path]
+
+
+def _save_plot_data(
+    plot_data: pd.DataFrame,
+    output_directory: Path,
+    timestamp: str,
+) -> Path:
+    output_directory.mkdir(parents=True, exist_ok=True)
+    csv_path = output_directory / f"foci_count_data_{timestamp}.csv"
+    plot_data.sort_values(
+        ["region", "sbs_number"],
+        kind="stable",
+    ).to_csv(csv_path, index=False)
+    return csv_path
+
+
+def _save_legacy_summary(
+    project_path: Path,
+    plot_data: pd.DataFrame,
+    output_directory: Path,
+) -> Path | None:
+    resolved_project_path = resolve_clsp_project_path(project_path)
+    if resolved_project_path is None:
+        return None
+
+    flags_manager = SBSFlagsManager(resolved_project_path)
+    if not flags_manager.load():
+        return None
+
+    project_name = resolved_project_path.name.removesuffix(
+        CLSP_PROJECT_SUFFIX
+    )
+    legacy_data = pd.DataFrame(
+        {
+            "region_name": (
+                "region-"
+                + plot_data["region"].astype(int).astype(str)
+            ),
+            "sbs": plot_data["sbs_number"].astype(int),
+            "sbs_image_name": (
+                project_name
+                + "_sbs"
+                + plot_data["sbs_number"].astype(int).astype(str)
+                + SBS_FILE_NAME_EXTENSION
+            ),
+            "flags": [
+                ";".join(
+                    flags_manager.get_flags(f"sbs{int(sbs_number)}")
+                )
+                for sbs_number in plot_data["sbs_number"]
+            ],
+            "foci_count": plot_data["scored_foci_number"],
+        }
+    ).sort_values(
+        ["region_name", "sbs"],
+        kind="stable",
+    )
+
+    output_directory.mkdir(parents=True, exist_ok=True)
+    csv_path = output_directory / (
+        f"{project_name}_scored_nuclei_foci_summary.csv"
+    )
+    legacy_data.to_csv(csv_path, index=False)
+    return csv_path
 
 
 def _configure_axis(axis: Axes, title: str, y_label: str) -> None:
@@ -254,7 +330,16 @@ def _save_project_plots(
     output_directory: Path,
     timestamp: str,
 ) -> list[Path]:
-    created_paths: list[Path] = []
+    created_paths: list[Path] = [
+        _save_plot_data(plot_data, output_directory, timestamp),
+    ]
+    legacy_path = _save_legacy_summary(
+        project_path,
+        plot_data,
+        output_directory,
+    )
+    if legacy_path is not None:
+        created_paths.append(legacy_path)
 
     for average, plot_name in (
         (False, FOCI_COUNT_SUM_PLOT_NAME),
@@ -298,7 +383,9 @@ def _save_combined_plots(
     output_directory: Path,
     timestamp: str,
 ) -> list[Path]:
-    created_paths: list[Path] = []
+    created_paths: list[Path] = [
+        _save_plot_data(plot_data, output_directory, timestamp),
+    ]
 
     for average, plot_name in (
         (False, FOCI_COUNT_SUM_PLOT_NAME),
